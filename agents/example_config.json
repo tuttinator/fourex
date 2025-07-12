@@ -1,0 +1,15 @@
+{
+  "game_id": "personality_showcase",
+  "players": ["Conqueror", "Diplomat", "Explorer", "Economist"],
+  "personalities": {
+    "Conqueror": "aggressive",
+    "Diplomat": "diplomatic",
+    "Explorer": "explorer", 
+    "Economist": "economic"
+  },
+  "max_turns": 100,
+  "turn_timeout": 30,
+  "game_backend_url": "http://localhost:8000/api/v1",
+  "llm_backend_url": "http://localhost:1234/v1",
+  "llm_model": "qwen/qwen3-32b"
+}
