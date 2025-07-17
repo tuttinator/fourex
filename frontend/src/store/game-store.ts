@@ -12,7 +12,34 @@ import type {
 	PromptLog,
 	TurnEndEvent,
 	TurnStartEvent,
+	UIGameEvent,
 } from "@/types/game";
+
+// Utility function to convert WebSocket events to UI events
+function createUIEvent(
+	type: UIGameEvent["type"],
+	rawEvent: unknown,
+	message: string,
+	severity: UIGameEvent["severity"] = "info",
+	playerId?: string,
+): UIGameEvent {
+	return {
+		id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+		type,
+		timestamp: new Date(),
+		message,
+		severity,
+		playerId,
+		turn:
+			typeof rawEvent === "object" &&
+			rawEvent !== null &&
+			"turn" in rawEvent &&
+			typeof rawEvent.turn === "number"
+				? rawEvent.turn
+				: undefined,
+		rawEvent: rawEvent as Record<string, unknown>,
+	};
+}
 
 interface GameStoreActions {
 	setGameId: (gameId: string) => void;
@@ -25,6 +52,8 @@ interface GameStoreActions {
 	setPrompts: (turn: number, prompts: PromptLog[]) => void;
 	setLoading: (loading: boolean) => void;
 	setError: (error: string | null) => void;
+	addEvent: (event: UIGameEvent) => void;
+	clearEvents: () => void;
 
 	// Actions
 	connectToGame: (gameId: string) => Promise<void>;
@@ -46,6 +75,7 @@ export const useGameStore = create<GameStore & GameStoreActions>()(
 			latestTurn: 0,
 			selectedTurn: 0,
 			prompts: {},
+			events: [],
 			connectionStatus: "closed",
 			selectedPlayer: null,
 			fogOfWarEnabled: true,
@@ -89,12 +119,22 @@ export const useGameStore = create<GameStore & GameStoreActions>()(
 
 			setError: (error) => set({ error }),
 
+			addEvent: (event) =>
+				set((prev) => ({
+					events: [event, ...prev.events].slice(0, 100), // Keep only the last 100 events
+				})),
+
+			clearEvents: () => set({ events: [] }),
+
 			// Complex actions
 			connectToGame: async (gameId: string) => {
 				const state = get();
 
 				try {
 					set({ isLoading: true, error: null, gameId });
+
+					// Clear previous events when connecting to a new game
+					get().clearEvents();
 
 					// Get initial game state
 					const gameState = await api.getGameState(gameId);
@@ -131,10 +171,29 @@ export const useGameStore = create<GameStore & GameStoreActions>()(
 						console.log("Received game info:", event);
 						// Game info means we're successfully connected (redundant but safe)
 						set({ connectionStatus: "open" });
+
+						// Add connection event to UI
+						const uiEvent = createUIEvent(
+							"game_info",
+							event,
+							`Connected to game: ${event.message}`,
+							"info",
+						);
+						get().addEvent(uiEvent);
 					});
 
 					ws.on("turn_end", (event: TurnEndEvent) => {
 						const { turn, game_id } = event;
+
+						// Add turn end event to UI
+						const uiEvent = createUIEvent(
+							"turn_end",
+							event,
+							`Turn ${turn} ended`,
+							"info",
+						);
+						get().addEvent(uiEvent);
+
 						// Load the new game state
 						api
 							.getGameState(game_id)
@@ -149,14 +208,68 @@ export const useGameStore = create<GameStore & GameStoreActions>()(
 
 					ws.on("turn_start", (event: TurnStartEvent) => {
 						console.log("Turn started:", event);
+
+						// Add turn start event to UI
+						const uiEvent = createUIEvent(
+							"turn_start",
+							event,
+							`Turn ${event.turn} started`,
+							"info",
+						);
+						get().addEvent(uiEvent);
 					});
 
 					ws.on("diplomacy", (event: DiplomacyEvent) => {
 						console.log("Diplomacy event:", event);
+
+						// Add diplomacy event to UI
+						const message = `${event.from_player} changed diplomatic stance with ${event.to_player} to ${event.new_state}`;
+						const severity =
+							event.new_state === "war"
+								? "error"
+								: event.new_state === "alliance"
+									? "info"
+									: "warning";
+						const uiEvent = createUIEvent(
+							"diplomacy",
+							event,
+							message,
+							severity,
+							event.from_player,
+						);
+						get().addEvent(uiEvent);
 					});
 
 					ws.on("combat", (event: CombatEvent) => {
 						console.log("Combat event:", event);
+
+						// Add combat event to UI
+						const message = `Unit ${event.attacker_id} attacks Unit ${event.target_id} for ${event.damage} damage (${event.result})`;
+						const uiEvent = createUIEvent("combat", event, message, "warning");
+						get().addEvent(uiEvent);
+					});
+
+					// Handle player actions
+					ws.on("player_action", (event: Record<string, unknown>) => {
+						console.log("Player action:", event);
+
+						if (event.player_id && event.action) {
+							const actionType =
+								typeof event.action === "object" &&
+								event.action !== null &&
+								"type" in event.action
+									? event.action.type
+									: "unknown";
+							const message = `${event.player_id} performed action: ${actionType}`;
+							const uiEvent = createUIEvent(
+								"player_action",
+								event,
+								message,
+								"info",
+								event.player_id as string,
+							);
+							get().addEvent(uiEvent);
+						}
 					});
 
 					await ws.connect();

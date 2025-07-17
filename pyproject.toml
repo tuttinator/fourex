@@ -23,6 +23,24 @@ dependencies = [
     "instructor>=1.9.2",
     "openai>=1.95.1",
     "requests>=2.32.4",
+    # Multi-LLM provider support
+    "replicate>=0.22.0",
+    "transformers>=4.30.0",
+    "huggingface-hub>=0.16.0",
+    # MCP server support
+    "mcp>=1.0.0",
+    # Observability and tracing
+    "logfire>=0.20.0",
+    "structlog>=23.1.0",
+    # Retry and resilience
+    "tenacity>=8.2.0",
+    "backoff>=2.2.0",
+    # Enhanced serialization
+    "orjson>=3.9.0",
+    # Database persistence
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
 ]
 
 [project.optional-dependencies]

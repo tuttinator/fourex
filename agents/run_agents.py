@@ -233,6 +233,11 @@ def main():
     parser.add_argument(
         "--list-presets", action="store_true", help="List available presets"
     )
+    parser.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help="Auto-confirm game start (skip prompt)",
+    )
 
     args = parser.parse_args()
 
@@ -331,24 +336,29 @@ LLM Model: {config.llm_model}
     )
 
     # Confirm before starting
-    if not Confirm.ask("Start the game?", default=True):
+    if not args.auto_confirm and not Confirm.ask("Start the game?", default=True):
         console.print("[yellow]Game cancelled.[/yellow]")
         return
 
     # Run the game
     try:
-        orchestrator = GameOrchestrator(config)
-        results = orchestrator.run_game()
+        import asyncio
 
-        # Save game log
-        log_filename = f"logs/game_log_{config.game_id}_{int(time.time())}.json"
-        os.makedirs("logs", exist_ok=True)
-        orchestrator.save_game_log(log_filename)
+        async def run_async_game():
+            orchestrator = GameOrchestrator(config)
+            results = await orchestrator.run_game()
 
-        console.print(f"\n[green]Game completed successfully![/green]")
-        console.print(f"[blue]Game log saved to: {log_filename}[/blue]")
+            # Save game log
+            log_filename = f"logs/game_log_{config.game_id}_{int(time.time())}.json"
+            os.makedirs("logs", exist_ok=True)
+            orchestrator.save_game_log(log_filename)
 
-        return results
+            console.print(f"\n[green]Game completed successfully![/green]")
+            console.print(f"[blue]Game log saved to: {log_filename}[/blue]")
+
+            return results
+
+        return asyncio.run(run_async_game())
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Game interrupted by user.[/yellow]")

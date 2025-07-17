@@ -4,7 +4,6 @@ Tests for FastAPI endpoints.
 import pytest
 from fastapi.testclient import TestClient
 from backend.src.main import app
-from backend.src.api.game_controller import GameController
 
 
 @pytest.fixture

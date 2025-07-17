@@ -1,9 +1,12 @@
+import asyncio
 import json
 import time
 from dataclasses import dataclass
 from typing import Any
 
+import logfire
 import requests
+import structlog
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -12,9 +15,31 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
-from .agent import FourXAgent, GameClient, LLMClient
+from .agent import EnhancedLLMClient, FourXAgent, GameClient
+from .enhanced_logging import enhanced_logger
+from .persistent_game_client import ResilientGameConnection
 
 console = Console()
+
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -27,69 +52,118 @@ class GameConfig:
     game_backend_url: str = "http://localhost:8000/api/v1"
     llm_backend_url: str = "http://localhost:1234/v1"
     llm_model: str = "qwen/qwen3-32b"
+    primary_provider: str = "llm_studio"
+    fallback_providers: list[str] | None = None
 
 
 class GameOrchestrator:
-    """Orchestrates multiple AI agents playing a 4X game"""
+    """Enhanced orchestrator with async support and detailed logging"""
 
     def __init__(self, config: GameConfig):
         self.config = config
         self.game_client = GameClient(config.game_backend_url)
+        self.resilient_connection = ResilientGameConnection(config.game_backend_url)
         self.agents: dict[str, FourXAgent] = {}
         self.game_state = None
         self.game_active = False
         self.turn_logs: list[dict[str, Any]] = []
+        self.logger = logger.bind(component="orchestrator", game_id=config.game_id)
 
         # Initialize agents
         self._initialize_agents()
 
     def _initialize_agents(self):
-        """Initialize all agents with their personalities"""
+        """Initialize all agents with their personalities and enhanced clients"""
         for player_id in self.config.players:
             personality = self.config.personalities.get(player_id, "balanced")
-            llm_client = LLMClient(self.config.llm_backend_url, self.config.llm_model)
 
             agent = FourXAgent(
                 player_id=player_id,
                 personality=personality,
                 game_client=None,  # Let agent create its own with correct player_id
-                llm_client=llm_client,
+                llm_client=None,  # Let agent create its own enhanced client
                 game_backend_url=self.config.game_backend_url,
+                primary_provider=self.config.primary_provider,
+                fallback_providers=self.config.fallback_providers,
             )
             self.agents[player_id] = agent
 
         console.print(f"[green]Initialized {len(self.agents)} agents[/green]")
+        self.logger.info("Agents initialized", agent_count=len(self.agents))
 
     def create_game(self) -> bool:
-        """Create a new game on the backend"""
+        """Create a new game on the backend with persistence support"""
         try:
-            payload = {
-                "players": self.config.players,
-                "seed": int(time.time()),  # Use timestamp as seed
-            }
+            seed = int(time.time())  # Use timestamp as seed
 
-            response = requests.post(
-                f"{self.config.game_backend_url}/games/{self.config.game_id}/start",
-                json=payload,
+            # Use resilient connection to ensure game exists
+            success = self.resilient_connection.connect_to_game(
+                self.config.game_id, self.config.players, seed
             )
-            response.raise_for_status()
 
-            console.print(
-                f"[green]Game {self.config.game_id} created successfully[/green]"
-            )
+            if success:
+                console.print(
+                    f"[green]Game {self.config.game_id} ready (persistent)[/green]"
+                )
             return True
 
         except Exception as e:
             console.print(f"[red]Failed to create game: {e}[/red]")
+            self.logger.error("Game creation failed", error=str(e))
             return False
 
-    def run_game(self) -> dict[str, Any]:
-        """Run the complete game from start to finish"""
+    def check_and_restore_game(self) -> bool:
+        """Check if game can be restored from persistence"""
+        try:
+            console.print(
+                f"[blue]Checking persistence for game {self.config.game_id}...[/blue]"
+            )
+
+            # Check current game state
+            state = self.resilient_connection.get_game_state(self.config.game_id)
+            if state:
+                self.game_state = state
+                console.print(
+                    f"[green]✓ Game {self.config.game_id} restored from persistence[/green]"
+                )
+                console.print(
+                    f"[blue]  Current turn: {state.turn}/{state.max_turns}[/blue]"
+                )
+                self.logger.info(
+                    "Game restored from persistence",
+                    turn=state.turn,
+                    max_turns=state.max_turns,
+                )
+                return True
+
+            console.print(
+                f"[yellow]No persistent state found for game {self.config.game_id}[/yellow]"
+            )
+            return False
+
+        except Exception as e:
+            console.print(f"[red]Error checking game persistence: {e}[/red]")
+            self.logger.error("Failed to check game persistence", error=str(e))
+            return False
+
+    @logfire.instrument("run_game")
+    async def run_game(self) -> dict[str, Any]:
+        """Run the complete game from start to finish with enhanced logging"""
         console.print(f"[bold blue]Starting game {self.config.game_id}[/bold blue]")
 
-        # Create game
-        if not self.create_game():
-            return {"error": "Failed to create game"}
+        # Start enhanced logging
+        enhanced_logger.start_game_log(
+            game_id=self.config.game_id,
+            players=self.config.players,
+            personalities=self.config.personalities,
+            config=self.config.__dict__,
+        )
+
+        # Try to restore existing game first, then create if needed
+        game_restored = self.check_and_restore_game()
+        if not game_restored:
+            if not self.create_game():
+                return {"error": "Failed to create game"}
 
         self.game_active = True
         game_result = {}
@@ -97,7 +171,7 @@ class GameOrchestrator:
         try:
             # Main game loop
             while self.game_active:
-                turn_result = self._play_turn()
+                turn_result = await self._play_turn()
 
                 if not turn_result["success"]:
                     console.print(
@@ -112,10 +186,10 @@ class GameOrchestrator:
                     break
 
                 # Brief pause between turns
-                time.sleep(1)
+                await asyncio.sleep(1)
 
             # Get final game state
-            final_state = self.game_client.get_game_state(self.config.game_id)
+            final_state = self.resilient_connection.get_game_state(self.config.game_id)
             game_result = self._analyze_final_state(final_state)
 
             console.print(
@@ -133,15 +207,26 @@ class GameOrchestrator:
 
         return game_result
 
-    def _play_turn(self) -> dict[str, Any]:
-        """Play one complete turn with all agents"""
+    async def _play_turn(self) -> dict[str, Any]:
+        """Play one complete turn with all agents (async)"""
         try:
-            # Get current game state
-            game_state = self.game_client.get_game_state(self.config.game_id)
+            # Get current game state using resilient connection
+            game_state = self.resilient_connection.get_game_state(self.config.game_id)
+            if not game_state:
+                self.logger.error(
+                    "Failed to get game state", game_id=self.config.game_id
+                )
+                return {"success": False, "error": "Game state not available"}
+
             current_turn = game_state.turn
 
             # Check if game has ended
             if current_turn >= game_state.max_turns:
+                # Finish enhanced logging
+                enhanced_logger.finish_game_log(
+                    final_turn=current_turn,
+                    winner=None,  # Could determine winner here
+                )
                 return {"success": True, "game_ended": True, "final_state": game_state}
 
             console.print(
@@ -158,13 +243,14 @@ class GameOrchestrator:
                 "turn_start_time": time.time(),
             }
 
+            # Play turns sequentially (could be made concurrent if needed)
             for player_id in self.config.players:
                 agent = self.agents[player_id]
 
                 console.print(f"[cyan]{player_id}'s turn...[/cyan]")
 
                 start_time = time.time()
-                success = agent.play_turn(self.config.game_id)
+                success = await agent.play_turn(self.config.game_id)
                 duration = time.time() - start_time
 
                 turn_log["player_actions"][player_id] = {
@@ -175,6 +261,9 @@ class GameOrchestrator:
 
                 if not success:
                     console.print(f"[red]{player_id} failed to play turn[/red]")
+                    self.logger.warning(
+                        "Player turn failed", player=player_id, turn=current_turn
+                    )
 
             turn_log["turn_end_time"] = time.time()
             self.turn_logs.append(turn_log)
@@ -342,13 +431,13 @@ def create_test_game() -> GameConfig:
     )
 
 
-def main():
-    """Main function to run a test game"""
+async def main():
+    """Main function to run a test game (async)"""
     config = create_test_game()
     orchestrator = GameOrchestrator(config)
 
     try:
-        results = orchestrator.run_game()
+        results = await orchestrator.run_game()
 
         # Save game log
         log_filename = f"game_log_{config.game_id}_{int(time.time())}.json"
@@ -359,8 +448,9 @@ def main():
 
     except Exception as e:
         console.print(f"[red]Error running game: {e}[/red]")
+        logfire.log_exception("Game orchestration failed")
         return {"error": str(e)}
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

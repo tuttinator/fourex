@@ -56,3 +56,5 @@ yarn-error.log*
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+.claude/

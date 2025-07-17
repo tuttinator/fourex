@@ -1,17 +1,15 @@
 """
 Game rules and turn resolution logic.
 """
+
 import random
 from copy import deepcopy
-from typing import Dict, List, Optional, Set
 
 from .models import (
+    UNIT_STATS,
     Action,
     ActionResult,
     AttackAction,
-    BuildBuildingAction,
-    BuildImprovementAction,
-    BUILDING_STATS,
     City,
     Coord,
     DiplomaticState,
@@ -28,11 +26,10 @@ from .models import (
     TurnResult,
     Unit,
     UnitType,
-    UNIT_STATS,
 )
 
 
-def generate_map(width: int, height: int, seed: int) -> List[Tile]:
+def generate_map(width: int, height: int, seed: int) -> list[Tile]:
     """Generate a random map with the given dimensions and seed."""
     rng = random.Random(seed)
     tiles = []
@@ -75,7 +72,7 @@ def generate_map(width: int, height: int, seed: int) -> List[Tile]:
     return tiles
 
 
-def get_neighbors(loc: Coord, width: int, height: int) -> List[Coord]:
+def get_neighbors(loc: Coord, width: int, height: int) -> list[Coord]:
     """Get orthogonal neighbors of a coordinate."""
     neighbors = []
     for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
@@ -87,7 +84,7 @@ def get_neighbors(loc: Coord, width: int, height: int) -> List[Coord]:
 
 def get_visible_tiles(
     state: GameState, player_id: PlayerId, sight_range: int = 2
-) -> Set[Coord]:
+) -> set[Coord]:
     """Get all tiles visible to a player."""
     visible = set()
 
@@ -137,7 +134,7 @@ def get_visible_tiles(
 
 def get_tiles_in_range(
     center: Coord, range_val: int, width: int, height: int
-) -> Set[Coord]:
+) -> set[Coord]:
     """Get all tiles within orthogonal range of center."""
     tiles = set()
     for dx in range(-range_val, range_val + 1):
@@ -155,9 +152,7 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
     redacted = deepcopy(state)
 
     # Filter tiles to only visible ones
-    redacted.tiles = [
-        tile for tile in redacted.tiles if tile.loc in visible_tiles
-    ]
+    redacted.tiles = [tile for tile in redacted.tiles if tile.loc in visible_tiles]
 
     # Filter units to only visible ones
     visible_units = {}
@@ -181,7 +176,10 @@ def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, st
     # Check distance
     distance = unit.loc.distance_to(target)
     if distance > unit.moves_left:
-        return False, f"Unit {unit.id} has {unit.moves_left} moves left, need {distance}"
+        return (
+            False,
+            f"Unit {unit.id} has {unit.moves_left} moves left, need {distance}",
+        )
 
     # Check if target tile exists and is passable
     target_tile = state.get_tile(target)
@@ -317,14 +315,14 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
         if not attacker.can_attack(target_city.loc):
             return ActionResult(
                 success=False,
-                message=f"Unit {attacker.id} cannot attack city {target_city.id} at range",
+                message=(
+                    f"Unit {attacker.id} cannot attack city {target_city.id} at range"
+                ),
                 action=action,
             )
 
         # Check diplomatic state
-        diplomatic_state = state.get_diplomatic_state(
-            attacker.owner, target_city.owner
-        )
+        diplomatic_state = state.get_diplomatic_state(attacker.owner, target_city.owner)
         if diplomatic_state == DiplomaticState.ALLIANCE:
             return ActionResult(
                 success=False,
@@ -339,7 +337,9 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
 
         damage = max(1, attacker_strength)
         target_city.hp -= damage
-        message = f"Unit {attacker.id} attacks city {target_city.id} for {damage} damage"
+        message = (
+            f"Unit {attacker.id} attacks city {target_city.id} for {damage} damage"
+        )
 
         # City counter-attack if it has walls
         if target_city.has_walls() and target_city.hp > 0:
@@ -402,7 +402,7 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
     if not tile:
         return ActionResult(
             success=False,
-            message=f"Invalid location for city",
+            message="Invalid location for city",
             action=action,
         )
 
@@ -535,9 +535,15 @@ def collect_resources(state: GameState) -> None:
         if tile.improvement and tile.owner:
             resources_generated = ResourceBag()
 
-            if tile.improvement == ImprovementType.FARM and tile.resource == Resource.FOOD:
+            if (
+                tile.improvement == ImprovementType.FARM
+                and tile.resource == Resource.FOOD
+            ):
                 resources_generated.food += 2
-            elif tile.improvement == ImprovementType.MINE and tile.resource == Resource.ORE:
+            elif (
+                tile.improvement == ImprovementType.MINE
+                and tile.resource == Resource.ORE
+            ):
                 resources_generated.ore += 2
             elif (
                 tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
@@ -557,15 +563,15 @@ def reset_unit_moves(state: GameState) -> None:
 
 
 def resolve_turn(
-    state: GameState, player_actions: Dict[PlayerId, List[Action]]
+    state: GameState, player_actions: dict[PlayerId, list[Action]]
 ) -> TurnResult:
     """
     Resolve a complete turn deterministically.
-    
+
     Args:
         state: Current game state
         player_actions: Dictionary mapping player IDs to their actions
-        
+
     Returns:
         TurnResult with action outcomes and updated state hash
     """
@@ -573,7 +579,7 @@ def resolve_turn(
     reset_unit_moves(state)
 
     # Process all actions
-    results: Dict[PlayerId, List[ActionResult]] = {}
+    results: dict[PlayerId, list[ActionResult]] = {}
 
     for player_id in state.players:
         player_results = []
@@ -616,11 +622,14 @@ def resolve_turn(
     # Collect resources at end of turn
     collect_resources(state)
 
+    # Store current turn number before incrementing
+    current_turn = state.turn
+
     # Advance turn counter
     state.turn += 1
 
     return TurnResult(
-        turn=state.turn,
+        turn=current_turn,
         player_actions=results,
         state_hash=state.hash_state(),
     )

@@ -8,14 +8,18 @@ help:
 	@echo "Setup:"
 	@echo "  install     - Install Python dependencies with uv"
 	@echo "  dev-install - Install development dependencies with uv"
+	@echo "  setup-env   - Copy .env.example to .env for configuration"
 	@echo ""
 	@echo "Game Commands:"
-	@echo "  test        - Run test suite"
+	@echo "  test        - Run comprehensive test suite"
 	@echo "  quick       - Run quick test game (2 players, 30 turns)"
 	@echo "  classic     - Run classic 3-player game"
 	@echo "  showcase    - Run personality showcase (4 players)"
 	@echo "  advanced    - Run advanced strategies game"
 	@echo "  interactive - Run interactive game setup"
+	@echo ""
+	@echo "MCP Server:"
+	@echo "  mcp-server  - Run MCP server for tool use"
 	@echo ""
 	@echo "Development:"
 	@echo "  format      - Format code with black"
@@ -25,15 +29,21 @@ help:
 	@echo "Utilities:"
 	@echo "  clean       - Clean up log files"
 	@echo "  logs        - Show recent game logs"
+	@echo "  analyze     - Analyze player performance from logs"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  Game Backend: http://localhost:8000"
 	@echo "  LLM Backend:  http://localhost:1234"
 	@echo "  Model:        qwen/qwen3-32b"
+	@echo "  Providers:    LLM Studio, OpenAI, Replicate, HuggingFace"
 
 install:
 	cd .. && uv sync --dev
 	@echo "Dependencies installed!"
+
+setup-env:
+	cp .env.example .env
+	@echo "Environment file created! Please edit .env with your API keys."
 
 test:
 	uv run python test_agents.py
@@ -53,13 +63,20 @@ advanced:
 interactive:
 	uv run python run_agents.py --interactive
 
+mcp-server:
+	uv run python run_mcp_server.py
+
 clean:
-	rm -rf logs/*.json
+	rm -rf logs/*.json test_logs/
 	@echo "Log files cleaned!"
 
 logs:
 	@echo "Recent game logs:"
 	@ls -la logs/ | head -10 || echo "No logs found"
+
+analyze:
+	@echo "Player performance analysis:"
+	uv run python -c "from src.enhanced_logging import enhanced_logger; import sys; player = sys.argv[1] if len(sys.argv) > 1 else 'Alice'; print(enhanced_logger.analyze_player_performance(player))" $(if $(PLAYER),$(PLAYER),Alice)
 
 # Development targets
 dev-install:

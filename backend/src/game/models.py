@@ -7,9 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class Terrain(str, Enum):
@@ -69,7 +68,7 @@ PlayerId = str
 class CreateGameRequest(BaseModel):
     """Request to create a new game."""
 
-    players: List[PlayerId]
+    players: list[PlayerId]
     seed: int = 42
 
 
@@ -200,11 +199,11 @@ class Tile(BaseModel):
     id: int
     loc: Coord
     terrain: Terrain
-    resource: Optional[Resource] = None
-    owner: Optional[PlayerId] = None
-    city_id: Optional[int] = None
-    unit_id: Optional[int] = None
-    improvement: Optional[ImprovementType] = None
+    resource: Resource | None = None
+    owner: PlayerId | None = None
+    city_id: int | None = None
+    unit_id: int | None = None
+    improvement: ImprovementType | None = None
 
 
 class Unit(BaseModel):
@@ -244,8 +243,8 @@ class City(BaseModel):
     owner: PlayerId
     loc: Coord
     hp: int = 10
-    build_queue: Optional[BuildJob] = None
-    buildings: Set[BuildingType] = Field(default_factory=set)
+    build_queue: BuildJob | None = None
+    buildings: set[BuildingType] = Field(default_factory=set)
 
     def has_walls(self) -> bool:
         """Check if city has defensive walls."""
@@ -295,30 +294,30 @@ class GameState(BaseModel):
     rng_state: int = 42
     map_width: int = 20
     map_height: int = 20
-    tiles: List[Tile] = Field(default_factory=list)
-    units: Dict[int, Unit] = Field(default_factory=dict)
-    cities: Dict[int, City] = Field(default_factory=dict)
-    players: List[PlayerId] = Field(default_factory=list)
-    diplomacy: Dict[Tuple[PlayerId, PlayerId], DiplomaticState] = Field(
+    tiles: list[Tile] = Field(default_factory=list)
+    units: dict[int, Unit] = Field(default_factory=dict)
+    cities: dict[int, City] = Field(default_factory=dict)
+    players: list[PlayerId] = Field(default_factory=list)
+    diplomacy: dict[tuple[PlayerId, PlayerId], DiplomaticState] = Field(
         default_factory=dict
     )
-    stockpiles: Dict[PlayerId, ResourceBag] = Field(default_factory=dict)
+    stockpiles: dict[PlayerId, ResourceBag] = Field(default_factory=dict)
     next_unit_id: int = 1
     next_city_id: int = 1
     max_turns: int = 100
 
-    def get_tile(self, loc: Coord) -> Optional[Tile]:
+    def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
         for tile in self.tiles:
             if tile.loc == loc:
                 return tile
         return None
 
-    def get_unit(self, unit_id: int) -> Optional[Unit]:
+    def get_unit(self, unit_id: int) -> Unit | None:
         """Get unit by ID."""
         return self.units.get(unit_id)
 
-    def get_city(self, city_id: int) -> Optional[City]:
+    def get_city(self, city_id: int) -> City | None:
         """Get city by ID."""
         return self.cities.get(city_id)
 
@@ -389,14 +388,14 @@ class BuildBuildingAction(BaseModel):
     building_type: BuildingType
 
 
-Action = Union[
-    MoveAction,
-    AttackAction,
-    BuildImprovementAction,
-    FoundCityAction,
-    TrainUnitAction,
-    BuildBuildingAction,
-]
+Action = (
+    MoveAction
+    | AttackAction
+    | BuildImprovementAction
+    | FoundCityAction
+    | TrainUnitAction
+    | BuildBuildingAction
+)
 
 
 class ActionResult(BaseModel):
@@ -411,12 +410,5 @@ class TurnResult(BaseModel):
     """Result of processing a complete turn."""
 
     turn: int
-    player_actions: Dict[PlayerId, List[ActionResult]]
+    player_actions: dict[PlayerId, list[ActionResult]]
     state_hash: str
-
-
-class CreateGameRequest(BaseModel):
-    """Request to create a new game."""
-
-    players: List[PlayerId]
-    seed: int = 42

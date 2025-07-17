@@ -57,7 +57,7 @@ class GameController:
         # Add starting worker for each player
         rng = random.Random(seed)
         unit_id = 1
-        
+
         for i, player in enumerate(players):
             # Find a good starting position (plains or forest, away from other players)
             attempts = 0
@@ -65,7 +65,7 @@ class GameController:
                 x = rng.randint(2, 17)  # Keep away from edges
                 y = rng.randint(2, 17)
                 coord = Coord(x=x, y=y)
-                
+
                 # Find the tile at this coordinate
                 tile = next((t for t in tiles if t.loc == coord), None)
                 if tile and tile.terrain in ["plains", "forest"]:
@@ -75,7 +75,7 @@ class GameController:
                         if coord.distance_to(existing_unit.loc) < 5:
                             too_close = True
                             break
-                    
+
                     if not too_close:
                         # Create starting worker
                         worker = Unit(
@@ -84,14 +84,14 @@ class GameController:
                             type=UnitType.WORKER,
                             hp=100,
                             moves_left=2,
-                            loc=coord
+                            loc=coord,
                         )
                         state.units[unit_id] = worker
                         unit_id += 1
                         break
-                
+
                 attempts += 1
-            
+
             # Fallback: if we couldn't find a good position, just place it somewhere
             if player not in [u.owner for u in state.units.values()]:
                 # Find any plains/forest tile
@@ -103,7 +103,7 @@ class GameController:
                             type=UnitType.WORKER,
                             hp=100,
                             moves_left=2,
-                            loc=tile.loc
+                            loc=tile.loc,
                         )
                         state.units[unit_id] = worker
                         unit_id += 1

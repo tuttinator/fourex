@@ -38,3 +38,36 @@ clean: ## Clean up temporary files
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 	rm -rf .coverage .pytest_cache .mypy_cache
+
+# Database management tasks
+db-create: ## Create database tables
+	cd backend && uv run python manage_db.py create
+
+db-drop: ## Drop all database tables (WARNING: deletes all data!)
+	cd backend && uv run python manage_db.py drop
+
+db-reset: ## Drop and recreate all database tables
+	cd backend && uv run python manage_db.py reset
+
+db-check: ## Check database connection
+	cd backend && uv run python manage_db.py check
+
+db-list: ## List all games in database
+	cd backend && uv run python manage_db.py list-games
+
+db-info: ## Show detailed game info (usage: make db-info GAME=<game_id>)
+	cd backend && uv run python manage_db.py game-info $(GAME)
+
+# Backend development tasks
+backend-dev: ## Run backend development server
+	cd backend && uv run python src/main.py
+
+backend-test: ## Run backend tests
+	cd backend && uv run pytest tests/
+
+# Agent tasks
+quick: ## Run a quick test game with agents
+	cd agents && uv run python run_agents.py --preset quick_test --auto-confirm
+
+agents-test: ## Test agent functionality
+	cd agents && uv run python test_agents.py

@@ -7,7 +7,6 @@ import json
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
-from .game_controller import GameController, get_game_controller
 
 router = APIRouter()
 

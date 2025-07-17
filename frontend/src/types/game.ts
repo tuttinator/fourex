@@ -189,6 +189,26 @@ export interface GameListResponse {
 	games: string[];
 }
 
+// Event log types for UI
+export interface UIGameEvent {
+	id: string;
+	type:
+		| "turn_start"
+		| "turn_end"
+		| "combat"
+		| "diplomacy"
+		| "city_founded"
+		| "unit_trained"
+		| "player_action"
+		| "game_info";
+	timestamp: Date;
+	message: string;
+	severity: "info" | "warning" | "error";
+	playerId?: string;
+	turn?: number;
+	rawEvent?: Record<string, unknown>; // Store the original WebSocket event for debugging
+}
+
 // Frontend-specific types
 export interface GameStore {
 	gameId: string | null;
@@ -196,6 +216,7 @@ export interface GameStore {
 	latestTurn: number;
 	selectedTurn: number;
 	prompts: Record<number, PromptLog[]>;
+	events: UIGameEvent[];
 	connectionStatus: "connecting" | "open" | "closed" | "error";
 	selectedPlayer: PlayerId | null;
 	fogOfWarEnabled: boolean;

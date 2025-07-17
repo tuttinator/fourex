@@ -2,12 +2,16 @@
 REST API endpoints for game state and actions.
 """
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database.connection import get_database_session
 from ..game.models import Action, CreateGameRequest, GameState, PlayerId, PromptLog
 from ..game.rules import redact_state
-from .game_controller import GameController, get_game_controller
+from .persistent_game_controller import get_persistent_game_controller
 
 router = APIRouter()
 security = HTTPBearer()
@@ -36,18 +40,19 @@ def get_current_player_optional(
     return token.credentials[7:]  # Remove "player_" prefix
 
 
-@router.get("/state")
+@router.get("/state", tags=["state"])
 async def get_game_state(
     game_id: str = "default",
     current_player: PlayerId | None = Depends(get_current_player_optional),
-    controller: GameController = Depends(get_game_controller),
+    session: AsyncSession = Depends(get_database_session),
 ) -> GameState:
     """
     Get the current game state with optional fog-of-war applied for the requesting player.
     If no authentication token is provided, returns the full game state without fog-of-war.
     """
     try:
-        state = controller.get_game_state(game_id)
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
         if not state:
             raise HTTPException(status_code=404, detail="Game not found")
 
@@ -63,30 +68,31 @@ async def get_game_state(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/actions")
+@router.post("/actions", tags=["state"])
 async def submit_actions(
     actions: list[Action],
     game_id: str = "default",
     current_player: PlayerId = Depends(get_current_player),
-    controller: GameController = Depends(get_game_controller),
+    session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, str]:
     """
     Submit actions for the current turn.
     """
     try:
-        controller.submit_player_actions(game_id, current_player, actions)
+        controller = get_persistent_game_controller(session)
+        await controller.submit_player_actions(game_id, current_player, actions)
         return {"status": "actions_submitted", "count": str(len(actions))}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/prompts")
+@router.post("/prompts", tags=["state"])
 async def submit_prompt_log(
     prompt_log: PromptLog,
     game_id: str = "default",
     current_player: PlayerId = Depends(get_current_player),
-    controller: GameController = Depends(get_game_controller),
+    session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, str]:
     """
     Submit LLM prompt and response log for research purposes.
@@ -99,40 +105,101 @@ async def submit_prompt_log(
                 detail="Prompt log player must match authenticated player",
             )
 
-        controller.log_prompt(game_id, prompt_log)
+        controller = get_persistent_game_controller(session)
+        await controller.log_prompt(game_id, prompt_log)
         return {"status": "prompt_logged"}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/games")
+@router.get("/games", tags=["games"])
 async def list_games(
-    controller: GameController = Depends(get_game_controller),
+    session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, list[str]]:
     """
-    Kist all active games.
+    List all active games.
     """
     try:
-        game_ids = controller.list_games()
+        controller = get_persistent_game_controller(session)
+        game_ids = await controller.list_games()
         return {"games": game_ids}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/games/{game_id}/start")
+@router.post("/games/{game_id}/start", tags=["games"])
 async def start_game(
     game_id: str,
     request: CreateGameRequest,
-    controller: GameController = Depends(get_game_controller),
+    session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, str]:
     """
     Start a new game with the given players.
     """
     try:
-        controller.create_game(game_id, request.players, request.seed)
+        controller = get_persistent_game_controller(session)
+        await controller.create_game(game_id, request.players, request.seed)
         return {"status": "game_created", "game_id": game_id}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/games/{game_id}/info", tags=["games"])
+async def get_game_info(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """
+    Get game metadata and status.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        game_info = await controller.get_game_info(game_id)
+        if not game_info:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        return {
+            "game_id": game_info.id,
+            "players": game_info.players,
+            "turn": game_info.turn,
+            "max_turns": game_info.max_turns,
+            "status": game_info.status,
+            "winner": game_info.winner,
+            "victory_type": game_info.victory_type,
+            "created_at": game_info.created_at.isoformat(),
+            "updated_at": game_info.updated_at.isoformat(),
+            "ended_at": game_info.ended_at.isoformat() if game_info.ended_at else None,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/games/{game_id}/restore", tags=["games"])
+async def restore_game(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, str]:
+    """
+    Restore game state from database snapshot.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.restore_game_state(game_id)
+        if not state:
+            raise HTTPException(
+                status_code=404, detail="Game not found or no snapshot available"
+            )
+
+        return {
+            "status": "game_restored",
+            "game_id": game_id,
+            "turn": str(state.turn),
+            "state_hash": state.hash_state(),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
