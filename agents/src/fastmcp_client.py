@@ -16,9 +16,7 @@ class FastMCPGameClient:
     """Client for connecting to the FastMCP server and using game analysis tools."""
 
     def __init__(
-        self, 
-        player_id: str, 
-        game_backend_url: str = "http://localhost:8000/api/v1"
+        self, player_id: str, game_backend_url: str = "http://localhost:8000/api/v1"
     ):
         self.player_id = player_id
         self.game_backend_url = game_backend_url
@@ -28,20 +26,20 @@ class FastMCPGameClient:
         # In production, this would connect via actual MCP protocol
         try:
             from .fastmcp_server import (
-                get_game_state,
-                analyze_territory,
-                evaluate_military_position,
-                find_resource_opportunities,
-                validate_actions,
-                calculate_distances,
+                ActionValidationRequest,
+                DistanceCalculationRequest,
                 GameStateRequest,
-                TerritoryAnalysisRequest,
                 MilitaryAnalysisRequest,
                 ResourceOpportunitiesRequest,
-                ActionValidationRequest,
-                DistanceCalculationRequest
+                TerritoryAnalysisRequest,
+                analyze_territory,
+                calculate_distances,
+                evaluate_military_position,
+                find_resource_opportunities,
+                get_game_state,
+                validate_actions,
             )
-            
+
             self.tools = {
                 "get_game_state": get_game_state,
                 "analyze_territory": analyze_territory,
@@ -50,7 +48,7 @@ class FastMCPGameClient:
                 "validate_actions": validate_actions,
                 "calculate_distances": calculate_distances,
             }
-            
+
             self.request_models = {
                 "get_game_state": GameStateRequest,
                 "analyze_territory": TerritoryAnalysisRequest,
@@ -59,7 +57,7 @@ class FastMCPGameClient:
                 "validate_actions": ActionValidationRequest,
                 "calculate_distances": DistanceCalculationRequest,
             }
-            
+
             self.logger.info("FastMCP client initialized with direct server connection")
             self._available = True
         except Exception as e:
@@ -77,8 +75,7 @@ class FastMCPGameClient:
 
         try:
             request = self.request_models["get_game_state"](
-                game_id=game_id,
-                player_id=self.player_id
+                game_id=game_id, player_id=self.player_id
             )
             result = await self.tools["get_game_state"](request)
             return json.loads(result) if result else None
@@ -87,9 +84,7 @@ class FastMCPGameClient:
             return None
 
     async def analyze_territory(
-        self, 
-        game_id: str, 
-        focus_area: dict[str, int] | None = None
+        self, game_id: str, focus_area: dict[str, int] | None = None
     ) -> dict[str, Any] | None:
         """Analyze territory around a specific location."""
         if not self._available:
@@ -97,9 +92,7 @@ class FastMCPGameClient:
 
         try:
             request = self.request_models["analyze_territory"](
-                game_id=game_id,
-                player_id=self.player_id,
-                focus_area=focus_area
+                game_id=game_id, player_id=self.player_id, focus_area=focus_area
             )
             result = await self.tools["analyze_territory"](request)
             return json.loads(result) if result else None
@@ -118,7 +111,7 @@ class FastMCPGameClient:
             request = self.request_models["evaluate_military_position"](
                 game_id=game_id,
                 player_id=self.player_id,
-                include_predictions=include_predictions
+                include_predictions=include_predictions,
             )
             result = await self.tools["evaluate_military_position"](request)
             return json.loads(result) if result else None
@@ -129,9 +122,7 @@ class FastMCPGameClient:
             return None
 
     async def find_resource_opportunities(
-        self, 
-        game_id: str,
-        resource_types: list[str] | None = None
+        self, game_id: str, resource_types: list[str] | None = None
     ) -> dict[str, Any] | None:
         """Find nearby resource opportunities."""
         if not self._available:
@@ -139,9 +130,7 @@ class FastMCPGameClient:
 
         try:
             request = self.request_models["find_resource_opportunities"](
-                game_id=game_id,
-                player_id=self.player_id,
-                resource_types=resource_types
+                game_id=game_id, player_id=self.player_id, resource_types=resource_types
             )
             result = await self.tools["find_resource_opportunities"](request)
             return json.loads(result) if result else None
@@ -160,9 +149,7 @@ class FastMCPGameClient:
 
         try:
             request = self.request_models["validate_actions"](
-                game_id=game_id,
-                player_id=self.player_id,
-                actions=actions
+                game_id=game_id, player_id=self.player_id, actions=actions
             )
             result = await self.tools["validate_actions"](request)
             return json.loads(result) if result else None
@@ -181,8 +168,7 @@ class FastMCPGameClient:
 
         try:
             request = self.request_models["calculate_distances"](
-                from_locations=from_coords,
-                to_locations=to_coords
+                from_locations=from_coords, to_locations=to_coords
             )
             result = await self.tools["calculate_distances"](request)
             return json.loads(result) if result else None
@@ -196,7 +182,7 @@ class FastMCPGameClient:
         """Run comprehensive analysis using multiple MCP tools."""
         analysis = {
             "mcp_available": True,
-            "turn": game_state.turn if game_state else "unknown"
+            "turn": game_state.turn if game_state else "unknown",
         }
 
         try:
@@ -221,15 +207,29 @@ class FastMCPGameClient:
                 analysis["territory_analyses"] = [territory_analysis]
 
             # Calculate strategic distances if we have game state
-            if game_state and hasattr(game_state, 'units') and hasattr(game_state, 'cities'):
-                my_units = [u for u in game_state.units.values() if u.owner == self.player_id]
-                enemy_cities = [c for c in game_state.cities.values() if c.owner != self.player_id]
-                
+            if (
+                game_state
+                and hasattr(game_state, "units")
+                and hasattr(game_state, "cities")
+            ):
+                my_units = [
+                    u for u in game_state.units.values() if u.owner == self.player_id
+                ]
+                enemy_cities = [
+                    c for c in game_state.cities.values() if c.owner != self.player_id
+                ]
+
                 if my_units and enemy_cities:
-                    unit_coords = [{"x": u.loc.x, "y": u.loc.y} for u in my_units[:3]]  # Limit to 3 units
-                    city_coords = [{"x": c.loc.x, "y": c.loc.y} for c in enemy_cities[:3]]  # Limit to 3 cities
-                    
-                    distance_analysis = await self.calculate_distances(unit_coords, city_coords)
+                    unit_coords = [
+                        {"x": u.loc.x, "y": u.loc.y} for u in my_units[:3]
+                    ]  # Limit to 3 units
+                    city_coords = [
+                        {"x": c.loc.x, "y": c.loc.y} for c in enemy_cities[:3]
+                    ]  # Limit to 3 cities
+
+                    distance_analysis = await self.calculate_distances(
+                        unit_coords, city_coords
+                    )
                     if distance_analysis:
                         analysis["strategic_distances"] = distance_analysis
 

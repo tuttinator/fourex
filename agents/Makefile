@@ -33,9 +33,12 @@ help:
 	@echo ""
 	@echo "Configuration:"
 	@echo "  Game Backend: http://localhost:8000"
-	@echo "  LLM Backend:  http://localhost:1234"
-	@echo "  Model:        qwen/qwen3-32b"
-	@echo "  Providers:    LLM Studio, OpenAI, Replicate, HuggingFace"
+	@echo "  LLM Backend:  https://your-modal-endpoint-url/v1 (default, cloud)"
+	@echo "                or http://localhost:1234 (optional, local LLM Studio)"
+	@echo "  Model:        qwen3:32b (Modal) or qwen/qwen3-32b (LLM Studio)"
+	@echo "  Providers:    Modal (default), LLM Studio (optional), OpenAI (fallback)"
+	@echo ""
+	@echo "  To deploy Modal Ollama, see agents/deploy/modal_ollama.py."
 
 install:
 	cd .. && uv sync --dev

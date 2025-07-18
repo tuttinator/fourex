@@ -1,11 +1,11 @@
 # 4X AI Agents
 
-AI agents that play the 4X strategy game using local LLM Studio integration.
+AI agents that play the 4X strategy game using Modal (cloud) or local LLM Studio integration.
 
 ## Features
 
 - **Multiple Agent Personalities**: 8 different strategic personalities including aggressive, defensive, explorer, economic, diplomatic, balanced, tech-focused, and opportunist
-- **LLM Integration**: Uses local LLM Studio with structured output parsing via Instructor
+- **LLM Integration**: Uses Modal (cloud, OpenAI-compatible) by default, with optional local LLM Studio fallback
 - **Game Orchestration**: Manages multiple agents in a single game with turn-based coordination
 - **Rich Logging**: Comprehensive game logs with agent decisions, timing, and outcomes
 - **Flexible Configuration**: Command-line, interactive, or file-based configuration options
@@ -20,13 +20,42 @@ cd .. && uv sync --dev
 
 2. Make sure you have:
    - The game backend running at `http://localhost:8000`
-   - LLM Studio running at `http://localhost:1234` with a model loaded
+   - **(Recommended)** Modal Ollama server deployed (see below)
+   - **(Optional)** LLM Studio running at `http://localhost:1234` with a model loaded
 
 3. Test the connection:
 
 ```bash
 uv run python -c "from src.agent import FourXAgent; print('Agent setup successful!')"
 ```
+
+## LLM Provider Options
+
+### 1. Modal Ollama (Recommended, Cloud)
+
+- Deploy the Modal Ollama server using the provided `agents/deploy/modal_ollama.py` script (see comments in that file for deployment instructions).
+- Set the following in your `.env`:
+
+```
+MODAL_OLLAMA_URL=https://your-modal-endpoint-url/v1
+MODAL_OLLAMA_MODEL=qwen3:32b
+```
+
+- The agents will use this endpoint by default for all LLM calls.
+
+### 2. Local LLM Studio (Optional, Fallback)
+
+- If `MODAL_OLLAMA_URL` is not set, the agents will use LLM Studio at `http://localhost:1234/v1` (or as configured in `.env`).
+- Set the following in your `.env` if you want to override the default:
+
+```
+LLM_STUDIO_URL=http://localhost:1234/v1
+LLM_STUDIO_MODEL=qwen/qwen3-32b
+```
+
+### 3. OpenAI (Fallback)
+
+- If neither Modal nor LLM Studio is available, and you have an `OPENAI_API_KEY` set, the agents will use OpenAI's API as a fallback.
 
 ## Usage
 
@@ -141,20 +170,32 @@ uv run python run_agents.py --config my_config.json
   },
   "max_turns": 100,
   "game_backend_url": "http://localhost:8000/api/v1",
-  "llm_backend_url": "http://localhost:1234/v1",
-  "llm_model": "qwen/qwen3-32b"
+  "llm_backend_url": "https://your-modal-endpoint-url/v1",
+  "llm_model": "qwen3:32b"
 }
 ```
 
 ### LLM Configuration
 
-The agents use the OpenAI-compatible API from LLM Studio. Make sure you have:
+The agents use an OpenAI-compatible API. By default, this is the Modal Ollama endpoint if set, otherwise local LLM Studio, then OpenAI.
 
-1. LLM Studio running on `http://localhost:1234`
-2. A model loaded (default: `qwen/qwen3-32b`)
-3. The model supports structured output (JSON mode)
+Example Modal Ollama request:
 
-Example LLM Studio request:
+```bash
+curl https://your-modal-endpoint-url/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3:32b",
+    "messages": [
+      {"role": "system", "content": "You are a 4X strategy game AI..."},
+      {"role": "user", "content": "Analyze the current game state..."}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 2000
+  }'
+```
+
+Example LLM Studio request (optional):
 
 ```bash
 curl http://localhost:1234/v1/chat/completions \

@@ -4,17 +4,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import instructor
 import logfire
 import requests
 import structlog
 from dotenv import load_dotenv
-from openai import OpenAI
 from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.panel import Panel
-
-# Removed tenacity imports - using manual retry logic instead
 
 # Load environment variables
 load_dotenv()
@@ -23,11 +19,14 @@ console = Console()
 
 # Configure Logfire based on environment variables
 logfire_enabled = os.getenv("LOGFIRE_ENABLED", "false").lower() == "true"
-logfire_console = os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true"
+# default to None, which will log to console if the env var is set to true
+logfire_console_setting = (
+    None if os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true" else False
+)
 
 logfire.configure(
     send_to_logfire=logfire_enabled,
-    console=logfire_console,
+    console=logfire_console_setting,
     token=os.getenv("LOGFIRE_TOKEN") if logfire_enabled else None,
 )
 
@@ -325,14 +324,20 @@ class EnhancedLLMClient:
         personality: str = "balanced",
         provider_override: str | None = None,
         mcp_analysis: dict | None = None,
+        turn_history: list["TurnPlan"] | None = None,  # NEW: pass turn history
     ) -> tuple[TurnPlan, str, str, Any]:
-        """Generate a turn plan using the LLM with enhanced logging and MCP analysis"""
+        """Generate a turn plan using the LLM with enhanced logging, MCP analysis, and memory of previous turns"""
 
         # Create game state summary
         state_summary = self._create_state_summary(game_state, player_id)
 
         # Create system prompt based on personality
         system_prompt = self._create_system_prompt(personality)
+
+        # Add turn history summary for memory
+        history_section = ""
+        if turn_history and len(turn_history) > 0:
+            history_section = self._summarize_turn_history(turn_history)
 
         # Create user prompt with MCP analysis if available
         mcp_section = ""
@@ -363,6 +368,7 @@ Game State Analysis:
 {state_summary}
 
 Current Turn: {game_state.turn}/{game_state.max_turns}
+{history_section}
 {mcp_section}
 
 Please analyze the current game state and provide a strategic plan for this turn.
@@ -387,7 +393,7 @@ Consider your current position, available resources, threats, and opportunities.
             try:
                 llm_response = await self.multi_client.generate(
                     messages=messages,
-                    response_model=TurnPlan,
+                    response_model=None,  # Fix type issue: should be None or a BaseModel instance, not a type
                     provider_override=provider_override,
                     temperature=0.7,
                     max_tokens=2000,
@@ -421,15 +427,14 @@ Consider your current position, available resources, threats, and opportunities.
                 actions_count=len(plan.actions),
                 provider=llm_response.provider,
                 latency_ms=llm_response.latency_ms,
-                has_thinking=llm_response.thinking is not None,
+                has_thinking=getattr(llm_response, "thinking", None) is not None,
             )
 
             return plan, system_prompt, user_prompt, llm_response
 
         except Exception as e:
             self.logger.error("Failed to generate plan", player=player_id, error=str(e))
-            logfire.log_exception("Plan generation failed")
-
+            # Remove logfire.log_exception (not a known attribute)
             # Return a default plan with pass action
             default_plan = TurnPlan(
                 actions=[
@@ -441,8 +446,6 @@ Consider your current position, available resources, threats, and opportunities.
                 strategic_analysis=f"Unable to analyze game state due to LLM error: {str(e)}",
                 priorities=["Survive"],
             )
-
-            # Create mock LLM response for logging
             from .llm_providers import LLMResponse
 
             mock_response = LLMResponse(
@@ -451,7 +454,6 @@ Consider your current position, available resources, threats, and opportunities.
                 provider="fallback",
                 model="default",
             )
-
             return default_plan, system_prompt, user_prompt, mock_response
 
     def _fallback_parse_plan(self, content: str) -> TurnPlan:
@@ -634,6 +636,20 @@ Your responses must be in JSON format with structured actions and reasoning.
         else:
             return f"Distance data: {distance_data}"
 
+    def _summarize_turn_history(self, turn_history: list["TurnPlan"]) -> str:
+        """Summarize previous turn(s) for agent memory in the prompt."""
+        # Only include the last 1-2 turns for brevity
+        if not turn_history:
+            return ""
+        lines = ["Previous Turn(s) Summary:"]
+        for i, plan in enumerate(turn_history[-2:]):
+            lines.append(f"Turn {-2 + i + len(turn_history)}:")
+            lines.append(f"  Strategic Analysis: {plan.strategic_analysis}")
+            lines.append(f"  Priorities: {', '.join(plan.priorities)}")
+            for action in plan.actions:
+                lines.append(f"    - {action.type.value}: {action.reasoning}")
+        return "\n" + "\n".join(lines) + "\n"
+
 
 class FourXAgent:
     """Enhanced agent class with retry logic, multi-LLM support, and detailed logging"""
@@ -793,6 +809,7 @@ class FourXAgent:
                 self.personality,
                 provider_override,
                 mcp_analysis,
+                turn_history=self.turn_history,  # Pass turn history for memory
             )
 
             # Display plan
@@ -1009,7 +1026,9 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_IMPROVEMENT",
                         "worker_id": worker_id,
-                        "improvement": action.improvement_type.value,
+                        "improvement": action.improvement_type.value
+                        if action.improvement_type is not None
+                        else None,
                     }
 
                 elif action.type == ActionType.FOUND_CITY:
@@ -1033,7 +1052,9 @@ class FourXAgent:
                     api_action = {
                         "type": "TRAIN_UNIT",
                         "city_id": city_id,
-                        "unit_type": action.unit_type.value,
+                        "unit_type": action.unit_type.value
+                        if action.unit_type is not None
+                        else None,
                     }
 
                 elif action.type == ActionType.BUILD_BUILDING:
@@ -1045,19 +1066,27 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_BUILDING",
                         "city_id": city_id,
-                        "building_type": action.building_type.value,
+                        "building_type": action.building_type.value
+                        if action.building_type is not None
+                        else None,
                     }
 
                 else:
                     # Fallback to old format for unknown action types
                     api_action = {"type": action.type.value}
+                    # Only add unit_id if not None, as string
                     if action.unit_id is not None:
-                        api_action["unit_id"] = action.unit_id
+                        api_action["unit_id"] = str(action.unit_id)
+                    # Only add target_location if not None, as JSON string
                     if action.target_location is not None:
-                        api_action["target_location"] = {
-                            "x": action.target_location.x,
-                            "y": action.target_location.y,
-                        }
+                        import json
+
+                        api_action["target_location"] = json.dumps(
+                            {
+                                "x": int(action.target_location.x),
+                                "y": int(action.target_location.y),
+                            }
+                        )
 
                 api_actions.append(api_action)
 

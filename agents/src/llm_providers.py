@@ -29,11 +29,11 @@ load_dotenv()
 
 # Configure Logfire based on environment variables
 logfire_enabled = os.getenv("LOGFIRE_ENABLED", "false").lower() == "true"
-logfire_console = os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true"
+logfire_console_settings = False if os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true" else None
 
 logfire.configure(
     send_to_logfire=logfire_enabled,
-    console=logfire_console,
+    console=logfire_console_settings,
     token=os.getenv("LOGFIRE_TOKEN") if logfire_enabled else None,
 )
 
@@ -64,9 +64,7 @@ def extract_thinking_tokens(content: str) -> tuple[str, str | None]:
     thinking_tokens = content[think_start:think_end].strip()
 
     # Remove thinking tags and content from main response
-    cleaned_content = (
-        content[: content.find("<think>")] + content[content.find("</think>") + 8 :]
-    ).strip()
+    cleaned_content = (content[: content.find("<think>")] + content[content.find("</think>") + 8 :]).strip()
 
     return cleaned_content, thinking_tokens
 
@@ -161,11 +159,7 @@ class OpenAIProvider(LLMProvider):
                     response_model=response_model,
                     **kwargs,
                 )
-                content = (
-                    response.model_dump_json()
-                    if hasattr(response, "model_dump_json")
-                    else str(response)
-                )
+                content = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
                 tokens_in = None
                 tokens_out = None
             else:
@@ -176,9 +170,7 @@ class OpenAIProvider(LLMProvider):
                 )
                 content = response.choices[0].message.content
                 tokens_in = response.usage.prompt_tokens if response.usage else None
-                tokens_out = (
-                    response.usage.completion_tokens if response.usage else None
-                )
+                tokens_out = response.usage.completion_tokens if response.usage else None
 
             # Extract thinking tokens from content
             cleaned_content, thinking_tokens = extract_thinking_tokens(content or "")
@@ -202,9 +194,7 @@ class OpenAIProvider(LLMProvider):
                 latency_ms=latency_ms,
                 model=self.model,
                 provider="openai",
-                raw_response=response.model_dump()
-                if hasattr(response, "model_dump")
-                else None,
+                raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
             )
 
         except Exception as e:
@@ -274,9 +264,7 @@ class ReplicateProvider(LLMProvider):
                     parsed = orjson.loads(content)
                     content = response_model(**parsed).model_dump_json()
                 except Exception as e:
-                    self.logger.warning(
-                        "Failed to parse structured output", error=str(e)
-                    )
+                    self.logger.warning("Failed to parse structured output", error=str(e))
 
             self.logger.info(
                 "Replicate generation completed",
@@ -386,9 +374,7 @@ class HuggingFaceProvider(LLMProvider):
                     parsed = orjson.loads(content)
                     content = response_model(**parsed).model_dump_json()
                 except Exception as e:
-                    self.logger.warning(
-                        "Failed to parse structured output", error=str(e)
-                    )
+                    self.logger.warning("Failed to parse structured output", error=str(e))
 
             self.logger.info(
                 "HuggingFace generation completed",
@@ -443,9 +429,7 @@ class LLMStudioProvider(LLMProvider):
         super().__init__(model, **kwargs)
         self.base_url = base_url
         self.client = OpenAI(base_url=base_url, api_key="not-needed")
-        self.instructor_client = instructor.from_openai(
-            self.client, mode=instructor.Mode.MD_JSON
-        )
+        self.instructor_client = instructor.from_openai(self.client, mode=instructor.Mode.MD_JSON)
 
     @retry(
         retry=retry_if_exception_type((httpx.HTTPError, Exception)),
@@ -470,17 +454,11 @@ class LLMStudioProvider(LLMProvider):
                     response_model=response_model,
                     **kwargs,
                 )
-                content = (
-                    response.model_dump_json()
-                    if hasattr(response, "model_dump_json")
-                    else str(response)
-                )
+                content = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
                 tokens_in = None
                 tokens_out = None
                 thinking = None
-                raw_response = (
-                    response.model_dump() if hasattr(response, "model_dump") else None
-                )
+                raw_response = response.model_dump() if hasattr(response, "model_dump") else None
             else:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -491,17 +469,13 @@ class LLMStudioProvider(LLMProvider):
                 message = response.choices[0].message
                 content = message.content
                 tokens_in = response.usage.prompt_tokens if response.usage else None
-                tokens_out = (
-                    response.usage.completion_tokens if response.usage else None
-                )
+                tokens_out = response.usage.completion_tokens if response.usage else None
 
                 # Extract thinking tokens using the utility function
                 cleaned_content, thinking = extract_thinking_tokens(content or "")
                 content = cleaned_content
 
-                raw_response = (
-                    response.model_dump() if hasattr(response, "model_dump") else None
-                )
+                raw_response = response.model_dump() if hasattr(response, "model_dump") else None
 
             latency_ms = int((time.time() - start_time) * 1000)
 
@@ -549,44 +523,128 @@ class LLMStudioProvider(LLMProvider):
             return False
 
 
+# --- Modal Ollama/OpenAI-compatible Provider ---
+class OpenAICompatibleProvider(LLMProvider):
+    """OpenAI-compatible API provider (for Modal Ollama, LM Studio, etc.)"""
+
+    def __init__(self, model: str, base_url: str, api_key: str = "not-needed", **kwargs):
+        super().__init__(model, **kwargs)
+        self.base_url = base_url
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.instructor_client = instructor.from_openai(self.client, mode=instructor.Mode.MD_JSON)
+
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError, Exception)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
+    )
+    @logfire.instrument("openai_compatible_generate", extract_args=True)
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        response_model: BaseModel | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        start_time = time.time()
+        try:
+            if response_model:
+                response = self.instructor_client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    response_model=response_model,
+                    **kwargs,
+                )
+                content = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
+                tokens_in = None
+                tokens_out = None
+                thinking = None
+                raw_response = response.model_dump() if hasattr(response, "model_dump") else None
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    **kwargs,
+                )
+                message = response.choices[0].message
+                content = message.content
+                tokens_in = response.usage.prompt_tokens if response.usage else None
+                tokens_out = response.usage.completion_tokens if response.usage else None
+                cleaned_content, thinking = extract_thinking_tokens(content or "")
+                content = cleaned_content
+                raw_response = response.model_dump() if hasattr(response, "model_dump") else None
+            latency_ms = int((time.time() - start_time) * 1000)
+            self.logger.info(
+                "OpenAI-compatible generation completed",
+                latency_ms=latency_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                has_thinking=thinking is not None,
+            )
+            return LLMResponse(
+                content=content,
+                thinking=thinking,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                latency_ms=latency_ms,
+                model=self.model,
+                provider="openai_compatible",
+                raw_response=raw_response,
+            )
+        except Exception as e:
+            self.logger.error("OpenAI-compatible generation failed", error=str(e))
+            logfire.log_exception("OpenAI-compatible generation error")
+            raise
+
+    def is_available(self) -> bool:
+        try:
+            import requests
+
+            response = requests.get(f"{self.base_url}/models", timeout=5.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+
 class MultiLLMClient:
     """Client that can switch between multiple LLM providers"""
 
     def __init__(
         self,
-        primary_provider: str = "llm_studio",
+        primary_provider: str = None,
         fallback_providers: list[str] | None = None,
     ):
         self.providers: dict[str, LLMProvider] = {}
-        self.primary_provider = primary_provider
-        self.fallback_providers = fallback_providers or ["openai"]
-        self.logger = logger.bind(component="multi_llm_client")
-
-        # Initialize providers
-        self._setup_providers()
-
-    def _setup_providers(self):
-        """Setup all available providers"""
-        # LLM Studio
-        self.providers["llm_studio"] = LLMStudioProvider()
-
-        # OpenAI
-        if os.getenv("OPENAI_API_KEY"):
+        # --- Provider selection logic ---
+        modal_url = os.getenv("MODAL_OLLAMA_URL")
+        modal_model = os.getenv("MODAL_OLLAMA_MODEL", "qwen3:32b")
+        lmstudio_url = os.getenv("LLM_STUDIO_URL", "http://localhost:1234/v1")
+        lmstudio_model = os.getenv("LLM_STUDIO_MODEL", "qwen/qwen3-32b")
+        openai_key = os.getenv("OPENAI_API_KEY")
+        # Modal as primary if set
+        if modal_url:
+            self.providers["modal_ollama"] = OpenAICompatibleProvider(
+                model=modal_model, base_url=modal_url, api_key="not-needed"
+            )
+            self.primary_provider = "modal_ollama"
+            self.fallback_providers = ["llm_studio", "openai"]
+        else:
+            # LM Studio as primary if available
+            self.providers["llm_studio"] = LLMStudioProvider(model=lmstudio_model, base_url=lmstudio_url)
+            self.primary_provider = "llm_studio"
+            self.fallback_providers = ["openai"]
+        # OpenAI as fallback if key is set
+        if openai_key:
             self.providers["openai"] = OpenAIProvider()
-
         # Replicate
         if os.getenv("REPLICATE_API_TOKEN"):
             try:
                 self.providers["replicate"] = ReplicateProvider("meta/llama-2-70b-chat")
             except ImportError:
                 self.logger.warning("Replicate package not available")
-
         # HuggingFace
         if os.getenv("HF_TOKEN"):
-            self.providers["huggingface"] = HuggingFaceProvider(
-                "microsoft/DialoGPT-large"
-            )
-
+            self.providers["huggingface"] = HuggingFaceProvider("microsoft/DialoGPT-large")
+        self.logger = logger.bind(component="multi_llm_client")
         self.logger.info("Initialized providers", available=list(self.providers.keys()))
 
     def add_provider(self, name: str, provider: LLMProvider):
@@ -611,9 +669,7 @@ class MultiLLMClient:
         else:
             if self.primary_provider in self.providers:
                 provider_order.append(self.primary_provider)
-            provider_order.extend(
-                [p for p in self.fallback_providers if p in self.providers]
-            )
+            provider_order.extend([p for p in self.fallback_providers if p in self.providers])
 
         # Remove duplicates while preserving order
         provider_order = list(dict.fromkeys(provider_order))
@@ -628,9 +684,7 @@ class MultiLLMClient:
 
                 # Check availability
                 if not provider.is_available():
-                    self.logger.warning(
-                        "Provider not available", provider=provider_name
-                    )
+                    self.logger.warning("Provider not available", provider=provider_name)
                     continue
 
                 response = await provider.generate(messages, response_model, **kwargs)
@@ -660,9 +714,7 @@ class MultiLLMClient:
 
     def get_available_providers(self) -> list[str]:
         """Get list of available providers"""
-        return [
-            name for name, provider in self.providers.items() if provider.is_available()
-        ]
+        return [name for name, provider in self.providers.items() if provider.is_available()]
 
     def set_primary_provider(self, provider_name: str):
         """Set the primary provider"""
@@ -675,17 +727,9 @@ class MultiLLMClient:
 
 # Convenience function for easy initialization
 def create_llm_client(
-    primary: str = "llm_studio",
+    primary: str = None,
     fallbacks: list[str] | None = None,
     **provider_configs,
 ) -> MultiLLMClient:
     """Create a configured multi-LLM client"""
-    client = MultiLLMClient(primary, fallbacks)
-
-    # Add custom provider configurations
-    for provider_name, config in provider_configs.items():
-        if provider_name in ["openai", "replicate", "huggingface", "llm_studio"]:
-            # Update existing provider with custom config
-            pass  # TODO: Implement provider reconfiguration
-
-    return client
+    return MultiLLMClient(primary, fallbacks)
