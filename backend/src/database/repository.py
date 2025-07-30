@@ -9,11 +9,9 @@ from sqlalchemy import and_, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..game.models import Action, GameState
+from ..game.models import Action, GameState, TurnResult
 from ..game.models import PromptLog as GamePromptLog
-from ..game.models import TurnResult
-from .models import (Game, GameSnapshot, GameTurn, PlayerAction, PlayerStats,
-                     PromptLog)
+from .models import Game, GameSnapshot, GameTurn, PlayerAction, PromptLog
 
 
 class GameRepository:
@@ -25,11 +23,11 @@ class GameRepository:
     async def create_game(
         self,
         game_id: str,
-        players: List[str],
+        players: list[str],
         seed: int = 42,
         max_turns: int = 100,
         map_width: int = 20,
-        map_height: int = 20
+        map_height: int = 20,
     ) -> Game:
         """Create a new game record."""
         # Create initial game state
@@ -46,7 +44,7 @@ class GameRepository:
             "stockpiles": {},
             "next_unit_id": 1,
             "next_city_id": 1,
-            "max_turns": max_turns
+            "max_turns": max_turns,
         }
 
         game = Game(
@@ -58,35 +56,28 @@ class GameRepository:
             rng_state=seed,
             state=initial_state,
             players=players,
-            status="created"
+            status="created",
         )
 
         self.session.add(game)
         await self.session.flush()
         return game
 
-    async def get_game(self, game_id: str) -> Optional[Game]:
+    async def get_game(self, game_id: str) -> Game | None:
         """Get game by ID."""
-        result = await self.session.execute(
-            select(Game).where(Game.id == game_id)
-        )
+        result = await self.session.execute(select(Game).where(Game.id == game_id))
         return result.scalar_one_or_none()
 
-    async def get_game_with_turns(self, game_id: str) -> Optional[Game]:
+    async def get_game_with_turns(self, game_id: str) -> Game | None:
         """Get game with all turns loaded."""
         result = await self.session.execute(
-            select(Game)
-            .options(selectinload(Game.turns))
-            .where(Game.id == game_id)
+            select(Game).options(selectinload(Game.turns)).where(Game.id == game_id)
         )
         return result.scalar_one_or_none()
 
     async def list_games(
-        self,
-        status: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[Game]:
+        self, status: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[Game]:
         """List games with optional filtering."""
         query = select(Game).order_by(desc(Game.created_at))
 
@@ -109,7 +100,7 @@ class GameRepository:
                 state=state_dict,
                 turn=state.turn,
                 rng_state=state.rng_state,
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
             )
         )
 
@@ -118,10 +109,7 @@ class GameRepository:
         await self.update_game_state(game_id, state)
 
     async def end_game(
-        self,
-        game_id: str,
-        winner: Optional[str] = None,
-        victory_type: str = "score"
+        self, game_id: str, winner: str | None = None, victory_type: str = "score"
     ) -> None:
         """Mark game as ended."""
         await self.session.execute(
@@ -132,7 +120,7 @@ class GameRepository:
                 winner=winner,
                 victory_type=victory_type,
                 ended_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
             )
         )
 
@@ -140,18 +128,22 @@ class GameRepository:
         self,
         game_id: str,
         turn_result: TurnResult,
-        player_actions: Dict[str, List[Action]]
+        player_actions: dict[str, list[Action]],
     ) -> GameTurn:
         """Save turn processing results."""
         # Convert actions to serializable format
         actions_dict = {}
         for player, actions in player_actions.items():
-            actions_dict[player] = [action.model_dump(mode="json") for action in actions]
+            actions_dict[player] = [
+                action.model_dump(mode="json") for action in actions
+            ]
 
         # Convert action results to serializable format
         results_dict = {}
         for player, results in turn_result.player_actions.items():
-            results_dict[player] = [result.model_dump(mode="json") for result in results]
+            results_dict[player] = [
+                result.model_dump(mode="json") for result in results
+            ]
 
         game_turn = GameTurn(
             game_id=game_id,
@@ -159,7 +151,7 @@ class GameRepository:
             player_actions=actions_dict,
             action_results=results_dict,
             state_hash=turn_result.state_hash,
-            completed_at=datetime.utcnow()
+            completed_at=datetime.utcnow(),
         )
 
         self.session.add(game_turn)
@@ -167,12 +159,8 @@ class GameRepository:
         return game_turn
 
     async def save_player_actions(
-        self,
-        game_id: str,
-        turn_number: int,
-        player_id: str,
-        actions: List[Action]
-    ) -> List[PlayerAction]:
+        self, game_id: str, turn_number: int, player_id: str, actions: list[Action]
+    ) -> list[PlayerAction]:
         """Save individual player actions."""
         player_actions = []
 
@@ -182,7 +170,7 @@ class GameRepository:
                 turn_number=turn_number,
                 player_id=player_id,
                 action_type=action.type,
-                action_data=action.model_dump(mode="json")
+                action_data=action.model_dump(mode="json"),
             )
             player_actions.append(player_action)
             self.session.add(player_action)
@@ -190,7 +178,9 @@ class GameRepository:
         await self.session.flush()
         return player_actions
 
-    async def save_prompt_log(self, game_id: str, prompt_log: GamePromptLog) -> PromptLog:
+    async def save_prompt_log(
+        self, game_id: str, prompt_log: GamePromptLog
+    ) -> PromptLog:
         """Save LLM prompt log."""
         db_prompt_log = PromptLog(
             game_id=game_id,
@@ -199,7 +189,7 @@ class GameRepository:
             response=prompt_log.response,
             tokens_in=prompt_log.tokens_in,
             tokens_out=prompt_log.tokens_out,
-            latency_ms=prompt_log.latency_ms
+            latency_ms=prompt_log.latency_ms,
         )
 
         self.session.add(db_prompt_log)
@@ -215,10 +205,10 @@ class GameRepository:
         tokens_in: int,
         tokens_out: int,
         latency_ms: int,
-        turn_number: Optional[int] = None,
-        llm_provider: Optional[str] = None,
-        llm_model: Optional[str] = None,
-        thinking_tokens: Optional[str] = None
+        turn_number: int | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        thinking_tokens: str | None = None,
     ) -> PromptLog:
         """Save enhanced LLM prompt log with additional context."""
         db_prompt_log = PromptLog(
@@ -232,7 +222,7 @@ class GameRepository:
             turn_number=turn_number,
             llm_provider=llm_provider,
             llm_model=llm_model,
-            thinking_tokens=thinking_tokens
+            thinking_tokens=thinking_tokens,
         )
 
         self.session.add(db_prompt_log)
@@ -244,7 +234,7 @@ class GameRepository:
         game_id: str,
         turn_number: int,
         state: GameState,
-        snapshot_type: str = "periodic"
+        snapshot_type: str = "periodic",
     ) -> GameSnapshot:
         """Create a game state snapshot."""
         snapshot = GameSnapshot(
@@ -252,14 +242,14 @@ class GameRepository:
             turn_number=turn_number,
             complete_state=state.model_dump(mode="json"),
             state_hash=state.hash_state(),
-            snapshot_type=snapshot_type
+            snapshot_type=snapshot_type,
         )
 
         self.session.add(snapshot)
         await self.session.flush()
         return snapshot
 
-    async def get_latest_snapshot(self, game_id: str) -> Optional[GameSnapshot]:
+    async def get_latest_snapshot(self, game_id: str) -> GameSnapshot | None:
         """Get the most recent snapshot for a game."""
         result = await self.session.execute(
             select(GameSnapshot)
@@ -269,7 +259,7 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_turn_history(self, game_id: str) -> List[GameTurn]:
+    async def get_turn_history(self, game_id: str) -> list[GameTurn]:
         """Get all turns for a game."""
         result = await self.session.execute(
             select(GameTurn)
@@ -279,11 +269,8 @@ class GameRepository:
         return list(result.scalars().all())
 
     async def get_player_prompt_logs(
-        self,
-        game_id: str,
-        player_id: str,
-        limit: int = 100
-    ) -> List[PromptLog]:
+        self, game_id: str, player_id: str, limit: int = 100
+    ) -> list[PromptLog]:
         """Get prompt logs for a specific player in a game."""
         result = await self.session.execute(
             select(PromptLog)
@@ -293,13 +280,15 @@ class GameRepository:
         )
         return list(result.scalars().all())
 
-    async def update_player_stats(self, player_id: str, game_result: Dict[str, Any]) -> None:
+    async def update_player_stats(
+        self, player_id: str, game_result: dict[str, Any]
+    ) -> None:
         """Update or create player statistics."""
         # This would be implemented to aggregate player performance
         # For now, we'll keep it as a placeholder
         pass
 
-    async def restore_game_from_snapshot(self, game_id: str) -> Optional[GameState]:
+    async def restore_game_from_snapshot(self, game_id: str) -> GameState | None:
         """Restore game state from the latest snapshot."""
         snapshot = await self.get_latest_snapshot(game_id)
         if not snapshot:
@@ -309,5 +298,4 @@ class GameRepository:
         try:
             return GameState.model_validate(snapshot.complete_state)
         except Exception:
-            return None        except Exception:
             return None

@@ -5,10 +5,11 @@ Database initialization script.
 
 import asyncio
 import sys
+
 from rich.console import Console
 from rich.panel import Panel
 
-from .connection import init_db, drop_db, get_engine
+from .connection import drop_db, get_engine, init_db
 
 console = Console()
 
@@ -31,7 +32,7 @@ async def reset_database():
         console.print("[bold red]Dropping all tables...[/bold red]")
         await drop_db()
         console.print("[yellow]✓ All tables dropped[/yellow]")
-        
+
         console.print("[bold blue]Creating database tables...[/bold blue]")
         await init_db()
         console.print("[green]✓ Database tables recreated successfully[/green]")
@@ -45,7 +46,7 @@ async def check_database():
     try:
         engine = await get_engine()
         console.print("[bold blue]Checking database connection...[/bold blue]")
-        
+
         # Try to connect
         async with engine.begin() as conn:
             result = await conn.execute("SELECT 1")
@@ -54,7 +55,7 @@ async def check_database():
                 console.print("[green]✓ Database connection successful[/green]")
             else:
                 console.print("[red]✗ Database connection test failed[/red]")
-                
+
     except Exception as e:
         console.print(f"[red]✗ Database connection failed: {e}[/red]")
         raise
@@ -63,21 +64,23 @@ async def check_database():
 async def main():
     """Main CLI function."""
     if len(sys.argv) < 2:
-        console.print(Panel(
-            """
+        console.print(
+            Panel(
+                """
 [bold]Database Management Commands:[/bold]
 
 • python -m src.database.init_db create    - Create database tables
 • python -m src.database.init_db reset     - Drop and recreate all tables
 • python -m src.database.init_db check     - Check database connection
             """,
-            title="4X Game Database Management",
-            border_style="blue"
-        ))
+                title="4X Game Database Management",
+                border_style="blue",
+            )
+        )
         return
-    
+
     command = sys.argv[1].lower()
-    
+
     try:
         if command == "create":
             await create_database()
@@ -89,9 +92,9 @@ async def main():
             console.print(f"[red]Unknown command: {command}[/red]")
             console.print("Available commands: create, reset, check")
             sys.exit(1)
-            
+
         console.print("[bold green]Operation completed successfully![/bold green]")
-        
+
     except Exception as e:
         console.print(f"[bold red]Operation failed: {e}[/bold red]")
         sys.exit(1)

@@ -177,7 +177,7 @@ def main():
     # Create players
     players = [f"player_{i + 1}" for i in range(args.players)]
 
-    console.print(f"[bold green]Starting 4X Game Test[/bold green]")
+    console.print("[bold green]Starting 4X Game Test[/bold green]")
     console.print(f"Players: {args.players} | Turns: {args.turns} | Seed: {args.seed}")
     console.print()
 
@@ -250,7 +250,7 @@ def main():
         )
 
     # Test determinism by running again with same seed
-    console.print(f"\n[bold cyan]Testing Determinism[/bold cyan]")
+    console.print("\n[bold cyan]Testing Determinism[/bold cyan]")
     test_state = create_test_game(players, args.seed)
     test_hash = test_state.hash_state()
 

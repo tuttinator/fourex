@@ -1,11 +1,13 @@
 """
 Configuration settings for the 4X game backend.
 """
+
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """Application settings."""
+
     debug: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8000

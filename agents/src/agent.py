@@ -238,15 +238,19 @@ class GameClient:
                 id=tile_data["id"],
                 loc=Coord(tile_data["loc"]["x"], tile_data["loc"]["y"]),
                 terrain=Terrain(tile_data["terrain"]),
-                resource=Resource(tile_data["resource"])
-                if tile_data.get("resource")
-                else None,
+                resource=(
+                    Resource(tile_data["resource"])
+                    if tile_data.get("resource")
+                    else None
+                ),
                 owner=tile_data.get("owner"),
                 city_id=tile_data.get("city_id"),
                 unit_id=tile_data.get("unit_id"),
-                improvement=ImprovementType(tile_data["improvement"])
-                if tile_data.get("improvement")
-                else None,
+                improvement=(
+                    ImprovementType(tile_data["improvement"])
+                    if tile_data.get("improvement")
+                    else None
+                ),
             )
             tiles.append(tile)
 
@@ -373,7 +377,7 @@ Current Turn: {game_state.turn}/{game_state.max_turns}
 
 Please analyze the current game state and provide a strategic plan for this turn.
 Consider your current position, available resources, threats, and opportunities.
-{f"Use the MCP analysis above to guide your strategic decisions." if mcp_analysis else ""}
+{"Use the MCP analysis above to guide your strategic decisions." if mcp_analysis else ""}
 """
 
         messages = [
@@ -772,9 +776,11 @@ class FourXAgent:
                 "my_cities": len(
                     [c for c in game_state.cities.values() if c.owner == self.player_id]
                 ),
-                "my_resources": game_state.stockpiles.get(self.player_id).__dict__
-                if game_state.stockpiles.get(self.player_id)
-                else {},
+                "my_resources": (
+                    game_state.stockpiles.get(self.player_id).__dict__
+                    if game_state.stockpiles.get(self.player_id)
+                    else {}
+                ),
             }
 
             # Generate turn plan with MCP analysis
@@ -939,9 +945,9 @@ class FourXAgent:
                 llm_response=llm_response,
                 strategic_analysis=plan.strategic_analysis if plan else "",
                 priorities=plan.priorities if plan else [],
-                actions=[action.model_dump() for action in plan.actions]
-                if plan
-                else [],
+                actions=(
+                    [action.model_dump() for action in plan.actions] if plan else []
+                ),
                 submitted_actions=api_actions,
                 game_state_summary=game_state_summary,
                 error_message=error_message,
@@ -1026,9 +1032,11 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_IMPROVEMENT",
                         "worker_id": worker_id,
-                        "improvement": action.improvement_type.value
-                        if action.improvement_type is not None
-                        else None,
+                        "improvement": (
+                            action.improvement_type.value
+                            if action.improvement_type is not None
+                            else None
+                        ),
                     }
 
                 elif action.type == ActionType.FOUND_CITY:
@@ -1052,9 +1060,11 @@ class FourXAgent:
                     api_action = {
                         "type": "TRAIN_UNIT",
                         "city_id": city_id,
-                        "unit_type": action.unit_type.value
-                        if action.unit_type is not None
-                        else None,
+                        "unit_type": (
+                            action.unit_type.value
+                            if action.unit_type is not None
+                            else None
+                        ),
                     }
 
                 elif action.type == ActionType.BUILD_BUILDING:
@@ -1066,9 +1076,11 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_BUILDING",
                         "city_id": city_id,
-                        "building_type": action.building_type.value
-                        if action.building_type is not None
-                        else None,
+                        "building_type": (
+                            action.building_type.value
+                            if action.building_type is not None
+                            else None
+                        ),
                     }
 
                 else:

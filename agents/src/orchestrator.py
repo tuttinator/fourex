@@ -5,17 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import logfire
-import requests
 import structlog
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.text import Text
 
-from .agent import EnhancedLLMClient, FourXAgent, GameClient
+from .agent import FourXAgent, GameClient
 from .enhanced_logging import enhanced_logger
 from .persistent_game_client import ResilientGameConnection
 
@@ -443,7 +437,7 @@ async def main():
         log_filename = f"game_log_{config.game_id}_{int(time.time())}.json"
         orchestrator.save_game_log(log_filename)
 
-        console.print(f"\n[green]Game completed successfully![/green]")
+        console.print("\n[green]Game completed successfully![/green]")
         return results
 
     except Exception as e:

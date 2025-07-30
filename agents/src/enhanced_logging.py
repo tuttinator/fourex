@@ -283,9 +283,11 @@ class EnhancedLogger:
         if turn_log.error_message:
             table.add_row(
                 "Error",
-                turn_log.error_message[:50] + "..."
-                if len(turn_log.error_message) > 50
-                else turn_log.error_message,
+                (
+                    turn_log.error_message[:50] + "..."
+                    if len(turn_log.error_message) > 50
+                    else turn_log.error_message
+                ),
             )
 
         console.print(table)

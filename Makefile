@@ -1,4 +1,4 @@
-.PHONY: help install install-uv lint test test-cov run-dev clean sync
+.PHONY: help install install-uv lint test test-cov run-dev sync
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -14,13 +14,13 @@ sync: ## Sync dependencies (install/update based on lock file)
 	uv sync --dev
 
 lint: ## Run linting and type checking
-	uv run black --check src tests
-	uv run ruff check src tests
-	uv run mypy src
+	uv run black --check agents backend tests
+	uv run ruff check agents backend tests
+	uv run mypy agents backend
 
 format: ## Format code
-	uv run black src tests
-	uv run ruff check --fix src tests
+	uv run black agents backend tests
+	uv run ruff check --fix agents backend tests
 
 test: ## Run tests
 	uv run pytest tests/
@@ -33,11 +33,6 @@ run-dev: ## Run development server
 
 run-cli: ## Run CLI with random seed
 	uv run python -m src.game --players 4 --turns 10 --seed 42
-
-clean: ## Clean up temporary files
-	find . -type d -name "__pycache__" -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-	rm -rf .coverage .pytest_cache .mypy_cache
 
 # Database management tasks
 db-create: ## Create database tables

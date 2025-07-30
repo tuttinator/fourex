@@ -4,13 +4,11 @@ Test script for 4X AI agents.
 Runs basic tests to verify agent functionality.
 """
 
-import json
 import sys
 
 import requests
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 console = Console()
 
@@ -18,9 +16,6 @@ console = Console()
 def test_imports():
     """Test that all required modules can be imported"""
     try:
-        from src.agent import FourXAgent, GameClient, LLMClient
-        from src.orchestrator import GameConfig, GameOrchestrator
-        from src.personalities import get_personality_description, list_personalities
 
         console.print("[green]✓ All imports successful[/green]")
         return True
@@ -88,11 +83,11 @@ def test_llm_completion(url="http://localhost:1234", model="qwen/qwen3-32b"):
             result = response.json()
             if "choices" in result and result["choices"]:
                 content = result["choices"][0]["message"]["content"]
-                console.print(f"[green]✓ LLM completion successful[/green]")
+                console.print("[green]✓ LLM completion successful[/green]")
                 console.print(f"[blue]  Response: {content.strip()}[/blue]")
                 return True
             else:
-                console.print(f"[yellow]⚠ LLM response missing choices[/yellow]")
+                console.print("[yellow]⚠ LLM response missing choices[/yellow]")
                 return False
         else:
             console.print(f"[red]✗ LLM completion failed: {response.status_code}[/red]")

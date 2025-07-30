@@ -16,7 +16,6 @@ from ..game.models import (
     PlayerId,
     PromptLog,
     ResourceBag,
-    TurnResult,
     Unit,
     UnitType,
 )
@@ -219,7 +218,7 @@ class PersistentGameController:
             print(f"DEBUG: All players submitted actions, processing turn {state.turn}")
             await self._process_turn(game_id)
         else:
-            print(f"DEBUG: Waiting for more players to submit actions")
+            print("DEBUG: Waiting for more players to submit actions")
 
     async def log_prompt(self, game_id: str, prompt_log: PromptLog) -> None:
         """Log an LLM prompt and response for research."""
@@ -305,11 +304,11 @@ class PersistentGameController:
         print(f"DEBUG: Turn resolved, new turn is: {state.turn}")
 
         # Save turn result to database
-        print(f"DEBUG: Saving turn result to database")
+        print("DEBUG: Saving turn result to database")
         await self.repo.save_turn_result(game_id, result, actions)
 
         # Update game state in database
-        print(f"DEBUG: Updating game state in database")
+        print("DEBUG: Updating game state in database")
         await self.repo.update_game_state(game_id, state)
 
         # Update cache
@@ -321,7 +320,7 @@ class PersistentGameController:
 
         # Clear pending actions for next turn
         self._pending_actions[game_id] = {}
-        print(f"DEBUG: Cleared pending actions for next turn")
+        print("DEBUG: Cleared pending actions for next turn")
 
         # Create periodic snapshots (every 10 turns)
         if state.turn % 10 == 0:
