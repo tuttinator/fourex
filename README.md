@@ -10,7 +10,6 @@ A deterministic, turn-based strategy sandbox for AI agents research.
 - **4X mechanics**: Explore, Expand, Exploit, Exterminate on 20x20 grid
 - **AI Agent Integration**: Complete system for multi-agent AI gameplay
 - **MCP Server**: Model Context Protocol server for advanced game analysis
-- **Full test coverage**: 100% unit test coverage for core game logic
 
 ## Quick Start (TL;DR)
 
