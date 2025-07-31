@@ -32,7 +32,7 @@ interface TurnLogData {
 	duration_ms: number;
 	success: boolean;
 	error_message?: string;
-	game_state_summary: {
+	game_state_summary?: {
 		turn: number;
 		max_turns: number;
 		my_units: number;
@@ -41,7 +41,7 @@ interface TurnLogData {
 	};
 	system_prompt: string;
 	user_prompt: string;
-	llm_response: {
+	llm_response?: {
 		content: string;
 		thinking?: string;
 		tokens_in: number;
@@ -50,7 +50,7 @@ interface TurnLogData {
 		model: string;
 		provider: string;
 	};
-	actions: Array<{
+	actions?: Array<{
 		type: string;
 		reasoning: string;
 		[key: string]: unknown;
