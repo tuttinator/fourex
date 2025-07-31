@@ -25,34 +25,34 @@ import {
 import { JsonViewer } from "./json-viewer";
 
 interface TurnLogData {
-	turn_number: number;
-	player_id: string;
-	game_id: string;
-	timestamp: number;
-	duration_ms: number;
-	success: boolean;
+	turn_number?: number;
+	player_id?: string;
+	game_id?: string;
+	timestamp?: number;
+	duration_ms?: number;
+	success?: boolean;
 	error_message?: string;
 	game_state_summary?: {
-		turn: number;
-		max_turns: number;
-		my_units: number;
-		my_cities: number;
-		my_resources: Record<string, number>;
+		turn?: number;
+		max_turns?: number;
+		my_units?: number;
+		my_cities?: number;
+		my_resources?: Record<string, number>;
 	};
-	system_prompt: string;
-	user_prompt: string;
+	system_prompt?: string;
+	user_prompt?: string;
 	llm_response?: {
-		content: string;
+		content?: string;
 		thinking?: string;
-		tokens_in: number;
-		tokens_out: number;
-		latency_ms: number;
-		model: string;
-		provider: string;
+		tokens_in?: number;
+		tokens_out?: number;
+		latency_ms?: number;
+		model?: string;
+		provider?: string;
 	};
 	actions?: Array<{
-		type: string;
-		reasoning: string;
+		type?: string;
+		reasoning?: string;
 		[key: string]: unknown;
 	}>;
 	strategic_analysis?: string;
@@ -60,24 +60,24 @@ interface TurnLogData {
 }
 
 interface GameLogData {
-	config: {
-		game_id: string;
-		players: string[];
+	config?: {
+		game_id?: string;
+		players?: string[];
 		personalities?: Record<string, string>;
-		max_turns: number;
+		max_turns?: number;
 	};
-	turn_logs: Array<{
-		turn: number;
-		player_actions: Record<
+	turn_logs?: Array<{
+		turn?: number;
+		player_actions?: Record<
 			string,
 			{
-				success: boolean;
-				duration: number;
+				success?: boolean;
+				duration?: number;
 				plan?: string;
 			}
 		>;
-		turn_start_time: number;
-		turn_end_time: number;
+		turn_start_time?: number;
+		turn_end_time?: number;
 	}>;
 }
 
@@ -87,17 +87,51 @@ interface LogViewerProps {
 }
 
 export function LogViewer({ data, filename }: LogViewerProps) {
+	// Handle case where data is completely invalid
+	if (!data) {
+		return (
+			<Card className="border-destructive">
+				<CardContent className="pt-6">
+					<div className="text-center text-destructive">
+						<AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+						<h3 className="font-medium mb-2">No Data Available</h3>
+						<p className="text-sm">
+							The log file appears to be empty or corrupted.
+						</p>
+					</div>
+				</CardContent>
+			</Card>
+		);
+	}
+
 	// Determine log type and parse accordingly
 	const isTurnLog = filename.includes("turn_");
 	const isGameLog = filename.includes("game_log_");
 
-	if (isTurnLog) {
-		return <TurnLogViewer data={data as TurnLogData} filename={filename} />;
-	} else if (isGameLog) {
-		return <GameLogViewer data={data as GameLogData} filename={filename} />;
-	} else {
-		// Fallback to generic JSON viewer
-		return <JsonViewer data={data} />;
+	try {
+		if (isTurnLog) {
+			return <TurnLogViewer data={data as TurnLogData} filename={filename} />;
+		} else if (isGameLog) {
+			return <GameLogViewer data={data as GameLogData} filename={filename} />;
+		} else {
+			// Fallback to generic JSON viewer
+			return <JsonViewer data={data} />;
+		}
+	} catch {
+		return (
+			<Card className="border-destructive">
+				<CardContent className="pt-6">
+					<div className="text-center text-destructive">
+						<AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+						<h3 className="font-medium mb-2">Error Rendering Log</h3>
+						<p className="text-sm mb-4">
+							Failed to render the specialized log viewer.
+						</p>
+						<JsonViewer data={data} />
+					</div>
+				</CardContent>
+			</Card>
+		);
 	}
 }
 
@@ -122,14 +156,33 @@ function TurnLogViewer({
 		setExpandedSections(newExpanded);
 	};
 
-	const formatDuration = (ms: number) => {
+	const formatDuration = (ms?: number) => {
+		if (!ms) return "N/A";
 		if (ms < 1000) return `${ms}ms`;
 		return `${(ms / 1000).toFixed(1)}s`;
 	};
 
-	const formatTimestamp = (timestamp: number) => {
+	const formatTimestamp = (timestamp?: number) => {
+		if (!timestamp) return "N/A";
 		return new Date(timestamp * 1000).toLocaleString();
 	};
+
+	// Handle case where data structure is incomplete
+	if (!data || typeof data !== "object") {
+		return (
+			<Card className="border-destructive">
+				<CardContent className="pt-6">
+					<div className="text-center text-destructive">
+						<AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+						<h3 className="font-medium mb-2">Invalid Log Data</h3>
+						<p className="text-sm">
+							The log file structure is not valid or incomplete.
+						</p>
+					</div>
+				</CardContent>
+			</Card>
+		);
+	}
 
 	return (
 		<div className="space-y-6">
@@ -140,7 +193,8 @@ function TurnLogViewer({
 						<div>
 							<CardTitle className="flex items-center gap-2">
 								<User className="w-5 h-5" />
-								{data.player_id} - Turn {data.turn_number}
+								{data.player_id || "Unknown Player"} - Turn{" "}
+								{data.turn_number || "N/A"}
 							</CardTitle>
 							<CardDescription>{filename}</CardDescription>
 						</div>
@@ -186,20 +240,20 @@ function TurnLogViewer({
 							<div>
 								<div className="text-sm text-muted-foreground">Turn</div>
 								<div className="text-lg font-semibold">
-									{data.game_state_summary.turn} /{" "}
-									{data.game_state_summary.max_turns}
+									{data.game_state_summary?.turn ?? "N/A"} /{" "}
+									{data.game_state_summary?.max_turns ?? "N/A"}
 								</div>
 							</div>
 							<div>
 								<div className="text-sm text-muted-foreground">Units</div>
 								<div className="text-lg font-semibold">
-									{data.game_state_summary.my_units}
+									{data.game_state_summary?.my_units ?? "N/A"}
 								</div>
 							</div>
 							<div>
 								<div className="text-sm text-muted-foreground">Cities</div>
 								<div className="text-lg font-semibold">
-									{data.game_state_summary.my_cities}
+									{data.game_state_summary?.my_cities ?? "N/A"}
 								</div>
 							</div>
 							<div>
@@ -208,25 +262,28 @@ function TurnLogViewer({
 							</div>
 						</div>
 
-						<div className="mt-4">
-							<div className="text-sm text-muted-foreground mb-2">
-								Resources
-							</div>
-							<div className="flex flex-wrap gap-2">
-								{Object.entries(data.game_state_summary.my_resources).map(
-									([resource, amount]) => (
-										<Badge
-											key={resource}
-											variant="outline"
-											className="flex items-center gap-1"
-										>
-											<DollarSign className="w-3 h-3" />
-											{resource}: {amount}
-										</Badge>
-									),
-								)}
-							</div>
-						</div>
+						{data.game_state_summary?.my_resources &&
+							Object.keys(data.game_state_summary.my_resources).length > 0 && (
+								<div className="mt-4">
+									<div className="text-sm text-muted-foreground mb-2">
+										Resources
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{Object.entries(data.game_state_summary.my_resources).map(
+											([resource, amount]) => (
+												<Badge
+													key={resource}
+													variant="outline"
+													className="flex items-center gap-1"
+												>
+													<DollarSign className="w-3 h-3" />
+													{resource}: {amount}
+												</Badge>
+											),
+										)}
+									</div>
+								</div>
+							)}
 					</CardContent>
 				)}
 			</Card>
@@ -249,30 +306,41 @@ function TurnLogViewer({
 				</CardHeader>
 				{expandedSections.has("llm") && (
 					<CardContent>
-						<div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-							<div>
-								<div className="text-sm text-muted-foreground">Model</div>
-								<div className="font-medium">{data.llm_response.model}</div>
-							</div>
-							<div>
-								<div className="text-sm text-muted-foreground">Provider</div>
-								<div className="font-medium">{data.llm_response.provider}</div>
-							</div>
-							<div>
-								<div className="text-sm text-muted-foreground">
-									Tokens In/Out
+						{data.llm_response ? (
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+								<div>
+									<div className="text-sm text-muted-foreground">Model</div>
+									<div className="font-medium">
+										{data.llm_response.model || "N/A"}
+									</div>
 								</div>
-								<div className="font-medium">
-									{data.llm_response.tokens_in} / {data.llm_response.tokens_out}
+								<div>
+									<div className="text-sm text-muted-foreground">Provider</div>
+									<div className="font-medium">
+										{data.llm_response.provider || "N/A"}
+									</div>
+								</div>
+								<div>
+									<div className="text-sm text-muted-foreground">
+										Tokens In/Out
+									</div>
+									<div className="font-medium">
+										{data.llm_response.tokens_in || 0} /{" "}
+										{data.llm_response.tokens_out || 0}
+									</div>
+								</div>
+								<div>
+									<div className="text-sm text-muted-foreground">Latency</div>
+									<div className="font-medium">
+										{formatDuration(data.llm_response.latency_ms)}
+									</div>
 								</div>
 							</div>
-							<div>
-								<div className="text-sm text-muted-foreground">Latency</div>
-								<div className="font-medium">
-									{formatDuration(data.llm_response.latency_ms)}
-								</div>
+						) : (
+							<div className="text-center py-4 text-muted-foreground">
+								No LLM response data available
 							</div>
-						</div>
+						)}
 
 						{data.strategic_analysis && (
 							<div className="mt-4">
@@ -325,15 +393,17 @@ function TurnLogViewer({
 							<div className="space-y-3">
 								{data.actions.map((action) => (
 									<Card
-										key={`${action.type}-${action.reasoning.substring(0, 20)}`}
+										key={`${action.type || "unknown"}-${action.reasoning?.substring(0, 20) || "no-reason"}`}
 										className="bg-muted/50"
 									>
 										<CardContent className="pt-4">
 											<div className="flex items-center justify-between mb-2">
-												<Badge className="font-mono">{action.type}</Badge>
+												<Badge className="font-mono">
+													{action.type || "Unknown"}
+												</Badge>
 											</div>
 											<p className="text-sm text-muted-foreground">
-												{action.reasoning}
+												{action.reasoning || "No reasoning provided"}
 											</p>
 										</CardContent>
 									</Card>
@@ -395,43 +465,68 @@ function GameLogViewer({
 }) {
 	const [selectedTurn, setSelectedTurn] = useState<number>(0);
 
+	const formatDuration = (ms: number) => {
+		if (ms < 1000) return `${Math.round(ms)}ms`;
+		return `${(ms / 1000).toFixed(1)}s`;
+	};
+
+	if (!data?.config || !data?.turn_logs) {
+		return (
+			<Card className="border-destructive">
+				<CardContent className="pt-6">
+					<div className="text-center text-destructive">
+						<AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+						<h3 className="font-medium mb-2">Invalid Game Log</h3>
+						<p className="text-sm">
+							The game log structure is not valid or incomplete.
+						</p>
+					</div>
+				</CardContent>
+			</Card>
+		);
+	}
+
 	return (
 		<div className="space-y-6">
 			{/* Header */}
 			<Card>
 				<CardHeader>
-					<CardTitle>Game Log: {data.config.game_id}</CardTitle>
+					<CardTitle>
+						Game Log: {data.config.game_id || "Unknown Game"}
+					</CardTitle>
 					<CardDescription>{filename}</CardDescription>
 					<div className="flex flex-wrap gap-2 mt-2">
-						<Badge>Players: {data.config.players.length}</Badge>
-						<Badge>Max Turns: {data.config.max_turns}</Badge>
+						<Badge>Players: {data.config.players?.length || 0}</Badge>
+						<Badge>Max Turns: {data.config.max_turns || "N/A"}</Badge>
 						<Badge>Logged Turns: {data.turn_logs.length}</Badge>
 					</div>
 				</CardHeader>
 			</Card>
 
 			{/* Players */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Players</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-						{data.config.players.map((player) => (
-							<Card key={player} className="bg-muted/50">
-								<CardContent className="pt-4">
-									<div className="font-medium">{player}</div>
-									{data.config.personalities?.[player] && (
-										<Badge variant="outline" className="mt-2">
-											{data.config.personalities[player]}
-										</Badge>
-									)}
-								</CardContent>
-							</Card>
-						))}
-					</div>
-				</CardContent>
-			</Card>
+			{data.config.players && data.config.players.length > 0 && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Players</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+							{data.config.players.map((player) => (
+								<Card key={player} className="bg-muted/50">
+									<CardContent className="pt-4">
+										<div className="font-medium">{player}</div>
+										{data.config?.personalities?.[player] && (
+											<Badge variant="outline" className="mt-2">
+												{data.config.personalities[player]}
+											</Badge>
+										)}
+									</CardContent>
+								</Card>
+							))}
+						</div>
+					</CardContent>
+				</Card>
+			)}
 
 			{/* Turn Browser */}
 			<Card>
@@ -440,14 +535,14 @@ function GameLogViewer({
 				</CardHeader>
 				<CardContent>
 					<div className="flex gap-2 flex-wrap mb-4">
-						{data.turn_logs.map((turn) => (
+						{data.turn_logs.map((turn, index) => (
 							<Button
-								key={turn.turn}
-								variant={selectedTurn === turn.turn ? "default" : "outline"}
+								key={turn.turn || index}
+								variant={selectedTurn === index ? "default" : "outline"}
 								size="sm"
-								onClick={() => setSelectedTurn(turn.turn)}
+								onClick={() => setSelectedTurn(index)}
 							>
-								Turn {turn.turn}
+								Turn {turn.turn || index}
 							</Button>
 						))}
 					</div>
@@ -455,40 +550,42 @@ function GameLogViewer({
 					{data.turn_logs[selectedTurn] && (
 						<div className="space-y-4">
 							<div className="text-sm text-muted-foreground">
-								Turn {data.turn_logs[selectedTurn].turn} - Duration:{" "}
+								Turn {data.turn_logs[selectedTurn].turn || selectedTurn} -
+								Duration:{" "}
 								{formatDuration(
-									data.turn_logs[selectedTurn].turn_end_time -
-										data.turn_logs[selectedTurn].turn_start_time,
+									(data.turn_logs[selectedTurn].turn_end_time || 0) -
+										(data.turn_logs[selectedTurn].turn_start_time || 0),
 								)}
 							</div>
 
 							<div className="grid gap-4">
-								{Object.entries(
-									data.turn_logs[selectedTurn].player_actions,
-								).map(([player, action]) => (
-									<Card key={player} className="bg-muted/50">
-										<CardContent className="pt-4">
-											<div className="flex items-center justify-between mb-2">
-												<div className="font-medium">{player}</div>
-												<div className="flex items-center gap-2">
-													{action.success ? (
-														<Badge className="bg-green-500">Success</Badge>
-													) : (
-														<Badge variant="destructive">Failed</Badge>
-													)}
-													<Badge variant="outline">
-														{formatDuration(action.duration)}
-													</Badge>
+								{data.turn_logs[selectedTurn].player_actions &&
+									Object.entries(
+										data.turn_logs[selectedTurn].player_actions,
+									).map(([player, action]) => (
+										<Card key={player} className="bg-muted/50">
+											<CardContent className="pt-4">
+												<div className="flex items-center justify-between mb-2">
+													<div className="font-medium">{player}</div>
+													<div className="flex items-center gap-2">
+														{action.success ? (
+															<Badge className="bg-green-500">Success</Badge>
+														) : (
+															<Badge variant="destructive">Failed</Badge>
+														)}
+														<Badge variant="outline">
+															{formatDuration(action.duration || 0)}
+														</Badge>
+													</div>
 												</div>
-											</div>
-											{action.plan && (
-												<p className="text-sm text-muted-foreground">
-													{action.plan.substring(0, 200)}...
-												</p>
-											)}
-										</CardContent>
-									</Card>
-								))}
+												{action.plan && (
+													<p className="text-sm text-muted-foreground">
+														{action.plan.substring(0, 200)}...
+													</p>
+												)}
+											</CardContent>
+										</Card>
+									))}
 							</div>
 						</div>
 					)}
@@ -506,9 +603,4 @@ function GameLogViewer({
 			</Card>
 		</div>
 	);
-
-	function formatDuration(ms: number) {
-		if (ms < 1000) return `${Math.round(ms)}ms`;
-		return `${(ms / 1000).toFixed(1)}s`;
-	}
 }
