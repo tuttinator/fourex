@@ -4,7 +4,6 @@ FastMCP server for 4X game tools.
 Provides tools for game state analysis, action validation, and strategic planning.
 """
 
-import asyncio
 import json
 from typing import Any
 
@@ -59,9 +58,7 @@ class TerritoryAnalysisRequest(BaseModel):
 class MilitaryAnalysisRequest(BaseModel):
     game_id: str = Field(description="The ID of the game to analyze")
     player_id: str = Field(description="The player perspective for fog-of-war")
-    include_predictions: bool = Field(
-        default=True, description="Include combat outcome predictions"
-    )
+    include_predictions: bool = Field(default=True, description="Include combat outcome predictions")
 
 
 class ResourceOpportunitiesRequest(BaseModel):
@@ -80,20 +77,14 @@ class ActionValidationRequest(BaseModel):
 
 
 class DistanceCalculationRequest(BaseModel):
-    from_locations: list[dict[str, int]] = Field(
-        description="List of starting coordinates with x and y keys"
-    )
-    to_locations: list[dict[str, int]] = Field(
-        description="List of target coordinates with x and y keys"
-    )
+    from_locations: list[dict[str, int]] = Field(description="List of starting coordinates with x and y keys")
+    to_locations: list[dict[str, int]] = Field(description="List of target coordinates with x and y keys")
 
 
 @mcp.tool()
 async def get_game_state(request: GameStateRequest) -> str:
     """Retrieve the current game state for analysis within fog of war."""
-    logger.info(
-        "Getting game state", game_id=request.game_id, player_id=request.player_id
-    )
+    logger.info("Getting game state", game_id=request.game_id, player_id=request.player_id)
 
     if not game_client:
         return json.dumps({"error": "Game client not initialized"})
@@ -105,14 +96,10 @@ async def get_game_state(request: GameStateRequest) -> str:
         # Apply fog of war by filtering to only visible elements
         visible_tiles = _get_visible_tiles(game_state, request.player_id)
         visible_units = {
-            uid: unit
-            for uid, unit in game_state.units.items()
-            if (unit.loc.x, unit.loc.y) in visible_tiles
+            uid: unit for uid, unit in game_state.units.items() if (unit.loc.x, unit.loc.y) in visible_tiles
         }
         visible_cities = {
-            cid: city
-            for cid, city in game_state.cities.items()
-            if (city.loc.x, city.loc.y) in visible_tiles
+            cid: city for cid, city in game_state.cities.items() if (city.loc.x, city.loc.y) in visible_tiles
         }
 
         # Create filtered state summary
@@ -123,18 +110,10 @@ async def get_game_state(request: GameStateRequest) -> str:
                 "width": game_state.map_width,
                 "height": game_state.map_height,
             },
-            "my_units": len(
-                [u for u in visible_units.values() if u.owner == request.player_id]
-            ),
-            "visible_enemy_units": len(
-                [u for u in visible_units.values() if u.owner != request.player_id]
-            ),
-            "my_cities": len(
-                [c for c in visible_cities.values() if c.owner == request.player_id]
-            ),
-            "visible_enemy_cities": len(
-                [c for c in visible_cities.values() if c.owner != request.player_id]
-            ),
+            "my_units": len([u for u in visible_units.values() if u.owner == request.player_id]),
+            "visible_enemy_units": len([u for u in visible_units.values() if u.owner != request.player_id]),
+            "my_cities": len([c for c in visible_cities.values() if c.owner == request.player_id]),
+            "visible_enemy_cities": len([c for c in visible_cities.values() if c.owner != request.player_id]),
             "my_resources": game_state.stockpiles.get(
                 request.player_id, {"food": 0, "wood": 0, "ore": 0, "crystal": 0}
             ),
@@ -152,9 +131,7 @@ async def get_game_state(request: GameStateRequest) -> str:
 @mcp.tool()
 async def analyze_territory(request: TerritoryAnalysisRequest) -> str:
     """Analyze territorial control and expansion opportunities."""
-    logger.info(
-        "Analyzing territory", game_id=request.game_id, player_id=request.player_id
-    )
+    logger.info("Analyzing territory", game_id=request.game_id, player_id=request.player_id)
 
     if not game_client:
         return json.dumps({"error": "Game client not initialized"})
@@ -188,9 +165,7 @@ async def analyze_territory(request: TerritoryAnalysisRequest) -> str:
         for tile in neutral_tiles:
             if tile.terrain in ["plains", "forest"]:  # Good for cities
                 nearby_resources = sum(
-                    1
-                    for rt in resource_tiles
-                    if abs(rt.loc.x - tile.loc.x) + abs(rt.loc.y - tile.loc.y) <= 3
+                    1 for rt in resource_tiles if abs(rt.loc.x - tile.loc.x) + abs(rt.loc.y - tile.loc.y) <= 3
                 )
                 expansion_opportunities.append(
                     {
@@ -211,9 +186,7 @@ async def analyze_territory(request: TerritoryAnalysisRequest) -> str:
                 "food_sites": len([t for t in resource_tiles if t.resource == "food"]),
                 "wood_sites": len([t for t in resource_tiles if t.resource == "wood"]),
                 "ore_sites": len([t for t in resource_tiles if t.resource == "ore"]),
-                "crystal_sites": len(
-                    [t for t in resource_tiles if t.resource == "crystal"]
-                ),
+                "crystal_sites": len([t for t in resource_tiles if t.resource == "crystal"]),
             },
             "expansion_opportunities": sorted(
                 expansion_opportunities,
@@ -249,23 +222,15 @@ async def evaluate_military_position(request: MilitaryAnalysisRequest) -> str:
 
         # Analyze military units
         my_units = [
-            u
-            for u in game_state.units.values()
-            if u.owner == request.player_id and (u.loc.x, u.loc.y) in visible_tiles
+            u for u in game_state.units.values() if u.owner == request.player_id and (u.loc.x, u.loc.y) in visible_tiles
         ]
         enemy_units = [
-            u
-            for u in game_state.units.values()
-            if u.owner != request.player_id and (u.loc.x, u.loc.y) in visible_tiles
+            u for u in game_state.units.values() if u.owner != request.player_id and (u.loc.x, u.loc.y) in visible_tiles
         ]
 
         # Calculate military strength
-        my_military_strength = sum(
-            1 for u in my_units if u.type in ["soldier", "archer"]
-        )
-        enemy_military_strength = sum(
-            1 for u in enemy_units if u.type in ["soldier", "archer"]
-        )
+        my_military_strength = sum(1 for u in my_units if u.type in ["soldier", "archer"])
+        enemy_military_strength = sum(1 for u in enemy_units if u.type in ["soldier", "archer"])
 
         # Identify threats and opportunities
         threats = []
@@ -276,9 +241,7 @@ async def evaluate_military_position(request: MilitaryAnalysisRequest) -> str:
                 # Check if enemy unit threatens our cities
                 for city_id, city in game_state.cities.items():
                     if city.owner == request.player_id:
-                        distance = abs(enemy_unit.loc.x - city.loc.x) + abs(
-                            enemy_unit.loc.y - city.loc.y
-                        )
+                        distance = abs(enemy_unit.loc.x - city.loc.x) + abs(enemy_unit.loc.y - city.loc.y)
                         if distance <= 3:  # Within threat range
                             threats.append(
                                 {
@@ -296,10 +259,7 @@ async def evaluate_military_position(request: MilitaryAnalysisRequest) -> str:
         # Check for vulnerable enemy units
         for enemy_unit in enemy_units:
             nearby_my_units = [
-                u
-                for u in my_units
-                if abs(u.loc.x - enemy_unit.loc.x) + abs(u.loc.y - enemy_unit.loc.y)
-                <= 2
+                u for u in my_units if abs(u.loc.x - enemy_unit.loc.x) + abs(u.loc.y - enemy_unit.loc.y) <= 2
             ]
             if len(nearby_my_units) > 1:  # We can potentially overwhelm
                 opportunities.append(
@@ -318,17 +278,12 @@ async def evaluate_military_position(request: MilitaryAnalysisRequest) -> str:
             "military_strength": {
                 "my_military_units": my_military_strength,
                 "visible_enemy_military": enemy_military_strength,
-                "strength_ratio": my_military_strength
-                / max(enemy_military_strength, 1),
+                "strength_ratio": my_military_strength / max(enemy_military_strength, 1),
             },
             "unit_breakdown": {
-                "my_units": {
-                    unit.type: len([u for u in my_units if u.type == unit.type])
-                    for unit in my_units
-                },
+                "my_units": {unit.type: len([u for u in my_units if u.type == unit.type]) for unit in my_units},
                 "enemy_units": {
-                    unit.type: len([u for u in enemy_units if u.type == unit.type])
-                    for unit in enemy_units
+                    unit.type: len([u for u in enemy_units if u.type == unit.type]) for unit in enemy_units
                 },
             },
             "threats": threats,
@@ -368,9 +323,7 @@ async def find_resource_opportunities(request: ResourceOpportunitiesRequest) -> 
             if (tile.loc.x, tile.loc.y) not in visible_tiles:
                 continue
 
-            if (
-                tile.resource and not tile.improvement
-            ):  # Has resource but no improvement
+            if tile.resource and not tile.improvement:  # Has resource but no improvement
                 # Check if we can access it (not owned by enemy)
                 accessible = tile.owner is None or tile.owner == request.player_id
 
@@ -379,36 +332,23 @@ async def find_resource_opportunities(request: ResourceOpportunitiesRequest) -> 
                     min_distance = float("inf")
                     for unit in game_state.units.values():
                         if unit.owner == request.player_id:
-                            distance = abs(unit.loc.x - tile.loc.x) + abs(
-                                unit.loc.y - tile.loc.y
-                            )
+                            distance = abs(unit.loc.x - tile.loc.x) + abs(unit.loc.y - tile.loc.y)
                             min_distance = min(min_distance, distance)
 
                     for city in game_state.cities.values():
                         if city.owner == request.player_id:
-                            distance = abs(city.loc.x - tile.loc.x) + abs(
-                                city.loc.y - tile.loc.y
-                            )
+                            distance = abs(city.loc.x - tile.loc.x) + abs(city.loc.y - tile.loc.y)
                             min_distance = min(min_distance, distance)
 
-                    if (
-                        request.resource_types is None
-                        or tile.resource in request.resource_types
-                    ):
+                    if request.resource_types is None or tile.resource in request.resource_types:
                         resource_opportunities.append(
                             {
                                 "location": {"x": tile.loc.x, "y": tile.loc.y},
                                 "resource": tile.resource,
                                 "terrain": tile.terrain,
                                 "owner": tile.owner,
-                                "distance_to_nearest_unit": (
-                                    min_distance
-                                    if min_distance != float("inf")
-                                    else None
-                                ),
-                                "priority": _calculate_resource_priority(
-                                    tile.resource, min_distance
-                                ),
+                                "distance_to_nearest_unit": (min_distance if min_distance != float("inf") else None),
+                                "priority": _calculate_resource_priority(tile.resource, min_distance),
                             }
                         )
 
@@ -419,22 +359,12 @@ async def find_resource_opportunities(request: ResourceOpportunitiesRequest) -> 
             "available_resources": len(resource_opportunities),
             "opportunities": resource_opportunities[:10],  # Top 10
             "resource_summary": {
-                "food": len(
-                    [r for r in resource_opportunities if r["resource"] == "food"]
-                ),
-                "wood": len(
-                    [r for r in resource_opportunities if r["resource"] == "wood"]
-                ),
-                "ore": len(
-                    [r for r in resource_opportunities if r["resource"] == "ore"]
-                ),
-                "crystal": len(
-                    [r for r in resource_opportunities if r["resource"] == "crystal"]
-                ),
+                "food": len([r for r in resource_opportunities if r["resource"] == "food"]),
+                "wood": len([r for r in resource_opportunities if r["resource"] == "wood"]),
+                "ore": len([r for r in resource_opportunities if r["resource"] == "ore"]),
+                "crystal": len([r for r in resource_opportunities if r["resource"] == "crystal"]),
             },
-            "strategic_advice": _generate_resource_advice(
-                resource_opportunities, game_state, request.player_id
-            ),
+            "strategic_advice": _generate_resource_advice(resource_opportunities, game_state, request.player_id),
         }
 
         return json.dumps(analysis, indent=2)
@@ -497,9 +427,7 @@ async def calculate_distances(request: DistanceCalculationRequest) -> str:
             row = []
             for j, to_loc in enumerate(request.to_locations):
                 # Manhattan distance
-                distance = abs(from_loc["x"] - to_loc["x"]) + abs(
-                    from_loc["y"] - to_loc["y"]
-                )
+                distance = abs(from_loc["x"] - to_loc["x"]) + abs(from_loc["y"] - to_loc["y"])
                 row.append(
                     {
                         "from_index": i,
@@ -519,9 +447,7 @@ async def calculate_distances(request: DistanceCalculationRequest) -> str:
             "summary": {
                 "min_distance": min(all_distances) if all_distances else 0,
                 "max_distance": max(all_distances) if all_distances else 0,
-                "avg_distance": (
-                    sum(all_distances) / len(all_distances) if all_distances else 0
-                ),
+                "avg_distance": (sum(all_distances) / len(all_distances) if all_distances else 0),
             },
         }
 
@@ -546,10 +472,7 @@ def _get_visible_tiles(game_state, player_id: str) -> set:
                     if abs(dx) + abs(dy) <= sight_range:
                         x = unit.loc.x + dx
                         y = unit.loc.y + dy
-                        if (
-                            0 <= x < game_state.map_width
-                            and 0 <= y < game_state.map_height
-                        ):
+                        if 0 <= x < game_state.map_width and 0 <= y < game_state.map_height:
                             visible_tiles.add((x, y))
 
     # Add visibility around cities
@@ -560,18 +483,13 @@ def _get_visible_tiles(game_state, player_id: str) -> set:
                     if abs(dx) + abs(dy) <= sight_range:
                         x = city.loc.x + dx
                         y = city.loc.y + dy
-                        if (
-                            0 <= x < game_state.map_width
-                            and 0 <= y < game_state.map_height
-                        ):
+                        if 0 <= x < game_state.map_width and 0 <= y < game_state.map_height:
                             visible_tiles.add((x, y))
 
     return visible_tiles
 
 
-def _generate_military_assessment(
-    my_strength: int, enemy_strength: int, threats: list, opportunities: list
-) -> str:
+def _generate_military_assessment(my_strength: int, enemy_strength: int, threats: list, opportunities: list) -> str:
     """Generate a strategic military assessment."""
     if my_strength > enemy_strength * 1.5:
         stance = "You have a strong military advantage. Consider aggressive expansion."
@@ -582,15 +500,9 @@ def _generate_military_assessment(
     else:
         stance = "You are at a military disadvantage. Prioritize defense and unit production."
 
-    threat_text = (
-        f" {len(threats)} immediate threats detected."
-        if threats
-        else " No immediate threats."
-    )
+    threat_text = f" {len(threats)} immediate threats detected." if threats else " No immediate threats."
     opportunity_text = (
-        f" {len(opportunities)} attack opportunities available."
-        if opportunities
-        else " No clear attack opportunities."
+        f" {len(opportunities)} attack opportunities available." if opportunities else " No clear attack opportunities."
     )
 
     return stance + threat_text + opportunity_text
@@ -646,14 +558,10 @@ def _generate_resource_advice(opportunities: list, game_state, player_id: str) -
             f"Crystal available at ({crystal_ops[0]['location']['x']},{crystal_ops[0]['location']['y']}) - high priority."
         )
 
-    return (
-        " ".join(advice) if advice else "Resource levels adequate. Focus on expansion."
-    )
+    return " ".join(advice) if advice else "Resource levels adequate. Focus on expansion."
 
 
-def _validate_single_action(
-    game_state, action: dict[str, Any], player_id: str
-) -> dict[str, Any]:
+def _validate_single_action(game_state, action: dict[str, Any], player_id: str) -> dict[str, Any]:
     """Validate a single action."""
     try:
         action_type = action.get("type")
@@ -680,10 +588,7 @@ def _validate_single_action(
             if target_x is None or target_y is None:
                 return {"valid": False, "reason": "Invalid target coordinates"}
 
-            if not (
-                0 <= target_x < game_state.map_width
-                and 0 <= target_y < game_state.map_height
-            ):
+            if not (0 <= target_x < game_state.map_width and 0 <= target_y < game_state.map_height):
                 return {"valid": False, "reason": "Target coordinates out of bounds"}
 
             return {"valid": True, "reason": "Valid move action"}
@@ -732,7 +637,7 @@ def _validate_single_action(
         return {"valid": False, "reason": f"Validation error: {str(e)}"}
 
 
-async def main():
+def main():
     """Main function to run the FastMCP server."""
     global game_client
 
@@ -742,9 +647,9 @@ async def main():
 
     logger.info("Starting FastMCP server for 4X game tools")
 
-    # Run the MCP server
-    await mcp.run()
+    # Run the MCP server (this is synchronous and manages its own event loop)
+    mcp.run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

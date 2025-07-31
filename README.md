@@ -12,26 +12,81 @@ A deterministic, turn-based strategy sandbox for AI agents research.
 - **MCP Server**: Model Context Protocol server for advanced game analysis
 - **Full test coverage**: 100% unit test coverage for core game logic
 
-## Quick Start
+## Quick Start (TL;DR)
+
+Run all the dependencies locally
 
 ```bash
 # Install dependencies
 make install
 
-# Run tests
-make test
+# Setup local Postgres database
+createdb fourex
+psql fourex -c "CREATE USER fourex WITH PASSWORD 'fourex';"
+psql fourex -c "GRANT ALL PRIVILEGES ON DATABASE fourex TO fourex;"
+make db-init
+
+# Create the backend .env configuration
+cp backend/.env.example backend/.env
 
 # Start development server
 make run-dev
 
+# In a SEPARATE terminal window, start the MCP server
+# (Required for AI agents with advanced analysis)
+make mcp-server
+
+# Run tests
+make test
+
 # Run CLI demo with 4 players for 10 turns
 make run-cli
 
-# Run MCP Server
-make mcp-server
-
 # Quick AI agent test game
 make agents-quick
+```
+
+## Running Services
+
+The system consists of two main services that work together:
+
+1. **Game Backend** (`make run-dev`) - REST API server on port 8000
+2. **MCP Server** (`make mcp-server`) - Model Context Protocol server for AI analysis
+
+**Important**: These services must be run in separate terminal windows due to asyncio event loop conflicts.
+
+### Option 1: Manual (Recommended for development)
+
+```bash
+# Terminal 1: Start backend
+make run-dev
+
+# Terminal 2: Start MCP server
+make mcp-server
+```
+
+### Option 2: Automated background processes
+
+```bash
+# Start both services in background
+make run-all
+
+# Check service status
+make status
+
+# Stop all services
+make stop-all
+```
+
+### Troubleshooting
+
+If you see "Already running asyncio in this thread" error:
+
+- The MCP server cannot run in the same process as the dev server
+- Open a new terminal window and run `make mcp-server` there
+- Or use `make run-all` to run both services in background
+
+```markdown
 
 # Run interactive agent setup
 make agents-interactive
@@ -201,7 +256,7 @@ The Model Context Protocol (MCP) server provides advanced game analysis tools th
 
 ```bash
 # Start the MCP server
-make agents-mcp-server
+make mcp-server
 ```
 
 The server runs on `stdio` transport and provides 6 core analysis tools:

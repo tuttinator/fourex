@@ -48,6 +48,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Process IDs
+*.pid
+.dev-server.pid
+.mcp-server.pid
+
 # Miscellaneous
 .DS_Store
 

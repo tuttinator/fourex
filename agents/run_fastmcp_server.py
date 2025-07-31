@@ -5,7 +5,6 @@ Usage: python run_fastmcp_server.py [options]
 """
 
 import argparse
-import asyncio
 import sys
 
 from rich.console import Console
@@ -21,9 +20,7 @@ def main():
         default="http://localhost:8000/api/v1",
         help="Game backend URL",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
@@ -33,7 +30,8 @@ def main():
     try:
         from src.fastmcp_server import main as fastmcp_main
 
-        asyncio.run(fastmcp_main())
+        # FastMCP manages its own event loop, so we call it directly
+        fastmcp_main()
     except KeyboardInterrupt:
         console.print("\n[yellow]FastMCP Server stopped by user[/yellow]")
     except Exception as e:

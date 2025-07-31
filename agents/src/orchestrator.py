@@ -91,14 +91,10 @@ class GameOrchestrator:
             seed = int(time.time())  # Use timestamp as seed
 
             # Use resilient connection to ensure game exists
-            success = self.resilient_connection.connect_to_game(
-                self.config.game_id, self.config.players, seed
-            )
+            success = self.resilient_connection.connect_to_game(self.config.game_id, self.config.players, seed)
 
             if success:
-                console.print(
-                    f"[green]Game {self.config.game_id} ready (persistent)[/green]"
-                )
+                console.print(f"[green]Game {self.config.game_id} ready (persistent)[/green]")
             return True
 
         except Exception as e:
@@ -109,20 +105,14 @@ class GameOrchestrator:
     def check_and_restore_game(self) -> bool:
         """Check if game can be restored from persistence"""
         try:
-            console.print(
-                f"[blue]Checking persistence for game {self.config.game_id}...[/blue]"
-            )
+            console.print(f"[blue]Checking persistence for game {self.config.game_id}...[/blue]")
 
             # Check current game state
             state = self.resilient_connection.get_game_state(self.config.game_id)
             if state:
                 self.game_state = state
-                console.print(
-                    f"[green]✓ Game {self.config.game_id} restored from persistence[/green]"
-                )
-                console.print(
-                    f"[blue]  Current turn: {state.turn}/{state.max_turns}[/blue]"
-                )
+                console.print(f"[green]✓ Game {self.config.game_id} restored from persistence[/green]")
+                console.print(f"[blue]  Current turn: {state.turn}/{state.max_turns}[/blue]")
                 self.logger.info(
                     "Game restored from persistence",
                     turn=state.turn,
@@ -130,9 +120,7 @@ class GameOrchestrator:
                 )
                 return True
 
-            console.print(
-                f"[yellow]No persistent state found for game {self.config.game_id}[/yellow]"
-            )
+            console.print(f"[yellow]No persistent state found for game {self.config.game_id}[/yellow]")
             return False
 
         except Exception as e:
@@ -168,9 +156,7 @@ class GameOrchestrator:
                 turn_result = await self._play_turn()
 
                 if not turn_result["success"]:
-                    console.print(
-                        f"[red]Turn failed: {turn_result.get('error', 'Unknown error')}[/red]"
-                    )
+                    console.print(f"[red]Turn failed: {turn_result.get('error', 'Unknown error')}[/red]")
                     break
 
                 # Check if game should end
@@ -186,9 +172,7 @@ class GameOrchestrator:
             final_state = self.resilient_connection.get_game_state(self.config.game_id)
             game_result = self._analyze_final_state(final_state)
 
-            console.print(
-                f"[green]Game completed after {final_state.turn} turns[/green]"
-            )
+            console.print(f"[green]Game completed after {final_state.turn} turns[/green]")
             self._display_game_summary(game_result)
 
         except KeyboardInterrupt:
@@ -207,9 +191,7 @@ class GameOrchestrator:
             # Get current game state using resilient connection
             game_state = self.resilient_connection.get_game_state(self.config.game_id)
             if not game_state:
-                self.logger.error(
-                    "Failed to get game state", game_id=self.config.game_id
-                )
+                self.logger.error("Failed to get game state", game_id=self.config.game_id)
                 return {"success": False, "error": "Game state not available"}
 
             current_turn = game_state.turn
@@ -223,9 +205,7 @@ class GameOrchestrator:
                 )
                 return {"success": True, "game_ended": True, "final_state": game_state}
 
-            console.print(
-                f"\n[bold yellow]Turn {current_turn}/{game_state.max_turns}[/bold yellow]"
-            )
+            console.print(f"\n[bold yellow]Turn {current_turn}/{game_state.max_turns}[/bold yellow]")
 
             # Display current state
             self._display_game_state(game_state)
@@ -255,9 +235,7 @@ class GameOrchestrator:
 
                 if not success:
                     console.print(f"[red]{player_id} failed to play turn[/red]")
-                    self.logger.warning(
-                        "Player turn failed", player=player_id, turn=current_turn
-                    )
+                    self.logger.warning("Player turn failed", player=player_id, turn=current_turn)
 
             turn_log["turn_end_time"] = time.time()
             self.turn_logs.append(turn_log)
@@ -306,12 +284,7 @@ class GameOrchestrator:
 
             score = len(cities) * 10 + len(units) * 2
             if resources:
-                score += (
-                    resources.food
-                    + resources.wood
-                    + resources.ore
-                    + resources.crystal * 2
-                )
+                score += resources.food + resources.wood + resources.ore + resources.crystal * 2
 
             results["players"][player_id] = {
                 "cities": len(cities),
@@ -323,9 +296,7 @@ class GameOrchestrator:
 
         # Determine winner
         if results["players"]:
-            winner = max(
-                results["players"].keys(), key=lambda p: results["players"][p]["score"]
-            )
+            winner = max(results["players"].keys(), key=lambda p: results["players"][p]["score"])
             results["winner"] = winner
 
         return results
@@ -350,9 +321,7 @@ class GameOrchestrator:
         table.add_column("Resources", style="magenta")
 
         # Sort players by score
-        sorted_players = sorted(
-            results["players"].items(), key=lambda x: x[1]["score"], reverse=True
-        )
+        sorted_players = sorted(results["players"].items(), key=lambda x: x[1]["score"], reverse=True)
 
         for player_id, data in sorted_players:
             resources = data["resources"]
@@ -370,22 +339,17 @@ class GameOrchestrator:
         console.print(table)
 
         # Turn summary
-        console.print(
-            f"\n[bold]Game completed in {results['turn']}/{results['max_turns']} turns[/bold]"
-        )
+        console.print(f"\n[bold]Game completed in {results['turn']}/{results['max_turns']} turns[/bold]")
 
         # Agent performance summary
         if self.turn_logs:
             console.print("\n[bold]Agent Performance:[/bold]")
             for player_id in self.config.players:
                 successful_turns = sum(
-                    1
-                    for log in self.turn_logs
-                    if log["player_actions"].get(player_id, {}).get("success", False)
+                    1 for log in self.turn_logs if log["player_actions"].get(player_id, {}).get("success", False)
                 )
                 avg_duration = sum(
-                    log["player_actions"].get(player_id, {}).get("duration", 0)
-                    for log in self.turn_logs
+                    log["player_actions"].get(player_id, {}).get("duration", 0) for log in self.turn_logs
                 ) / len(self.turn_logs)
 
                 console.print(
@@ -442,7 +406,7 @@ async def main():
 
     except Exception as e:
         console.print(f"[red]Error running game: {e}[/red]")
-        logfire.log_exception("Game orchestration failed")
+        logfire.exception("Game orchestration failed")
         return {"error": str(e)}
 
 
