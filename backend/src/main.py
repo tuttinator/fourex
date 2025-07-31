@@ -92,7 +92,7 @@ async def health():
     }
 
 
-@app.websocket("/test-ws", tags=["websockets"])
+@app.websocket("/test-ws")
 async def test_websocket(websocket: WebSocket):
     """Test WebSocket endpoint."""
     await websocket.accept()

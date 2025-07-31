@@ -79,7 +79,7 @@ agents-interactive: ## Run interactive game setup
 agents-test: ## Test agent functionality
 	cd agents && uv run python test_agents.py
 
-agents-mcp-server: ## Run MCP server for tool use
+mcp-server: ## Run MCP server for tool use
 	cd agents && uv run python run_fastmcp_server.py
 
 agents-logs: ## Show recent agent game logs

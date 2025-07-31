@@ -27,6 +27,9 @@ make run-dev
 # Run CLI demo with 4 players for 10 turns
 make run-cli
 
+# Run MCP Server
+make mcp-server
+
 # Quick AI agent test game
 make agents-quick
 

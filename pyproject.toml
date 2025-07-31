@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "pytest>=8.2.0",
+    "pytest-asyncio>=0.21.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
     "rich>=13.7.0",
@@ -60,7 +61,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--strict-markers --strict-config --tb=short"
-markers = ["slow: marks tests as slow"]
+markers = ["slow: marks tests as slow", "asyncio: marks tests as async"]
 
 [tool.black]
 line-length = 88
@@ -81,8 +82,4 @@ warn_unused_configs = true
 packages = ["backend/src"]
 
 [dependency-groups]
-dev = [
-    "black>=25.1.0",
-    "mypy>=1.16.1",
-    "ruff>=0.12.2",
-]
+dev = ["black>=25.1.0", "mypy>=1.16.1", "ruff>=0.12.2"]
