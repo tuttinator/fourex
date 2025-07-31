@@ -400,26 +400,26 @@ Consider your current position, available resources, threats, and opportunities.
                     import re
 
                     content = llm_response.content.strip()
-                    
+
                     # Strip markdown code blocks if present
-                    json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+                    json_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
                     if json_match:
                         content = json_match.group(1).strip()
-                    
+
                     plan_data = json.loads(content)
-                    
+
                     # Normalize action types to lowercase before validation
                     if "actions" in plan_data and isinstance(plan_data["actions"], list):
                         for action in plan_data["actions"]:
                             if isinstance(action, dict) and "type" in action:
                                 action["type"] = action["type"].lower()
-                    
+
                     # Provide defaults for required fields if missing
                     if "strategic_analysis" not in plan_data:
                         plan_data["strategic_analysis"] = "Extracted from LLM response"
                     if "priorities" not in plan_data:
                         plan_data["priorities"] = ["Survive"]
-                    
+
                     plan = TurnPlan(**plan_data)
                 except Exception as e:
                     self.logger.warning("Failed to parse structured plan", error=str(e))
@@ -477,9 +477,9 @@ Consider your current position, available resources, threats, and opportunities.
                     actions = parsed.get("actions", [])
                     # Handle different field names that LLM might use
                     strategic_analysis = (
-                        parsed.get("strategic_analysis") or
-                        parsed.get("strategic_plan") or
-                        "Extracted from LLM response"
+                        parsed.get("strategic_analysis")
+                        or parsed.get("strategic_plan")
+                        or "Extracted from LLM response"
                     )
                     priorities = parsed.get("priorities", ["Survive"])
 
@@ -509,58 +509,55 @@ Consider your current position, available resources, threats, and opportunities.
 
                             if action_type in action_type_mapping:
                                 mapped_type = action_type_mapping[action_type]
-                                
+
                                 try:
                                     # Create base action data
                                     action_data = {
                                         "type": mapped_type,
                                         "reasoning": (
-                                            action.get("reasoning") or
-                                            action.get("reason") or
-                                            f"Executing {mapped_type} action"
+                                            action.get("reasoning")
+                                            or action.get("reason")
+                                            or f"Executing {mapped_type} action"
                                         ),
                                     }
-                                    
+
                                     # Handle type-specific fields
                                     if mapped_type == ActionType.MOVE:
                                         # Handle different field names for target location
                                         to_coord = action.get("to") or action.get("destination")
-                                        
+
                                         if game_state and player_id:
                                             my_units = [u for u in game_state.units.values() if u.owner == player_id]
                                             if my_units:
                                                 # Use first available unit if we can't parse the unit string
                                                 action_data["unit_id"] = my_units[0].id
-                                                
+
                                                 if isinstance(to_coord, dict) and "x" in to_coord and "y" in to_coord:
                                                     action_data["target_location"] = Coord(
-                                                        x=int(to_coord["x"]),
-                                                        y=int(to_coord["y"])
+                                                        x=int(to_coord["x"]), y=int(to_coord["y"])
                                                     )
                                                 elif isinstance(to_coord, list) and len(to_coord) >= 2:
                                                     action_data["target_location"] = Coord(
-                                                        x=int(to_coord[0]),
-                                                        y=int(to_coord[1])
+                                                        x=int(to_coord[0]), y=int(to_coord[1])
                                                     )
                                                 else:
                                                     # Provide a default adjacent location if parsing fails
                                                     unit = my_units[0]
                                                     action_data["target_location"] = Coord(
-                                                        x=unit.loc.x + 1,
-                                                        y=unit.loc.y
+                                                        x=unit.loc.x + 1, y=unit.loc.y
                                                     )
-                                    
+
                                     elif mapped_type == ActionType.FOUND_CITY:
                                         if game_state and player_id:
                                             my_units = [u for u in game_state.units.values() if u.owner == player_id]
                                             workers = [u for u in my_units if u.type == UnitType.WORKER]
                                             if workers:
                                                 action_data["unit_id"] = workers[0].id
-                                    
+
                                     # Add other action type handling as needed
-                                    
+
                                     fixed_actions.append(GameAction(**action_data))
-                                    
+
                                 except Exception as e:
                                     self.logger.warning(f"Failed to create action {mapped_type}: {e}")
                                     continue
@@ -1075,7 +1072,7 @@ class FourXAgent:
                         # Skip this action if no valid target
                         self.logger.warning("Skipping MOVE action with no target location")
                         continue
-                        
+
                     api_action = {
                         "type": "MOVE",
                         "unit_id": unit_id,

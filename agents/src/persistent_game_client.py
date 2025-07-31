@@ -5,6 +5,7 @@ Enhanced game client with persistence support.
 import time
 from typing import Any
 
+import requests
 import structlog
 from rich.console import Console
 
@@ -17,17 +18,11 @@ logger = structlog.get_logger()
 class PersistentGameClient(GameClient):
     """Game client with database persistence support."""
 
-    def __init__(
-        self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""
-    ):
+    def __init__(self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""):
         super().__init__(base_url, player_id)
-        self.logger = logger.bind(
-            component="persistent_game_client", player_id=player_id
-        )
+        self.logger = logger.bind(component="persistent_game_client", player_id=player_id)
 
-    def submit_actions(
-        self, game_id: str, player_id: str, actions: list[dict[str, Any]]
-    ) -> bool:
+    def submit_actions(self, game_id: str, player_id: str, actions: list[dict[str, Any]]) -> bool:
         """Submit actions to persistent game controller."""
         try:
             self.logger.info(
@@ -62,9 +57,7 @@ class PersistentGameClient(GameClient):
     def create_game(self, game_id: str, players: list[str], seed: int = 42) -> bool:
         """Create a new persistent game."""
         try:
-            self.logger.info(
-                "Creating persistent game", game_id=game_id, players=players, seed=seed
-            )
+            self.logger.info("Creating persistent game", game_id=game_id, players=players, seed=seed)
 
             response = self.session.post(
                 f"{self.base_url}/games/{game_id}/start",
@@ -98,9 +91,7 @@ class PersistentGameClient(GameClient):
                 self.logger.warning("Game not found", game_id=game_id)
                 return None
             else:
-                self.logger.error(
-                    "Failed to get game info", status_code=response.status_code
-                )
+                self.logger.error("Failed to get game info", status_code=response.status_code)
                 return None
 
         except Exception as e:
@@ -142,18 +133,14 @@ class PersistentGameClient(GameClient):
                 result = response.json()
                 return result.get("games", [])
             else:
-                self.logger.error(
-                    "Failed to list games", status_code=response.status_code
-                )
+                self.logger.error("Failed to list games", status_code=response.status_code)
                 return []
 
         except Exception as e:
             self.logger.error("Error listing games", error=str(e))
             return []
 
-    def get_game_state_with_retry(
-        self, game_id: str, max_retries: int = 3
-    ) -> GameState | None:
+    def get_game_state_with_retry(self, game_id: str, max_retries: int = 3) -> GameState | None:
         """Get game state with retry logic for persistence."""
         for attempt in range(max_retries):
             try:
@@ -171,18 +158,24 @@ class PersistentGameClient(GameClient):
                     self.restore_game(game_id)
                     time.sleep(1)  # Wait a bit for restoration
 
+            except requests.exceptions.HTTPError as e:
+                # Check if this is a 404 error - don't retry these
+                if e.response.status_code == 404:
+                    self.logger.error("Game not found (404) - not retrying", error=str(e))
+                    return None
+
+                self.logger.error("HTTP error getting game state", error=str(e), attempt=attempt + 1)
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)  # Exponential backoff
             except Exception as e:
-                self.logger.error(
-                    "Error getting game state", error=str(e), attempt=attempt + 1
-                )
+                # Handle other exceptions (connection errors, etc.) with retries
+                self.logger.error("Error getting game state", error=str(e), attempt=attempt + 1)
                 if attempt < max_retries - 1:
                     time.sleep(2**attempt)  # Exponential backoff
 
         return None
 
-    def ensure_game_exists(
-        self, game_id: str, players: list[str], seed: int = 42
-    ) -> bool:
+    def ensure_game_exists(self, game_id: str, players: list[str], seed: int = 42) -> bool:
         """Ensure game exists, creating it if necessary."""
         try:
             # First, check if game already exists
@@ -209,9 +202,7 @@ class PersistentGameClient(GameClient):
             return False
 
         except Exception as e:
-            self.logger.error(
-                "Error ensuring game exists", error=str(e), game_id=game_id
-            )
+            self.logger.error("Error ensuring game exists", error=str(e), game_id=game_id)
             return False
 
     def check_game_persistence(self, game_id: str) -> dict[str, Any]:
@@ -242,6 +233,12 @@ class PersistentGameClient(GameClient):
             if not result["in_memory"] and result["in_database"]:
                 result["can_restore"] = True
 
+        except requests.exceptions.HTTPError as e:
+            # 404 errors are expected when checking persistence - don't log as errors
+            if e.response.status_code == 404:
+                self.logger.debug("Game not found (404) while checking persistence", game_id=game_id)
+            else:
+                self.logger.error("HTTP error checking game persistence", error=str(e))
         except Exception as e:
             self.logger.error("Error checking game persistence", error=str(e))
 
@@ -251,14 +248,10 @@ class PersistentGameClient(GameClient):
 class ResilientGameConnection:
     """Manages resilient connections to persistent games."""
 
-    def __init__(
-        self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""
-    ):
+    def __init__(self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""):
         self.client = PersistentGameClient(base_url, player_id)
         self.player_id = player_id
-        self.logger = logger.bind(
-            component="resilient_game_connection", player_id=player_id
-        )
+        self.logger = logger.bind(component="resilient_game_connection", player_id=player_id)
 
     def connect_to_game(self, game_id: str, players: list[str], seed: int = 42) -> bool:
         """Connect to a game with full resilience."""
@@ -270,19 +263,13 @@ class ResilientGameConnection:
             self.logger.info("Game persistence status", status=status)
 
             if status["in_memory"]:
-                console.print(
-                    f"[green]✓ Game {game_id} is active and accessible[/green]"
-                )
+                console.print(f"[green]✓ Game {game_id} is active and accessible[/green]")
                 return True
 
             if status["can_restore"]:
-                console.print(
-                    f"[yellow]⚠ Game {game_id} found in database, restoring...[/yellow]"
-                )
+                console.print(f"[yellow]⚠ Game {game_id} found in database, restoring...[/yellow]")
                 if self.client.restore_game(game_id):
-                    console.print(
-                        f"[green]✓ Game {game_id} restored successfully[/green]"
-                    )
+                    console.print(f"[green]✓ Game {game_id} restored successfully[/green]")
                     return True
                 else:
                     console.print(f"[red]✗ Failed to restore game {game_id}[/red]")
@@ -292,9 +279,7 @@ class ResilientGameConnection:
                 # Try to get the state directly
                 state = self.client.get_game_state_with_retry(game_id)
                 if state:
-                    console.print(
-                        "[green]✓ Successfully connected to existing game[/green]"
-                    )
+                    console.print("[green]✓ Successfully connected to existing game[/green]")
                     return True
 
             # Create new game

@@ -193,9 +193,7 @@ async def restore_game(
         controller = get_persistent_game_controller(session)
         state = await controller.restore_game_state(game_id)
         if not state:
-            raise HTTPException(
-                status_code=404, detail="Game not found or no snapshot available"
-            )
+            raise HTTPException(status_code=404, detail="Game not found or no snapshot available")
 
         return {
             "status": "game_restored",
