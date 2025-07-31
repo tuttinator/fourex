@@ -380,7 +380,7 @@ Consider your current position, available resources, threats, and opportunities.
                     response_model=None,  # Fix type issue: should be None or a BaseModel instance, not a type
                     provider_override=provider_override,
                     temperature=0.7,
-                    max_tokens=2000,
+                    max_tokens=8000,
                 )
             except Exception as e:
                 self.logger.error(
@@ -401,7 +401,7 @@ Consider your current position, available resources, threats, and opportunities.
                 except Exception as e:
                     self.logger.warning("Failed to parse structured plan", error=str(e))
                     # Try to extract from raw content
-                    plan = self._fallback_parse_plan(llm_response.content)
+                    plan = self._fallback_parse_plan(llm_response.content, game_state, player_id)
             else:
                 raise ValueError("Empty response from LLM")
 
@@ -419,14 +419,9 @@ Consider your current position, available resources, threats, and opportunities.
         except Exception as e:
             self.logger.error("Failed to generate plan", player=player_id, error=str(e))
             # Remove logfire.log_exception (not a known attribute)
-            # Return a default plan with pass action
+            # Return a default plan with empty actions (equivalent to pass)
             default_plan = TurnPlan(
-                actions=[
-                    GameAction(
-                        type=ActionType.PASS,
-                        reasoning=f"Failed to generate plan: {str(e)}",
-                    )
-                ],
+                actions=[],  # Empty actions list instead of PASS action
                 strategic_analysis=f"Unable to analyze game state due to LLM error: {str(e)}",
                 priorities=["Survive"],
             )
@@ -440,16 +435,66 @@ Consider your current position, available resources, threats, and opportunities.
             )
             return default_plan, system_prompt, user_prompt, mock_response
 
-    def _fallback_parse_plan(self, content: str) -> TurnPlan:
+    def _fallback_parse_plan(self, content: str, game_state: GameState = None, player_id: str = "") -> TurnPlan:
         """Fallback parsing when structured output fails"""
-        # Simple fallback - just create a pass action
+        import json
+        import re
+
+        # Try to extract actions from the content
+        try:
+            # Look for JSON-like structure in the content
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                potential_json = json_match.group()
+                parsed = json.loads(potential_json)
+
+                # Check if it has the right structure
+                if isinstance(parsed, dict):
+                    # Try to extract fields and fix them
+                    actions = parsed.get("actions", [])
+                    strategic_analysis = parsed.get("strategic_analysis", "Extracted from LLM response")
+                    priorities = parsed.get("priorities", ["Survive"])
+
+                    # Ensure actions is a list and convert any malformed actions
+                    if not isinstance(actions, list):
+                        actions = []
+
+                    # Fix action types and ensure they have required fields
+                    fixed_actions = []
+                    for action in actions:
+                        if isinstance(action, dict):
+                            action_type = action.get("type", "").upper()
+
+                            # Map common action type variations
+                            if action_type in ["FOUND_CITY", "FOUNDCITY"]:
+                                # If we have units, create a proper found city action
+                                if game_state and player_id:
+                                    my_units = [u for u in game_state.units.values() if u.owner == player_id]
+                                    workers = [u for u in my_units if u.type == UnitType.WORKER]
+                                    if workers:
+                                        fixed_actions.append(
+                                            GameAction(
+                                                type=ActionType.FOUND_CITY,
+                                                unit_id=workers[0].id,
+                                                reasoning=action.get("reasoning", "Found city with worker"),
+                                            )
+                                        )
+                                        continue
+
+                            # Add other action type mappings if needed
+                            # For now, skip invalid actions
+
+                    return TurnPlan(
+                        actions=fixed_actions,
+                        strategic_analysis=strategic_analysis,
+                        priorities=priorities if isinstance(priorities, list) else ["Survive"],
+                    )
+        except Exception as e:
+            self.logger.warning(f"Failed to extract from content: {e}")
+
+        # Ultimate fallback - empty actions (equivalent to pass)
         return TurnPlan(
-            actions=[
-                GameAction(
-                    type=ActionType.PASS,
-                    reasoning="Fallback plan due to parsing failure",
-                )
-            ],
+            actions=[],
             strategic_analysis="Unable to parse LLM response properly",
             priorities=["Survive"],
         )
@@ -501,8 +546,12 @@ Map Size: {game_state.map_width}x{game_state.map_height}
 Visible Area: {len(visible_tiles)} tiles (sight range: {sight_range})
 Other Players: {[p for p in game_state.players if p != player_id]}
 
-Visible Enemy Units: {len(visible_enemy_units)} ({", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])})
-Visible Enemy Cities: {len(visible_enemy_cities)} ({", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])})
+Visible Enemy Units: {len(visible_enemy_units)} ({", ".join([
+    f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units
+])})
+Visible Enemy Cities: {len(visible_enemy_cities)} ({", ".join([
+    f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities
+])})
 
 Key Terrain Features (visible):
 - Plains: {len([t for t in visible_tiles if t.terrain == Terrain.PLAINS])}
@@ -920,6 +969,11 @@ class FourXAgent:
         """Convert structured actions to API format with automatic unit ID resolution"""
         api_actions = []
 
+        # If there are no actions or only PASS actions, return empty list
+        non_pass_actions = [action for action in actions if action.type != ActionType.PASS]
+        if not non_pass_actions:
+            return []  # Empty list means "pass turn" to the backend
+
         # Get my units and cities for ID resolution
         my_units = []
         my_cities = []
@@ -927,7 +981,7 @@ class FourXAgent:
             my_units = [u for u in game_state.units.values() if u.owner == self.player_id]
             my_cities = [c for c in game_state.cities.values() if c.owner == self.player_id]
 
-        for action in actions:
+        for action in non_pass_actions:  # Only process non-pass actions
             try:
                 if action.type == ActionType.MOVE:
                     unit_id = action.unit_id
@@ -1008,21 +1062,9 @@ class FourXAgent:
                     }
 
                 else:
-                    # Fallback to old format for unknown action types
-                    api_action = {"type": action.type.value}
-                    # Only add unit_id if not None, as string
-                    if action.unit_id is not None:
-                        api_action["unit_id"] = str(action.unit_id)
-                    # Only add target_location if not None, as JSON string
-                    if action.target_location is not None:
-                        import json
-
-                        api_action["target_location"] = json.dumps(
-                            {
-                                "x": int(action.target_location.x),
-                                "y": int(action.target_location.y),
-                            }
-                        )
+                    # Skip unknown action types (including PASS, DIPLOMACY, RESEARCH)
+                    self.logger.warning(f"Skipping unsupported action type: {action.type}")
+                    continue
 
                 api_actions.append(api_action)
 

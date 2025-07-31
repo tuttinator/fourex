@@ -32,10 +32,11 @@ cp backend/.env.example backend/.env
 # Start development server
 make run-dev
 
-# In a SEPARATE terminal window, start the MCP server
+# In a separate terminal window, start the MCP server
 # (Required for AI agents with advanced analysis)
 make mcp-server
 
+# (Optional) In a separate terminal window run the tests
 # Run tests
 make test
 
