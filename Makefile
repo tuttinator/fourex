@@ -61,8 +61,34 @@ backend-test: ## Run backend tests
 	cd backend && uv run pytest tests/
 
 # Agent tasks
-quick: ## Run a quick test game with agents
-	cd agents && uv run python run_agents.py --preset quick_test --auto-confirm
+agents-quick: ## Run a quick test game with agents
+	cd agents && uv run python run_agents.py --preset quick_test
+
+agents-classic: ## Run classic 3-player game
+	cd agents && uv run python run_agents.py --preset classic_3p
+
+agents-showcase: ## Run personality showcase (4 players)
+	cd agents && uv run python run_agents.py --preset personality_showcase
+
+agents-advanced: ## Run advanced strategies game
+	cd agents && uv run python run_agents.py --preset advanced_strategies
+
+agents-interactive: ## Run interactive game setup
+	cd agents && uv run python run_agents.py --interactive
 
 agents-test: ## Test agent functionality
 	cd agents && uv run python test_agents.py
+
+agents-mcp-server: ## Run MCP server for tool use
+	cd agents && uv run python run_fastmcp_server.py
+
+agents-logs: ## Show recent agent game logs
+	@echo "Recent agent game logs:"
+	@ls -la agents/logs/ | head -10 || echo "No agent logs found"
+
+agents-clean: ## Clean up agent log files
+	rm -rf agents/logs/*.json agents/test_logs/
+	@echo "Agent log files cleaned!"
+
+agents-analyze: ## Analyze agent player performance (usage: make agents-analyze PLAYER=<name>)
+	cd agents && uv run python -c "from src.enhanced_logging import enhanced_logger; import sys; player = sys.argv[1] if len(sys.argv) > 1 else 'Alice'; print(enhanced_logger.analyze_player_performance(player))" $(if $(PLAYER),$(PLAYER),Alice)

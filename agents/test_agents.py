@@ -102,7 +102,7 @@ def test_agent_creation():
     try:
         from src.agent import FourXAgent
 
-        agent = FourXAgent("test_player", "balanced")
+        FourXAgent("test_player", "balanced")
         console.print("[green]✓ Agent creation successful[/green]")
         return True
     except Exception as e:
@@ -129,7 +129,7 @@ def test_enhanced_logging():
     try:
         from src.enhanced_logging import EnhancedLogger
 
-        logger = EnhancedLogger(log_dir="test_logs")
+        EnhancedLogger(log_dir="test_logs")
         console.print("[green]✓ Enhanced logging system works[/green]")
         return True
     except Exception as e:
@@ -142,7 +142,7 @@ def test_mcp_server():
     try:
         from src.mcp_server import MCPGameServer
 
-        server = MCPGameServer()
+        MCPGameServer()
         console.print("[green]✓ MCP server components work[/green]")
         return True
     except Exception as e:
@@ -206,7 +206,7 @@ def test_game_config():
     try:
         from src.orchestrator import GameConfig
 
-        config = GameConfig(
+        GameConfig(
             game_id="test_game",
             players=["Alice", "Bob"],
             personalities={"Alice": "aggressive", "Bob": "defensive"},
