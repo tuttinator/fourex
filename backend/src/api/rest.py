@@ -64,6 +64,9 @@ async def get_game_state(
             # Return full state for observation/admin purposes
             return state
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404) without modification
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -201,5 +204,8 @@ async def restore_game(
             "state_hash": state.hash_state(),
         }
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404) without modification
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

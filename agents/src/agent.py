@@ -382,6 +382,8 @@ Consider your current position, available resources, threats, and opportunities.
                     temperature=0.7,
                     max_tokens=8000,
                 )
+                self.logger.info("LLM generation succeeded", player=player_id)
+                self.logger.debug("LLM response content", player=player_id, content=llm_response.content)
             except Exception as e:
                 self.logger.error(
                     "LLM generation failed",
@@ -395,8 +397,29 @@ Consider your current position, available resources, threats, and opportunities.
             if llm_response.content:
                 try:
                     import json
+                    import re
 
-                    plan_data = json.loads(llm_response.content)
+                    content = llm_response.content.strip()
+                    
+                    # Strip markdown code blocks if present
+                    json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+                    if json_match:
+                        content = json_match.group(1).strip()
+                    
+                    plan_data = json.loads(content)
+                    
+                    # Normalize action types to lowercase before validation
+                    if "actions" in plan_data and isinstance(plan_data["actions"], list):
+                        for action in plan_data["actions"]:
+                            if isinstance(action, dict) and "type" in action:
+                                action["type"] = action["type"].lower()
+                    
+                    # Provide defaults for required fields if missing
+                    if "strategic_analysis" not in plan_data:
+                        plan_data["strategic_analysis"] = "Extracted from LLM response"
+                    if "priorities" not in plan_data:
+                        plan_data["priorities"] = ["Survive"]
+                    
                     plan = TurnPlan(**plan_data)
                 except Exception as e:
                     self.logger.warning("Failed to parse structured plan", error=str(e))
@@ -452,7 +475,12 @@ Consider your current position, available resources, threats, and opportunities.
                 if isinstance(parsed, dict):
                     # Try to extract fields and fix them
                     actions = parsed.get("actions", [])
-                    strategic_analysis = parsed.get("strategic_analysis", "Extracted from LLM response")
+                    # Handle different field names that LLM might use
+                    strategic_analysis = (
+                        parsed.get("strategic_analysis") or
+                        parsed.get("strategic_plan") or
+                        "Extracted from LLM response"
+                    )
                     priorities = parsed.get("priorities", ["Survive"])
 
                     # Ensure actions is a list and convert any malformed actions
@@ -465,24 +493,77 @@ Consider your current position, available resources, threats, and opportunities.
                         if isinstance(action, dict):
                             action_type = action.get("type", "").upper()
 
-                            # Map common action type variations
-                            if action_type in ["FOUND_CITY", "FOUNDCITY"]:
-                                # If we have units, create a proper found city action
-                                if game_state and player_id:
-                                    my_units = [u for u in game_state.units.values() if u.owner == player_id]
-                                    workers = [u for u in my_units if u.type == UnitType.WORKER]
-                                    if workers:
-                                        fixed_actions.append(
-                                            GameAction(
-                                                type=ActionType.FOUND_CITY,
-                                                unit_id=workers[0].id,
-                                                reasoning=action.get("reasoning", "Found city with worker"),
-                                            )
-                                        )
-                                        continue
+                            # Map uppercase action types to proper enum values
+                            action_type_mapping = {
+                                "MOVE": ActionType.MOVE,
+                                "FOUND_CITY": ActionType.FOUND_CITY,
+                                "FOUNDCITY": ActionType.FOUND_CITY,
+                                "BUILD_UNIT": ActionType.BUILD_UNIT,
+                                "BUILD_BUILDING": ActionType.BUILD_BUILDING,
+                                "BUILD_IMPROVEMENT": ActionType.BUILD_IMPROVEMENT,
+                                "ATTACK": ActionType.ATTACK,
+                                "DIPLOMACY": ActionType.DIPLOMACY,
+                                "RESEARCH": ActionType.RESEARCH,
+                                "PASS": ActionType.PASS,
+                            }
 
-                            # Add other action type mappings if needed
-                            # For now, skip invalid actions
+                            if action_type in action_type_mapping:
+                                mapped_type = action_type_mapping[action_type]
+                                
+                                try:
+                                    # Create base action data
+                                    action_data = {
+                                        "type": mapped_type,
+                                        "reasoning": (
+                                            action.get("reasoning") or
+                                            action.get("reason") or
+                                            f"Executing {mapped_type} action"
+                                        ),
+                                    }
+                                    
+                                    # Handle type-specific fields
+                                    if mapped_type == ActionType.MOVE:
+                                        # Handle different field names for target location
+                                        to_coord = action.get("to") or action.get("destination")
+                                        
+                                        if game_state and player_id:
+                                            my_units = [u for u in game_state.units.values() if u.owner == player_id]
+                                            if my_units:
+                                                # Use first available unit if we can't parse the unit string
+                                                action_data["unit_id"] = my_units[0].id
+                                                
+                                                if isinstance(to_coord, dict) and "x" in to_coord and "y" in to_coord:
+                                                    action_data["target_location"] = Coord(
+                                                        x=int(to_coord["x"]),
+                                                        y=int(to_coord["y"])
+                                                    )
+                                                elif isinstance(to_coord, list) and len(to_coord) >= 2:
+                                                    action_data["target_location"] = Coord(
+                                                        x=int(to_coord[0]),
+                                                        y=int(to_coord[1])
+                                                    )
+                                                else:
+                                                    # Provide a default adjacent location if parsing fails
+                                                    unit = my_units[0]
+                                                    action_data["target_location"] = Coord(
+                                                        x=unit.loc.x + 1,
+                                                        y=unit.loc.y
+                                                    )
+                                    
+                                    elif mapped_type == ActionType.FOUND_CITY:
+                                        if game_state and player_id:
+                                            my_units = [u for u in game_state.units.values() if u.owner == player_id]
+                                            workers = [u for u in my_units if u.type == UnitType.WORKER]
+                                            if workers:
+                                                action_data["unit_id"] = workers[0].id
+                                    
+                                    # Add other action type handling as needed
+                                    
+                                    fixed_actions.append(GameAction(**action_data))
+                                    
+                                except Exception as e:
+                                    self.logger.warning(f"Failed to create action {mapped_type}: {e}")
+                                    continue
 
                     return TurnPlan(
                         actions=fixed_actions,
@@ -546,12 +627,12 @@ Map Size: {game_state.map_width}x{game_state.map_height}
 Visible Area: {len(visible_tiles)} tiles (sight range: {sight_range})
 Other Players: {[p for p in game_state.players if p != player_id]}
 
-Visible Enemy Units: {len(visible_enemy_units)} ({", ".join([
-    f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units
-])})
-Visible Enemy Cities: {len(visible_enemy_cities)} ({", ".join([
-    f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities
-])})
+Visible Enemy Units: {len(visible_enemy_units)} ({
+            ", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])
+        })
+Visible Enemy Cities: {len(visible_enemy_cities)} ({
+            ", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])
+        })
 
 Key Terrain Features (visible):
 - Plains: {len([t for t in visible_tiles if t.terrain == Terrain.PLAINS])}
@@ -989,6 +1070,12 @@ class FourXAgent:
                         # Use first available unit
                         unit_id = my_units[0].id
 
+                    # Handle missing target_location
+                    if action.target_location is None:
+                        # Skip this action if no valid target
+                        self.logger.warning("Skipping MOVE action with no target location")
+                        continue
+                        
                     api_action = {
                         "type": "MOVE",
                         "unit_id": unit_id,

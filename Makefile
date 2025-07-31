@@ -123,20 +123,8 @@ status: ## Check status of running services
 modal-deploy: ## Deploy Modal Ollama server for LLM support
 	uv run modal deploy agents/deploy/modal_ollama.py
 
-modal-status: ## Check Modal app status
-	uv run modal app list
-
 modal-logs: ## Show Modal app logs (usage: make modal-logs APP=ollama-server)
 	uv run modal app logs $(if $(APP),$(APP),ollama-server)
-
-modal-url: ## Get the Modal Ollama server URL
-	@echo "Getting Modal Ollama server URL..."
-	@PROFILE=$$(uv run modal profile current 2>/dev/null); \
-	if [ -z "$$PROFILE" ]; then \
-		echo "Error: Could not get Modal profile. Make sure you're logged in with 'modal auth'"; \
-		exit 1; \
-	fi; \
-	echo "https://$$PROFILE--ollama-server-ollamaserver-serve.modal.run"
 
 modal-setup-env: ## Create agents/.env with Modal configuration
 	@echo "Setting up agents/.env with Modal configuration..."
