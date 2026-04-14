@@ -14,16 +14,16 @@ A deterministic, turn-based strategy sandbox for AI agents research.
 
 ```bash
 # Install dependencies
-make install
+mise run install
 
 # Run tests
-make test
+mise run test
 
 # Start development server
-make run-dev
+mise run run-dev
 
 # Run CLI demo with 4 players for 10 turns
-make run-cli
+mise run run-cli
 ```
 
 ## Game Mechanics
@@ -58,17 +58,17 @@ curl -X POST "http://localhost:8000/api/v1/actions?game_id=test" \
 
 ```bash
 # Format code
-make format
+mise run format
 
 # Run linting
-make lint
+mise run lint
 
 # Run tests with coverage
-make test-cov
+mise run test-cov
 
 # Start with Docker Compose
 docker-compose up -d postgres redis
-make run-dev
+mise run run-dev
 ```
 
 ## Architecture

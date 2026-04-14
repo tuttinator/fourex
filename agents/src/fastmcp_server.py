@@ -629,21 +629,24 @@ def _generate_resource_advice(opportunities: list, game_state, player_id: str) -
     if food < 20:
         food_ops = [o for o in opportunities if o["resource"] == "food"]
         if food_ops:
+            location = food_ops[0]["location"]
             advice.append(
-                f"Low food ({food}). Priority: develop food site at ({food_ops[0]['location']['x']},{food_ops[0]['location']['y']})."
+                f"Low food ({food}). Priority: develop food site at ({location['x']},{location['y']})."
             )
 
     if wood < 10:
         wood_ops = [o for o in opportunities if o["resource"] == "wood"]
         if wood_ops:
+            location = wood_ops[0]["location"]
             advice.append(
-                f"Low wood ({wood}). Consider wood site at ({wood_ops[0]['location']['x']},{wood_ops[0]['location']['y']})."
+                f"Low wood ({wood}). Consider wood site at ({location['x']},{location['y']})."
             )
 
     crystal_ops = [o for o in opportunities if o["resource"] == "crystal"]
     if crystal_ops:
+        location = crystal_ops[0]["location"]
         advice.append(
-            f"Crystal available at ({crystal_ops[0]['location']['x']},{crystal_ops[0]['location']['y']}) - high priority."
+            f"Crystal available at ({location['x']},{location['y']}) - high priority."
         )
 
     return (

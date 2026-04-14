@@ -4,13 +4,12 @@ End-to-end tests for turn progression and game mechanics.
 
 import asyncio
 import time
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import requests
 
-from agents.src.agent import FourXAgent, GameClient
-from agents.src.persistent_game_client import PersistentGameClient
+from agents.src.agent import FourXAgent
 
 
 class TestTurnProgression:
@@ -34,14 +33,14 @@ class TestTurnProgression:
             # Create game
             response = requests.post(
                 f"{base_url}/games/{game_id}/start",
-                json={"players": players, "seed": 42}
+                json={"players": players, "seed": 42},
             )
             return response.status_code == 200
         except Exception as e:
             print(f"Failed to setup game: {e}")
             return False
 
-    def get_game_state(self, base_url: str, game_id: str) -> Dict[str, Any]:
+    def get_game_state(self, base_url: str, game_id: str) -> dict[str, Any]:
         """Get current game state."""
         try:
             response = requests.get(f"{base_url}/state?game_id={game_id}")
@@ -69,17 +68,19 @@ class TestTurnProgression:
             current_x, current_y = unit["loc"]["x"], unit["loc"]["y"]
 
             # Move one tile (simple movement)
-            actions = [{
-                "type": "MOVE",
-                "unit_id": unit["id"],
-                "to": {"x": current_x + 1, "y": current_y}
-            }]
+            actions = [
+                {
+                    "type": "MOVE",
+                    "unit_id": unit["id"],
+                    "to": {"x": current_x + 1, "y": current_y},
+                }
+            ]
 
             # Submit actions
             response = requests.post(
                 f"{base_url}/actions?game_id={game_id}",
                 json=actions,
-                headers={"Authorization": f"Bearer player_{player_id}"}
+                headers={"Authorization": f"Bearer player_{player_id}"},
             )
 
             return response.status_code == 200
@@ -99,7 +100,9 @@ class TestTurnProgression:
         # Get initial state
         initial_state = self.get_game_state(base_url, game_id)
         assert initial_state, "Failed to get initial game state"
-        assert initial_state["turn"] == 0, f"Expected turn 0, got {initial_state['turn']}"
+        assert (
+            initial_state["turn"] == 0
+        ), f"Expected turn 0, got {initial_state['turn']}"
 
         # Both players submit actions
         for player in players:
@@ -114,7 +117,9 @@ class TestTurnProgression:
         assert final_state, "Failed to get final game state"
         assert final_state["turn"] == 1, f"Expected turn 1, got {final_state['turn']}"
 
-        print(f"✅ Turn progressed from {initial_state['turn']} to {final_state['turn']}")
+        print(
+            f"✅ Turn progressed from {initial_state['turn']} to {final_state['turn']}"
+        )
 
     def test_partial_submissions_dont_advance_turn(self, base_url, game_id, players):
         """Test that turns don't advance when only some players submit actions."""
@@ -153,7 +158,7 @@ class TestTurnProgression:
                 player_id=player,
                 personality="balanced",
                 game_backend_url=base_url,
-                use_persistent_client=True
+                use_persistent_client=True,
             )
             agents.append(agent)
 
@@ -204,7 +209,9 @@ class TestTurnProgression:
             assert response.status_code == 200, "Failed to get game info"
 
             game_info = response.json()
-            assert game_info["turn"] >= 1, f"Database shows turn {game_info['turn']}, expected >= 1"
+            assert (
+                game_info["turn"] >= 1
+            ), f"Database shows turn {game_info['turn']}, expected >= 1"
             assert game_info["players"] == players, "Players mismatch in database"
 
             print(f"✅ Database correctly shows turn {game_info['turn']}")
@@ -231,7 +238,9 @@ if __name__ == "__main__":
 
         # Test 2: Partial submissions
         print("\n2. Testing partial submissions...")
-        test.test_partial_submissions_dont_advance_turn(base_url, game_id + "_2", players)
+        test.test_partial_submissions_dont_advance_turn(
+            base_url, game_id + "_2", players
+        )
 
         # Test 3: Database persistence
         print("\n3. Testing database persistence...")
@@ -241,4 +250,4 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
-        sys.exit(1)        sys.exit(1)
+        sys.exit(1)

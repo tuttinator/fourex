@@ -4,9 +4,8 @@ WebSocket endpoints for real-time game events.
 
 import json
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
-
 
 router = APIRouter()
 

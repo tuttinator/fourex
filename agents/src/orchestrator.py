@@ -5,17 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import logfire
-import requests
 import structlog
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.text import Text
 
-from .agent import EnhancedLLMClient, FourXAgent, GameClient
+from .agent import FourXAgent, GameClient
 from .enhanced_logging import enhanced_logger
 from .persistent_game_client import ResilientGameConnection
 
@@ -362,7 +356,12 @@ class GameOrchestrator:
 
         for player_id, data in sorted_players:
             resources = data["resources"]
-            resource_str = f"F:{resources.get('food', 0)} W:{resources.get('wood', 0)} O:{resources.get('ore', 0)} C:{resources.get('crystal', 0)}"
+            resource_str = (
+                f"F:{resources.get('food', 0)} "
+                f"W:{resources.get('wood', 0)} "
+                f"O:{resources.get('ore', 0)} "
+                f"C:{resources.get('crystal', 0)}"
+            )
 
             table.add_row(
                 player_id,
@@ -443,7 +442,7 @@ async def main():
         log_filename = f"game_log_{config.game_id}_{int(time.time())}.json"
         orchestrator.save_game_log(log_filename)
 
-        console.print(f"\n[green]Game completed successfully![/green]")
+        console.print("\n[green]Game completed successfully![/green]")
         return results
 
     except Exception as e:

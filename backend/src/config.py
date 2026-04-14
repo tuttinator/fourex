@@ -2,7 +2,7 @@
 Configuration settings for the 4X game backend.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -17,8 +17,7 @@ class Settings(BaseSettings):
     max_concurrent_games: int = 20
     turn_timeout_seconds: int = 60
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()

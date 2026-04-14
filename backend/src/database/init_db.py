@@ -5,10 +5,11 @@ Database initialization script.
 
 import asyncio
 import sys
+
 from rich.console import Console
 from rich.panel import Panel
 
-from .connection import init_db, drop_db, get_engine
+from .connection import drop_db, get_engine, init_db
 
 console = Console()
 

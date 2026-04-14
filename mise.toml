@@ -26,20 +26,31 @@ uv run ruff check --fix backend/src agents/src tests
 """
 
 [tasks.test]
-description = "Run root-level tests"
-run = "uv run pytest tests/"
+description = "Run root-level integration tests with a temporary local backend"
+run = """
+DEBUG=false uv run --directory backend uvicorn src.main:app --host 127.0.0.1 --port 8000 > /tmp/fourex-test-server.log 2>&1 &
+server_pid=$!
+trap 'kill $server_pid' EXIT
+for _ in $(seq 1 20); do
+  if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+    break
+  fi
+  sleep 1
+done
+PYTHONPATH=. uv run pytest tests/
+"""
 
 [tasks.test-cov]
 description = "Run tests with coverage"
-run = "uv run pytest --cov=src --cov-report=term-missing tests/"
+run = "uv run pytest --cov=backend/src --cov-report=term-missing tests/"
 
 [tasks.run-dev]
 description = "Run backend development server (FastAPI on :8000)"
-run = "uv run --directory backend python -m src.main"
+run = "DEBUG=false uv run --directory backend uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
 
 [tasks.run-cli]
 description = "Run CLI with random seed"
-run = "uv run python -m src.game --players 4 --turns 10 --seed 42"
+run = "uv run --directory backend python -m src.game --players 4 --turns 10 --seed 42"
 
 [tasks.clean]
 description = "Clean up temporary files"
@@ -77,11 +88,11 @@ run = "cd backend && uv run python manage_db.py game-info ${GAME}"
 # Backend development
 [tasks.backend-dev]
 description = "Run backend development server"
-run = "cd backend && uv run python src/main.py"
+run = "cd backend && DEBUG=false uv run python src/main.py"
 
 [tasks.backend-test]
 description = "Run backend tests"
-run = "cd backend && uv run pytest tests/"
+run = "DEBUG=false PYTHONPATH=. uv run pytest backend/tests/"
 
 # Agent tasks
 [tasks.quick]
@@ -118,7 +129,7 @@ run = "cd agents && uv run black src/ *.py"
 
 [tasks.agents-lint]
 description = "Lint agent code"
-run = "cd agents && uv run flake8 src/ *.py"
+run = "cd agents && uv run ruff check src/ *.py"
 
 [tasks.agents-type-check]
 description = "Type check agent code"

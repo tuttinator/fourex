@@ -377,7 +377,7 @@ Current Turn: {game_state.turn}/{game_state.max_turns}
 
 Please analyze the current game state and provide a strategic plan for this turn.
 Consider your current position, available resources, threats, and opportunities.
-{f"Use the MCP analysis above to guide your strategic decisions." if mcp_analysis else ""}
+{"Use the MCP analysis above to guide your strategic decisions." if mcp_analysis else ""}
 """
 
         messages = [
@@ -527,8 +527,12 @@ Map Size: {game_state.map_width}x{game_state.map_height}
 Visible Area: {len(visible_tiles)} tiles (sight range: {sight_range})
 Other Players: {[p for p in game_state.players if p != player_id]}
 
-Visible Enemy Units: {len(visible_enemy_units)} ({", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])})
-Visible Enemy Cities: {len(visible_enemy_cities)} ({", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])})
+Visible Enemy Units: {len(visible_enemy_units)} (
+{", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])}
+)
+Visible Enemy Cities: {len(visible_enemy_cities)} (
+{", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])}
+)
 
 Key Terrain Features (visible):
 - Plains: {len([t for t in visible_tiles if t.terrain == Terrain.PLAINS])}
@@ -1082,6 +1086,9 @@ class FourXAgent:
                             else None
                         ),
                     }
+
+                elif action.type == ActionType.PASS:
+                    continue
 
                 else:
                     # Fallback to old format for unknown action types
