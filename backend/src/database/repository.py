@@ -2,6 +2,7 @@
 Database repository for game data operations.
 """
 
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -11,7 +12,17 @@ from sqlalchemy.orm import selectinload
 
 from ..game.models import Action, GameState, TurnResult
 from ..game.models import PromptLog as GamePromptLog
-from .models import Game, GameSnapshot, GameTurn, PlayerAction, PromptLog
+from .models import (
+    AgentMemory,
+    Game,
+    GameSnapshot,
+    GameTurn,
+    PlayerAction,
+    PlayerApiKey,
+    PromptLog,
+    TurnAction,
+    TurnSnapshot,
+)
 
 
 class GameRepository:
@@ -195,6 +206,197 @@ class GameRepository:
         self.session.add(db_prompt_log)
         await self.session.flush()
         return db_prompt_log
+
+    async def upsert_agent_memory(
+        self, game_id: str, player_id: str, turn_number: int, scratchpad_text: str
+    ) -> AgentMemory:
+        """Create or update scratchpad text for a specific player turn."""
+        existing = await self.get_agent_memory(game_id, player_id, turn_number)
+
+        if existing:
+            existing.scratchpad_text = scratchpad_text
+            existing.updated_at = datetime.utcnow()
+            await self.session.flush()
+            return existing
+
+        memory = AgentMemory(
+            game_id=game_id,
+            player_id=player_id,
+            turn_number=turn_number,
+            scratchpad_text=scratchpad_text,
+        )
+        self.session.add(memory)
+        await self.session.flush()
+        return memory
+
+    async def get_agent_memory(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> AgentMemory | None:
+        """Read scratchpad text for a specific player turn."""
+        result = await self.session.execute(
+            select(AgentMemory).where(
+                and_(
+                    AgentMemory.game_id == game_id,
+                    AgentMemory.player_id == player_id,
+                    AgentMemory.turn_number == turn_number,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_turn_snapshot(
+        self, game_id: str, player_id: str, turn_number: int, state_json: dict[str, Any]
+    ) -> TurnSnapshot:
+        """Create or update a fog-of-war-redacted snapshot."""
+        existing = await self.get_turn_snapshot(game_id, player_id, turn_number)
+
+        if existing:
+            existing.state_json = state_json
+            await self.session.flush()
+            return existing
+
+        snapshot = TurnSnapshot(
+            game_id=game_id,
+            player_id=player_id,
+            turn_number=turn_number,
+            state_json=state_json,
+        )
+        self.session.add(snapshot)
+        await self.session.flush()
+        return snapshot
+
+    async def get_turn_snapshot(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> TurnSnapshot | None:
+        """Read a specific turn snapshot."""
+        result = await self.session.execute(
+            select(TurnSnapshot).where(
+                and_(
+                    TurnSnapshot.game_id == game_id,
+                    TurnSnapshot.player_id == player_id,
+                    TurnSnapshot.turn_number == turn_number,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_turn_action(
+        self,
+        game_id: str,
+        player_id: str,
+        turn_number: int,
+        actions_json: list[dict[str, Any]] | dict[str, Any],
+    ) -> TurnAction:
+        """Create or update submitted actions for a player turn."""
+        existing = await self.get_turn_action(game_id, player_id, turn_number)
+
+        if existing:
+            existing.actions_json = actions_json
+            existing.submitted_at = datetime.utcnow()
+            await self.session.flush()
+            return existing
+
+        turn_action = TurnAction(
+            game_id=game_id,
+            player_id=player_id,
+            turn_number=turn_number,
+            actions_json=actions_json,
+        )
+        self.session.add(turn_action)
+        await self.session.flush()
+        return turn_action
+
+    async def get_turn_action(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> TurnAction | None:
+        """Read submitted actions for a specific player turn."""
+        result = await self.session.execute(
+            select(TurnAction).where(
+                and_(
+                    TurnAction.game_id == game_id,
+                    TurnAction.player_id == player_id,
+                    TurnAction.turn_number == turn_number,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_player_api_key(
+        self,
+        game_id: str,
+        player_id: str,
+        plaintext_key: str,
+        expires_at: datetime | None,
+    ) -> PlayerApiKey:
+        """Create or replace a hashed API key for a player."""
+        key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
+
+        existing = await self.get_player_api_key(game_id, player_id)
+        if existing:
+            existing.key_hash = key_hash
+            existing.expires_at = expires_at
+            await self.session.flush()
+            return existing
+
+        api_key = PlayerApiKey(
+            game_id=game_id,
+            player_id=player_id,
+            key_hash=key_hash,
+            expires_at=expires_at,
+        )
+        self.session.add(api_key)
+        await self.session.flush()
+        return api_key
+
+    async def get_player_api_key(
+        self, game_id: str, player_id: str
+    ) -> PlayerApiKey | None:
+        """Read a player API key row by game and player."""
+        result = await self.session.execute(
+            select(PlayerApiKey).where(
+                and_(
+                    PlayerApiKey.game_id == game_id,
+                    PlayerApiKey.player_id == player_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def validate_player_api_key(
+        self, plaintext_key: str, now: datetime | None = None
+    ) -> PlayerApiKey | None:
+        """Validate a plaintext key by matching its hash and checking expiry."""
+        key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
+        current_time = now or datetime.utcnow()
+
+        result = await self.session.execute(
+            select(PlayerApiKey).where(PlayerApiKey.key_hash == key_hash)
+        )
+        api_key = result.scalar_one_or_none()
+
+        if not api_key:
+            return None
+
+        if api_key.expires_at and api_key.expires_at <= current_time:
+            return None
+
+        return api_key
+
+    async def expire_player_api_keys(
+        self,
+        game_id: str,
+        player_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> int:
+        """Expire one player's key or all keys for a game."""
+        expiry = expires_at or datetime.utcnow()
+        stmt = update(PlayerApiKey).where(PlayerApiKey.game_id == game_id)
+
+        if player_id is not None:
+            stmt = stmt.where(PlayerApiKey.player_id == player_id)
+
+        result = await self.session.execute(stmt.values(expires_at=expiry))
+        return result.rowcount or 0
 
     async def save_enhanced_prompt_log(
         self,

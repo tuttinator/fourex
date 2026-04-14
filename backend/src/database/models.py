@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -61,6 +63,18 @@ class Game(Base):
     # Relationships
     turns = relationship(
         "GameTurn", back_populates="game", cascade="all, delete-orphan"
+    )
+    agent_memories = relationship(
+        "AgentMemory", back_populates="game", cascade="all, delete-orphan"
+    )
+    turn_snapshots = relationship(
+        "TurnSnapshot", back_populates="game", cascade="all, delete-orphan"
+    )
+    turn_actions = relationship(
+        "TurnAction", back_populates="game", cascade="all, delete-orphan"
+    )
+    player_api_keys = relationship(
+        "PlayerApiKey", back_populates="game", cascade="all, delete-orphan"
     )
     prompt_logs = relationship(
         "PromptLog", back_populates="game", cascade="all, delete-orphan"
@@ -194,6 +208,114 @@ class PromptLog(Base):
     )
 
 
+class AgentMemory(Base):
+    """Per-player scratchpad persisted for a specific turn."""
+
+    __tablename__ = "agent_memory"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    player_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    scratchpad_text: Mapped[str] = mapped_column(String(4000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    game = relationship("Game", back_populates="agent_memories")
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_id", "turn_number", name="uq_agent_memory"),
+        CheckConstraint(
+            "char_length(scratchpad_text) <= 4000", name="ck_agent_memory_text_len"
+        ),
+        Index("idx_agent_memory_lookup", "game_id", "player_id", "turn_number"),
+    )
+
+
+class TurnSnapshot(Base):
+    """Fog-of-war-redacted game state for a player on a turn."""
+
+    __tablename__ = "turn_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    player_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+
+    game = relationship("Game", back_populates="turn_snapshots")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "game_id", "player_id", "turn_number", name="uq_turn_snapshot"
+        ),
+        Index("idx_turn_snapshot_lookup", "game_id", "player_id", "turn_number"),
+    )
+
+
+class TurnAction(Base):
+    """Submitted player actions for a turn."""
+
+    __tablename__ = "turn_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    player_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    actions_json: Mapped[list[dict[str, Any]] | dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+
+    game = relationship("Game", back_populates="turn_actions")
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_id", "turn_number", name="uq_turn_action"),
+        Index("idx_turn_action_lookup", "game_id", "player_id", "turn_number"),
+    )
+
+
+class PlayerApiKey(Base):
+    """Hashed API key for a player within a game."""
+
+    __tablename__ = "player_api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    player_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+
+    game = relationship("Game", back_populates="player_api_keys")
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_id", name="uq_player_api_keys_game_player"),
+        UniqueConstraint("key_hash", name="uq_player_api_keys_hash"),
+        Index("idx_player_api_keys_lookup", "game_id", "player_id"),
+        Index("idx_player_api_keys_expiry", "expires_at"),
+    )
+
+
 class GameSnapshot(Base):
     """Periodic snapshots of complete game state for recovery."""
 
@@ -253,16 +375,6 @@ class PlayerStats(Base):
     score_wins: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Timestamps
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
-    )
-
-    # Constraints and indexes
-    __table_args__ = (
-        UniqueConstraint("player_id", name="uq_player_stats"),
-        Index("idx_player_stats_wins", "games_won"),
-        Index("idx_player_stats_played", "games_played"),
-    )  # Timestamps
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), onupdate=func.now(), nullable=False
     )
