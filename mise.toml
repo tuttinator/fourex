@@ -4,11 +4,11 @@ node = "lts"
 
 [tasks.install]
 description = "Install dependencies with uv"
-run = "uv sync --dev --extra dev"
+run = "uv sync --dev"
 
 [tasks.sync]
 description = "Sync dependencies (install/update based on lock file)"
-run = "uv sync --dev --extra dev"
+run = "uv sync --dev"
 
 [tasks.lint]
 description = "Run linting and type checking"
@@ -35,7 +35,7 @@ run = "uv run pytest --cov=src --cov-report=term-missing tests/"
 
 [tasks.run-dev]
 description = "Run backend development server (FastAPI on :8000)"
-run = "uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
+run = "uv run --directory backend python -m src.main"
 
 [tasks.run-cli]
 description = "Run CLI with random seed"
