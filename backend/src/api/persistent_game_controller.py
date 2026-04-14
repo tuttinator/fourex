@@ -428,5 +428,10 @@ def get_persistent_game_controller(session: AsyncSession) -> PersistentGameContr
 
     if _global_controller is None:
         _global_controller = PersistentGameController(session)
+    else:
+        # Rebind the controller to the current request session while preserving
+        # cached game state and pending actions across requests.
+        _global_controller.session = session
+        _global_controller.repo = GameRepository(session)
 
     return _global_controller

@@ -38,17 +38,17 @@ mise run run-cli
 
 ```bash
 # Create game
-curl -X POST "http://localhost:8000/api/v1/games/test/start" \
+curl -X POST "http://localhost:8010/api/v1/games/test/start" \
   -H "Authorization: Bearer player_alice" \
   -H "Content-Type: application/json" \
   -d '{"players": ["alice", "bob"], "seed": 42}'
 
 # Get game state (with fog-of-war)
-curl "http://localhost:8000/api/v1/state?game_id=test" \
+curl "http://localhost:8010/api/v1/state?game_id=test" \
   -H "Authorization: Bearer player_alice"
 
 # Submit actions
-curl -X POST "http://localhost:8000/api/v1/actions?game_id=test" \
+curl -X POST "http://localhost:8010/api/v1/actions?game_id=test" \
   -H "Authorization: Bearer player_alice" \
   -H "Content-Type: application/json" \
   -d '[{"type": "MOVE", "unit_id": 1, "to": {"x": 5, "y": 6}}]'

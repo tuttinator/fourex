@@ -195,7 +195,7 @@ class GameClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000/api/v1",
+        base_url: str = "http://localhost:8010/api/v1",
         player_id: str | None = None,
     ):
         self.base_url = base_url
@@ -668,7 +668,7 @@ class FourXAgent:
         personality: str = "balanced",
         game_client: GameClient | None = None,
         llm_client: EnhancedLLMClient | None = None,
-        game_backend_url: str = "http://localhost:8000/api/v1",
+        game_backend_url: str = "http://localhost:8010/api/v1",
         primary_provider: str = "llm_studio",
         fallback_providers: list[str] | None = None,
         use_persistent_client: bool = True,

@@ -16,7 +16,7 @@ class FastMCPGameClient:
     """Client for connecting to the FastMCP server and using game analysis tools."""
 
     def __init__(
-        self, player_id: str, game_backend_url: str = "http://localhost:8000/api/v1"
+        self, player_id: str, game_backend_url: str = "http://localhost:8010/api/v1"
     ):
         self.player_id = player_id
         self.game_backend_url = game_backend_url

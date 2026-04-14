@@ -29,7 +29,7 @@ def test_imports():
         return False
 
 
-def test_game_backend(url="http://localhost:8000"):
+def test_game_backend(url="http://localhost:8010"):
     """Test connection to game backend"""
     try:
         response = requests.get(f"{url}/health", timeout=5)

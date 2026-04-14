@@ -28,11 +28,11 @@ uv run ruff check --fix backend/src agents/src tests
 [tasks.test]
 description = "Run root-level integration tests with a temporary local backend"
 run = """
-DEBUG=false uv run --directory backend uvicorn src.main:app --host 127.0.0.1 --port 8000 > /tmp/fourex-test-server.log 2>&1 &
+DEBUG=false uv run --directory backend uvicorn src.main:app --host 127.0.0.1 --port 8010 > /tmp/fourex-test-server.log 2>&1 &
 server_pid=$!
 trap 'kill $server_pid' EXIT
 for _ in $(seq 1 20); do
-  if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+  if curl -sf http://127.0.0.1:8010/health > /dev/null; then
     break
   fi
   sleep 1
@@ -45,8 +45,8 @@ description = "Run tests with coverage"
 run = "uv run pytest --cov=backend/src --cov-report=term-missing tests/"
 
 [tasks.run-dev]
-description = "Run backend development server (FastAPI on :8000)"
-run = "DEBUG=false uv run --directory backend uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
+description = "Run backend development server (FastAPI on :8010)"
+run = "DEBUG=false uv run --directory backend uvicorn src.main:app --reload --host 0.0.0.0 --port 8010"
 
 [tasks.run-cli]
 description = "Run CLI with random seed"

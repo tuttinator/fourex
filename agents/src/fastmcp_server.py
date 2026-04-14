@@ -740,7 +740,7 @@ async def main():
     global game_client
 
     # Initialize game client
-    game_backend_url = "http://localhost:8000/api/v1"
+    game_backend_url = "http://localhost:8010/api/v1"
     game_client = GameClient(base_url=game_backend_url)
 
     logger.info("Starting FastMCP server for 4X game tools")

@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run 4X Game MCP Server")
     parser.add_argument(
         "--game-backend",
-        default="http://localhost:8000/api/v1",
+        default="http://localhost:8010/api/v1",
         help="Game backend URL",
     )
     parser.add_argument(

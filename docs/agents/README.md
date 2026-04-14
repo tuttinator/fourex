@@ -19,7 +19,7 @@ cd .. && uv sync --dev
 ```
 
 2. Make sure you have:
-   - The game backend running at `http://localhost:8000`
+   - The game backend running at `http://localhost:8010`
    - **(Recommended)** Modal Ollama server deployed (see below)
    - **(Optional)** LLM Studio running at `http://localhost:1234` with a model loaded
 
@@ -169,7 +169,7 @@ uv run python run_agents.py --config my_config.json
     "Charlie": "economic"
   },
   "max_turns": 100,
-  "game_backend_url": "http://localhost:8000/api/v1",
+  "game_backend_url": "http://localhost:8010/api/v1",
   "llm_backend_url": "https://your-modal-endpoint-url/v1",
   "llm_model": "qwen3:32b"
 }

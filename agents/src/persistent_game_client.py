@@ -18,7 +18,7 @@ class PersistentGameClient(GameClient):
     """Game client with database persistence support."""
 
     def __init__(
-        self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""
+        self, base_url: str = "http://localhost:8010/api/v1", player_id: str = ""
     ):
         super().__init__(base_url, player_id)
         self.logger = logger.bind(
@@ -252,7 +252,7 @@ class ResilientGameConnection:
     """Manages resilient connections to persistent games."""
 
     def __init__(
-        self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""
+        self, base_url: str = "http://localhost:8010/api/v1", player_id: str = ""
     ):
         self.client = PersistentGameClient(base_url, player_id)
         self.player_id = player_id

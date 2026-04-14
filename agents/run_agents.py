@@ -23,7 +23,7 @@ def create_game_config(
     players: list[str] | None = None,
     personalities: dict[str, str] | None = None,
     max_turns: int = 100,
-    game_backend: str = "http://localhost:8000/api/v1",
+    game_backend: str = "http://localhost:8010/api/v1",
     llm_backend: str = "http://localhost:1234/v1",
     llm_model: str = "qwen/qwen3-32b",
 ) -> GameConfig:
@@ -108,7 +108,7 @@ def interactive_setup() -> GameConfig:
     # Backend configuration
     console.print("\n[bold]Backend Configuration[/bold]")
     game_backend = Prompt.ask(
-        "Game backend URL", default="http://localhost:8000/api/v1"
+        "Game backend URL", default="http://localhost:8010/api/v1"
     )
     llm_backend = Prompt.ask("LLM backend URL", default="http://localhost:1234/v1")
     llm_model = Prompt.ask("LLM model", default="qwen/qwen3-32b")
@@ -219,7 +219,7 @@ def main():
     parser.add_argument("--max-turns", type=int, default=100, help="Maximum turns")
     parser.add_argument(
         "--game-backend",
-        default="http://localhost:8000/api/v1",
+        default="http://localhost:8010/api/v1",
         help="Game backend URL",
     )
     parser.add_argument(

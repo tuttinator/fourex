@@ -1,6 +1,6 @@
 # Plan: Agent Memory, Real MCP Server & BYOA Interface
 
-> Source PRD: `plans/agent-memory-mcp-byoa.md`
+> Source PRD: `docs/plans/agent-memory-mcp-byoa.md`
 
 ## Architectural decisions
 

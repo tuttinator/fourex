@@ -64,6 +64,8 @@ async def get_game_state(
             # Return full state for observation/admin purposes
             return state
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -82,7 +84,8 @@ async def submit_actions(
         controller = get_persistent_game_controller(session)
         await controller.submit_player_actions(game_id, current_player, actions)
         return {"status": "actions_submitted", "count": str(len(actions))}
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -108,7 +111,8 @@ async def submit_prompt_log(
         controller = get_persistent_game_controller(session)
         await controller.log_prompt(game_id, prompt_log)
         return {"status": "prompt_logged"}
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -124,7 +128,8 @@ async def list_games(
         controller = get_persistent_game_controller(session)
         game_ids = await controller.list_games()
         return {"games": game_ids}
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -142,7 +147,8 @@ async def start_game(
         controller = get_persistent_game_controller(session)
         await controller.create_game(game_id, request.players, request.seed)
         return {"status": "game_created", "game_id": game_id}
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -173,7 +179,8 @@ async def get_game_info(
             "updated_at": game_info.updated_at.isoformat(),
             "ended_at": game_info.ended_at.isoformat() if game_info.ended_at else None,
         }
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -200,6 +207,7 @@ async def restore_game(
             "turn": str(state.turn),
             "state_hash": state.hash_state(),
         }
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

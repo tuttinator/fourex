@@ -43,7 +43,7 @@ class GameConfig:
     personalities: dict[str, str]
     max_turns: int = 100
     turn_timeout: int = 30
-    game_backend_url: str = "http://localhost:8000/api/v1"
+    game_backend_url: str = "http://localhost:8010/api/v1"
     llm_backend_url: str = "http://localhost:1234/v1"
     llm_model: str = "qwen/qwen3-32b"
     primary_provider: str = "llm_studio"

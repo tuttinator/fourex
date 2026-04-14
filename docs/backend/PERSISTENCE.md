@@ -320,7 +320,7 @@ config = GameConfig(
    make db-list
 
    # Restore from snapshot
-   curl -X POST "http://localhost:8000/api/v1/games/<game_id>/restore"
+   curl -X POST "http://localhost:8010/api/v1/games/<game_id>/restore"
    ```
 
 3. **Performance Issues**

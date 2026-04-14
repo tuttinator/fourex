@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dependencies (uses uv, managed via mise)
 mise run install
 
-# Run backend dev server (FastAPI on :8000)
+# Run backend dev server (FastAPI on :8010)
 mise run run-dev
 # Or: cd backend && uv run python src/main.py
 
