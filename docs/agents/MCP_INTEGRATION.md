@@ -1,365 +1,68 @@
-# MCP Integration for 4X AI Agents
+# MCP Integration
 
-This document describes the Model Context Protocol (MCP) integration that provides agents with advanced game analysis tools for better strategic decision-making within the fog of war.
+This project currently uses a local FastMCP-style analysis layer for agent planning.
 
-## Overview
+## Current State
 
-The MCP integration allows AI agents to use sophisticated analysis tools to:
+- The agent integration lives in `agents/src/fastmcp_client.py` and `agents/src/fastmcp_server.py`.
+- The client class is `FastMCPGameClient`.
+- The agent wires this client automatically in `agents/src/agent.py`.
+- The current client does not connect over a real MCP transport yet. It imports the FastMCP server module directly and calls the tool functions in-process.
+- The real transport-backed MCP server is planned separately. Do not treat this document as a description of the future BYOA server in the PRD.
 
-- **Analyze Territory**: Examine terrain and resources within visible areas
-- **Evaluate Military Position**: Assess threats and tactical opportunities
-- **Find Resource Opportunities**: Identify strategic resource locations
-- **Validate Actions**: Check action validity before execution
-- **Calculate Distances**: Optimize unit positioning and movement
+## Available Analysis Tools
 
-## Architecture
+The current FastMCP layer exposes these analysis helpers:
 
-### MCP Server (`src/mcp_server.py`)
+- `get_game_state`
+- `analyze_territory`
+- `evaluate_military_position`
+- `find_resource_opportunities`
+- `validate_actions`
+- `calculate_distances`
 
-- Runs game analysis tools accessible via MCP protocol
-- Provides 6 core analysis tools for strategic planning
-- Integrates with game backend for real-time state access
+These are used to enrich the agent prompt before turn planning.
 
-### MCP Client (`src/mcp_client.py`)
+## How Agents Use It
 
-- Connects agents to MCP server for tool access
-- Provides simplified interface for comprehensive analysis
-- Handles data formatting and error recovery
+`FourXAgent` creates a `FastMCPGameClient` automatically. Before planning a turn, it checks whether the client is available and, if so, runs `comprehensive_analysis(game_id, game_state)`.
 
-### Agent Integration (`src/agent.py`)
+That analysis may include:
 
-- Each agent automatically initializes MCP client
-- Runs comprehensive analysis before each turn planning
-- Integrates MCP results into LLM prompts for better decisions
+- summarized game state
+- military analysis
+- resource opportunities
+- territory analysis
+- strategic distance calculations
 
-## Available MCP Tools
+If FastMCP initialization fails, the agent continues without MCP analysis.
 
-### 1. `get_game_state`
-
-```python
-# Get current game state within fog of war
-result = await mcp_client.get_game_state(game_id)
-```
-
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Player perspective for fog of war
-
-**Returns:** Filtered game state visible to the player
-
-### 2. `analyze_territory`
+## Example
 
 ```python
-# Analyze terrain around a location
-result = await mcp_client.analyze_territory(
-    game_id, center_x=10, center_y=15, radius=3
+from src.fastmcp_client import FastMCPGameClient
+
+mcp_client = FastMCPGameClient(
+    player_id="player_alice",
+    game_backend_url="http://localhost:8010/api/v1",
 )
-```
 
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Analyzing player
-- `center_x`, `center_y`: Analysis center coordinates
-- `radius`: Analysis radius (default: 3)
-
-**Returns:** Terrain analysis, resource assessment, threat evaluation
-
-### 3. `evaluate_military_position`
-
-```python
-# Assess military threats and opportunities
-result = await mcp_client.evaluate_military_position(game_id)
-```
-
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Player perspective
-
-**Returns:** Military strength assessment, threat analysis, tactical recommendations
-
-### 4. `find_resource_opportunities`
-
-```python
-# Identify strategic resource locations
-result = await mcp_client.find_resource_opportunities(game_id)
-```
-
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Player perspective
-
-**Returns:** Resource location analysis, expansion opportunities, economic strategy
-
-### 5. `validate_actions`
-
-```python
-# Validate potential actions before execution
-result = await mcp_client.validate_actions(game_id, actions)
-```
-
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Player executing actions
-- `actions`: List of proposed actions
-
-**Returns:** Action validity, success probability, alternative suggestions
-
-### 6. `calculate_distances`
-
-```python
-# Calculate strategic distances
-result = await mcp_client.calculate_distances(
-    game_id, from_coords, to_coords
-)
-```
-
-**Parameters:**
-
-- `game_id`: Game identifier
-- `player_id`: Player perspective
-- `from_coords`: List of source coordinates
-- `to_coords`: List of target coordinates
-
-**Returns:** Distance matrix, movement planning, positioning analysis
-
-## Agent Planning Integration
-
-### Comprehensive Analysis
-
-Each agent automatically runs comprehensive MCP analysis before planning:
-
-```python
-# Automatic MCP analysis in agent.play_turn()
-if self.mcp_client.is_available():
-    mcp_analysis = await self.mcp_client.comprehensive_analysis(
-        game_id, game_state
-    )
-```
-
-### LLM Prompt Enhancement
-
-MCP analysis results are integrated into LLM prompts:
-
-```
-ADVANCED STRATEGIC ANALYSIS (via MCP tools):
-
-Military Assessment:
-- Current military strength: Strong
-- Visible threats: Enemy archer at (12,8)
-- Tactical opportunities: Flanking position available
-
-Resource Opportunities:
-- Crystal node at (15,10) - uncontested
-- Food resources depleted in current area
-- Expansion south recommended
-
-Territory Analysis:
-- Area 1 (Unit 3) at (10,12): Defensive terrain, good visibility
-- Area 2 (City 1) at (8,15): Resource rich, needs protection
-
-Strategic Distances:
-- Units to cities: Average 4 moves
-- Units to threats: Minimum 2 moves
-- Expansion targets: 6-8 moves
-
-Use this MCP analysis to guide your strategic decisions.
-```
-
-## Usage Examples
-
-### Basic MCP Integration
-
-```python
-from src.mcp_client import MCPGameClient
-
-# Initialize MCP client
-mcp_client = MCPGameClient("player_alice")
-
-# Check availability
 if mcp_client.is_available():
-    # Run comprehensive analysis
-    analysis = await mcp_client.comprehensive_analysis(
-        game_id="test_game", game_state=current_state
-    )
-
-    # Use analysis for decision making
-    if analysis.get("military", {}).get("threats"):
-        # Respond to military threats
-        pass
-```
-
-### Agent with MCP Enhancement
-
-```python
-from src.agent import FourXAgent
-
-# Agents automatically initialize MCP client
-agent = FourXAgent("player_alice", "aggressive")
-
-# MCP analysis runs automatically during turn planning
-success = await agent.play_turn("test_game")
+    analysis = await mcp_client.comprehensive_analysis("test_game", game_state)
 ```
 
 ## Configuration
 
-### Environment Variables
+There is no separate MCP transport configuration in the current implementation.
 
-```env
-# MCP Server Configuration
-MCP_SERVER_PORT=3000
+The relevant setting is the backend URL passed to the agent or client, which defaults to:
 
-# Enable/disable MCP integration
-USE_PERSISTENT_GAME_CLIENT=true
+```text
+http://localhost:8010/api/v1
 ```
 
-### Agent Configuration
+## Notes
 
-```python
-# MCP integration is enabled by default
-agent = FourXAgent(
-    player_id="alice",
-    personality="aggressive",
-    use_persistent_client=True  # Enables MCP integration
-)
-```
-
-## Benefits for AI Agents
-
-### Enhanced Strategic Awareness
-
-- **Fog of War Intelligence**: Better understanding of visible game state
-- **Threat Assessment**: Early detection of military risks
-- **Resource Planning**: Optimal expansion and economic strategy
-
-### Improved Decision Quality
-
-- **Validated Actions**: Reduced invalid moves and failed strategies
-- **Tactical Positioning**: Optimized unit placement and movement
-- **Long-term Planning**: Strategic distance calculations for expansion
-
-### Personality-Driven Strategy
-
-- **Aggressive Players**: Focus on military threat analysis and attack opportunities
-- **Economic Players**: Emphasize resource opportunities and expansion planning
-- **Defensive Players**: Prioritize threat detection and territorial analysis
-
-## Performance Impact
-
-### Analysis Overhead
-
-- **Comprehensive Analysis**: ~100-200ms per turn
-- **Individual Tools**: ~10-50ms per call
-- **Caching**: Results cached within turn for efficiency
-
-### LLM Enhancement
-
-- **Prompt Quality**: Significantly improved strategic context
-- **Decision Accuracy**: Better action selection within fog of war
-- **Token Usage**: Moderate increase (~200-500 tokens per turn)
-
-## Testing
-
-Run MCP integration tests:
-
-```bash
-# Test MCP server components
-python test_agents.py
-
-# Specific MCP tests
-python -c "
-from src.mcp_client import MCPGameClient
-client = MCPGameClient('test')
-print(f'MCP available: {client.is_available()}')
-"
-
-# Test agent integration
-python -c "
-from src.agent import FourXAgent
-agent = FourXAgent('test', 'balanced')
-print(f'Agent MCP ready: {agent.mcp_client.is_available()}')
-"
-```
-
-## Debugging
-
-### Enable MCP Logging
-
-```python
-import structlog
-
-# Enable debug logging for MCP components
-logger = structlog.get_logger()
-logger.debug("MCP analysis result", analysis=mcp_analysis)
-```
-
-### MCP Analysis Inspection
-
-```python
-# Inspect MCP analysis results
-analysis = await mcp_client.comprehensive_analysis(game_id, state)
-print(f"Military threats: {analysis.get('military', {})}")
-print(f"Resource opportunities: {analysis.get('resources', {})}")
-print(f"Territory count: {len(analysis.get('territory_analyses', []))}")
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **MCP Server Not Available**
-
-   ```
-   Error: MCP server not available
-   Solution: Check MCP server initialization in mcp_client.py
-   ```
-
-2. **Analysis Timeouts**
-
-   ```
-   Error: MCP tool call timeout
-   Solution: Increase timeout or check game backend connectivity
-   ```
-
-3. **Invalid Analysis Results**
-
-   ```
-   Error: JSON decode error in MCP response
-   Solution: Check MCP tool response format and error handling
-   ```
-
-### Debugging Steps
-
-1. **Check MCP Client Status**
-
-   ```python
-   print(f"MCP available: {agent.mcp_client.is_available()}")
-   ```
-
-2. **Test Individual Tools**
-
-   ```python
-   result = await mcp_client.get_game_state(game_id)
-   print(f"Game state result: {result}")
-   ```
-
-3. **Validate Analysis Results**
-
-   ```python
-   analysis = await mcp_client.comprehensive_analysis(game_id, state)
-   print(f"Analysis keys: {list(analysis.keys())}")
-   ```
-
-## Future Enhancements
-
-Planned improvements:
-
-- **Real-time MCP Protocol**: Full MCP standard implementation
-- **Custom Tool Development**: Game-specific analysis tools
-- **Performance Optimization**: Parallel tool execution
-- **Advanced Caching**: Cross-turn analysis persistence
-- **Tool Composition**: Chained analysis workflows
+- `use_persistent_client=True` controls use of the resilient game backend client, not whether MCP exists as a network service.
+- The FastMCP analysis layer is optional prompt enrichment.
+- If you are looking for the planned external MCP server, use the PRD/plan documents rather than this file.
