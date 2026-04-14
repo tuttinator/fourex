@@ -401,9 +401,11 @@ async def find_resource_opportunities(request: ResourceOpportunitiesRequest) -> 
                                 "resource": tile.resource,
                                 "terrain": tile.terrain,
                                 "owner": tile.owner,
-                                "distance_to_nearest_unit": min_distance
-                                if min_distance != float("inf")
-                                else None,
+                                "distance_to_nearest_unit": (
+                                    min_distance
+                                    if min_distance != float("inf")
+                                    else None
+                                ),
                                 "priority": _calculate_resource_priority(
                                     tile.resource, min_distance
                                 ),
@@ -517,9 +519,9 @@ async def calculate_distances(request: DistanceCalculationRequest) -> str:
             "summary": {
                 "min_distance": min(all_distances) if all_distances else 0,
                 "max_distance": max(all_distances) if all_distances else 0,
-                "avg_distance": sum(all_distances) / len(all_distances)
-                if all_distances
-                else 0,
+                "avg_distance": (
+                    sum(all_distances) / len(all_distances) if all_distances else 0
+                ),
             },
         }
 

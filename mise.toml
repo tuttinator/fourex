@@ -1,0 +1,150 @@
+[tools]
+python = "3.12"
+node = "lts"
+
+[tasks.install]
+description = "Install dependencies with uv"
+run = "uv sync --dev --extra dev"
+
+[tasks.sync]
+description = "Sync dependencies (install/update based on lock file)"
+run = "uv sync --dev --extra dev"
+
+[tasks.lint]
+description = "Run linting and type checking"
+run = """
+uv run black --check backend/src agents/src tests
+uv run ruff check backend/src agents/src tests
+uv run mypy backend/src
+"""
+
+[tasks.format]
+description = "Format code"
+run = """
+uv run black backend/src agents/src tests
+uv run ruff check --fix backend/src agents/src tests
+"""
+
+[tasks.test]
+description = "Run root-level tests"
+run = "uv run pytest tests/"
+
+[tasks.test-cov]
+description = "Run tests with coverage"
+run = "uv run pytest --cov=src --cov-report=term-missing tests/"
+
+[tasks.run-dev]
+description = "Run backend development server (FastAPI on :8000)"
+run = "uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
+
+[tasks.run-cli]
+description = "Run CLI with random seed"
+run = "uv run python -m src.game --players 4 --turns 10 --seed 42"
+
+[tasks.clean]
+description = "Clean up temporary files"
+run = """
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -type f -name "*.pyc" -delete
+rm -rf .coverage .pytest_cache .mypy_cache
+"""
+
+# Database management
+[tasks.db-create]
+description = "Create database tables"
+run = "cd backend && uv run python manage_db.py create"
+
+[tasks.db-drop]
+description = "Drop all database tables (WARNING: deletes all data!)"
+run = "cd backend && uv run python manage_db.py drop"
+
+[tasks.db-reset]
+description = "Drop and recreate all database tables"
+run = "cd backend && uv run python manage_db.py reset"
+
+[tasks.db-check]
+description = "Check database connection"
+run = "cd backend && uv run python manage_db.py check"
+
+[tasks.db-list]
+description = "List all games in database"
+run = "cd backend && uv run python manage_db.py list-games"
+
+[tasks.db-info]
+description = "Show detailed game info (pass GAME=<id>)"
+run = "cd backend && uv run python manage_db.py game-info ${GAME}"
+
+# Backend development
+[tasks.backend-dev]
+description = "Run backend development server"
+run = "cd backend && uv run python src/main.py"
+
+[tasks.backend-test]
+description = "Run backend tests"
+run = "cd backend && uv run pytest tests/"
+
+# Agent tasks
+[tasks.quick]
+description = "Run a quick test game with agents"
+run = "cd agents && uv run python run_agents.py --preset quick_test --auto-confirm"
+
+[tasks.agents-test]
+description = "Test agent functionality"
+run = "cd agents && uv run python test_agents.py"
+
+[tasks.classic]
+description = "Run classic 3-player game"
+run = "cd agents && uv run python run_agents.py --preset classic_3p"
+
+[tasks.showcase]
+description = "Run personality showcase (4 players)"
+run = "cd agents && uv run python run_agents.py --preset personality_showcase"
+
+[tasks.advanced]
+description = "Run advanced strategies game"
+run = "cd agents && uv run python run_agents.py --preset advanced_strategies"
+
+[tasks.interactive]
+description = "Run interactive game setup"
+run = "cd agents && uv run python run_agents.py --interactive"
+
+[tasks.mcp-server]
+description = "Run MCP server for tool use"
+run = "cd agents && uv run python run_mcp_server.py"
+
+[tasks.agents-format]
+description = "Format agent code"
+run = "cd agents && uv run black src/ *.py"
+
+[tasks.agents-lint]
+description = "Lint agent code"
+run = "cd agents && uv run flake8 src/ *.py"
+
+[tasks.agents-type-check]
+description = "Type check agent code"
+run = "cd agents && uv run mypy src/ --ignore-missing-imports"
+
+[tasks.agents-clean]
+description = "Clean up agent log files"
+run = "cd agents && rm -rf logs/*.json test_logs/"
+
+[tasks.agents-logs]
+description = "Show recent agent game logs"
+run = "cd agents && ls -la logs/ | head -10 || echo 'No logs found'"
+
+# MCP server tasks (placeholder - implemented in Phase 4)
+[tasks.serve]
+description = "Run MCP server in stdio mode"
+run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+
+[tasks.serve-http]
+description = "Run MCP server in streamable-http mode"
+run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+
+[tasks.inspect]
+description = "Launch MCP Inspector against stdio server"
+run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+
+[tasks.inspect-http]
+description = "Launch MCP Inspector against HTTP server"
+run = "echo 'Not yet implemented — see Phase 4 of the plan'"

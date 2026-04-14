@@ -8,6 +8,6 @@ from .repository import GameRepository
 
 __all__ = [
     "get_database_session",
-    "init_db", 
+    "init_db",
     "GameRepository",
 ]

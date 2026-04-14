@@ -9,31 +9,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install dependencies (uses uv)
-make install
+# Install dependencies (uses uv, managed via mise)
+mise run install
 
 # Run backend dev server (FastAPI on :8000)
-make run-dev
+mise run run-dev
 # Or: cd backend && uv run python src/main.py
 
 # Run frontend dev server (Next.js on :3000)
 cd frontend && npm run dev
 
 # Run backend tests
-make backend-test          # backend tests only
-make test                  # root-level tests (tests/ dir)
+mise run backend-test          # backend tests only
+mise run test                  # root-level tests (tests/ dir)
 uv run pytest tests/test_turn_progression.py -k "test_name"  # single test
 
 # Run quick agent game
-make quick
+mise run quick
 
 # Formatting and linting
-make format                # black + ruff --fix
-make lint                  # black --check + ruff + mypy
+mise run format                # black + ruff --fix
+mise run lint                  # black --check + ruff + mypy
 
 # Database (requires docker-compose up -d postgres)
-make db-reset              # drop + recreate tables
-make db-check              # verify connection
+mise run db-reset              # drop + recreate tables
+mise run db-check              # verify connection
 ```
 
 ## Architecture
