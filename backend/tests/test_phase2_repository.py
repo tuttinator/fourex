@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -48,6 +48,11 @@ async def _create_game(repo: GameRepository, suffix: str) -> str:
     game_id = f"phase2_{suffix}_{int(time.time() * 1000000)}"
     await repo.create_game(game_id=game_id, players=["alice", "bob"])
     return game_id
+
+
+def _utcnow_naive() -> datetime:
+    """Return naive UTC timestamps matching the repository's storage style."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 @pytest.mark.asyncio
@@ -125,7 +130,7 @@ async def test_player_api_key_create_validate_and_expire(db_session):
     repo = GameRepository(db_session)
     game_id = await _create_game(repo, "apikey")
     plaintext_key = "phase2-test-key"
-    expires_at = datetime.utcnow() + timedelta(hours=1)
+    expires_at = _utcnow_naive() + timedelta(hours=1)
 
     created = await repo.create_player_api_key(
         game_id=game_id,
@@ -136,7 +141,7 @@ async def test_player_api_key_create_validate_and_expire(db_session):
     assert created.key_hash != plaintext_key
     assert len(created.key_hash) == 64
 
-    valid = await repo.validate_player_api_key(plaintext_key, now=datetime.utcnow())
+    valid = await repo.validate_player_api_key(plaintext_key, now=_utcnow_naive())
     assert valid is not None
     assert valid.game_id == game_id
     assert valid.player_id == "alice"
@@ -144,11 +149,11 @@ async def test_player_api_key_create_validate_and_expire(db_session):
     expired_count = await repo.expire_player_api_keys(
         game_id=game_id,
         player_id="alice",
-        expires_at=datetime.utcnow() - timedelta(seconds=1),
+        expires_at=_utcnow_naive() - timedelta(seconds=1),
     )
     assert expired_count == 1
 
     invalid_after_expiry = await repo.validate_player_api_key(
-        plaintext_key, now=datetime.utcnow()
+        plaintext_key, now=_utcnow_naive()
     )
     assert invalid_after_expiry is None

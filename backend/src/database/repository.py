@@ -3,7 +3,7 @@ Database repository for game data operations.
 """
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, desc, select, update
@@ -30,6 +30,11 @@ class GameRepository:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    @staticmethod
+    def _utcnow() -> datetime:
+        """Return a naive UTC timestamp for legacy timestamp columns."""
+        return datetime.now(UTC).replace(tzinfo=None)
 
     async def create_game(
         self,
@@ -111,7 +116,7 @@ class GameRepository:
                 state=state_dict,
                 turn=state.turn,
                 rng_state=state.rng_state,
-                updated_at=datetime.utcnow(),
+                updated_at=self._utcnow(),
             )
         )
 
@@ -130,8 +135,8 @@ class GameRepository:
                 status="ended",
                 winner=winner,
                 victory_type=victory_type,
-                ended_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                ended_at=self._utcnow(),
+                updated_at=self._utcnow(),
             )
         )
 
@@ -162,7 +167,7 @@ class GameRepository:
             player_actions=actions_dict,
             action_results=results_dict,
             state_hash=turn_result.state_hash,
-            completed_at=datetime.utcnow(),
+            completed_at=self._utcnow(),
         )
 
         self.session.add(game_turn)
@@ -215,7 +220,7 @@ class GameRepository:
 
         if existing:
             existing.scratchpad_text = scratchpad_text
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = self._utcnow()
             await self.session.flush()
             return existing
 
@@ -292,7 +297,7 @@ class GameRepository:
 
         if existing:
             existing.actions_json = actions_json
-            existing.submitted_at = datetime.utcnow()
+            existing.submitted_at = self._utcnow()
             await self.session.flush()
             return existing
 
@@ -367,7 +372,7 @@ class GameRepository:
     ) -> PlayerApiKey | None:
         """Validate a plaintext key by matching its hash and checking expiry."""
         key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
-        current_time = now or datetime.utcnow()
+        current_time = now or self._utcnow()
 
         result = await self.session.execute(
             select(PlayerApiKey).where(PlayerApiKey.key_hash == key_hash)
@@ -389,7 +394,7 @@ class GameRepository:
         expires_at: datetime | None = None,
     ) -> int:
         """Expire one player's key or all keys for a game."""
-        expiry = expires_at or datetime.utcnow()
+        expiry = expires_at or self._utcnow()
         stmt = update(PlayerApiKey).where(PlayerApiKey.game_id == game_id)
 
         if player_id is not None:
