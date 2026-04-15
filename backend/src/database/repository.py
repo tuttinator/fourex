@@ -340,6 +340,22 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_player_turn_actions(
+        self, game_id: str, player_id: str
+    ) -> list[TurnAction]:
+        """Get all submitted actions for a player across all turns, ordered by turn."""
+        result = await self.session.execute(
+            select(TurnAction)
+            .where(
+                and_(
+                    TurnAction.game_id == game_id,
+                    TurnAction.player_id == player_id,
+                )
+            )
+            .order_by(TurnAction.turn_number)
+        )
+        return list(result.scalars().all())
+
     async def create_player_api_key(
         self,
         game_id: str,
