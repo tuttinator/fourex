@@ -5,7 +5,7 @@ Captures prompts, responses, thinking tokens, and detailed performance metrics.
 
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -101,17 +101,13 @@ class GameLog:
     llm_config: dict[str, Any] | None = None
 
     # Turn logs
-    turn_logs: list[TurnLog] = None
+    turn_logs: list[TurnLog] = field(default_factory=list)
 
     # Summary statistics
     total_tokens: int | None = None
     total_latency_ms: int | None = None
     average_turn_duration_ms: int | None = None
     error_count: int = 0
-
-    def __post_init__(self):
-        if self.turn_logs is None:
-            self.turn_logs = []
 
 
 class EnhancedLogger:
@@ -128,11 +124,13 @@ class EnhancedLogger:
 
         # Configure Logfire based on environment variables
         logfire_enabled = os.getenv("LOGFIRE_ENABLED", "false").lower() == "true"
-        logfire_console = os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true"
+        logfire_console: bool = (
+            os.getenv("LOGFIRE_CONSOLE_OUTPUT", "false").lower() == "true"
+        )
 
         logfire.configure(
             send_to_logfire=logfire_enabled,
-            console=logfire_console,
+            console=None if logfire_console else False,
             token=os.getenv("LOGFIRE_TOKEN") if logfire_enabled else None,
         )
 
@@ -183,7 +181,7 @@ class EnhancedLogger:
         duration_ms: int,
         system_prompt: str,
         user_prompt: str,
-        llm_response: LLMResponse,
+        llm_response: LLMResponse | None,
         strategic_analysis: str,
         priorities: list[str],
         actions: list[dict[str, Any]],
@@ -366,7 +364,8 @@ class EnhancedLogger:
         if not self.current_game_log:
             return
 
-        duration = self.current_game_log.end_time - self.current_game_log.start_time
+        end_time = self.current_game_log.end_time or time.time()
+        duration = end_time - self.current_game_log.start_time
 
         console.print("\n" + "=" * 60)
         console.print("[bold green]🎮 GAME SUMMARY[/bold green]")
@@ -426,9 +425,8 @@ class EnhancedLogger:
                         1 for log in player_turns if log.thinking_tokens
                     )
 
-                    personality = self.current_game_log.personalities.get(
-                        player, "Unknown"
-                    )
+                    personalities = self.current_game_log.personalities or {}
+                    personality = personalities.get(player, "Unknown")
 
                     player_table.add_row(
                         player,

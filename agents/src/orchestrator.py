@@ -186,9 +186,8 @@ class GameOrchestrator:
             final_state = self.resilient_connection.get_game_state(self.config.game_id)
             game_result = self._analyze_final_state(final_state)
 
-            console.print(
-                f"[green]Game completed after {final_state.turn} turns[/green]"
-            )
+            turn_count = final_state.turn if final_state else "unknown"
+            console.print(f"[green]Game completed after {turn_count} turns[/green]")
             self._display_game_summary(game_result)
 
         except KeyboardInterrupt:
@@ -447,7 +446,7 @@ async def main():
 
     except Exception as e:
         console.print(f"[red]Error running game: {e}[/red]")
-        logfire.log_exception("Game orchestration failed")
+        logfire.error("Game orchestration failed", _exc_info=True)
         return {"error": str(e)}
 
 

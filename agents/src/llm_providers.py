@@ -120,7 +120,7 @@ class LLMProvider(ABC):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Generate a response from the LLM"""
@@ -149,7 +149,7 @@ class OpenAIProvider(LLMProvider):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Generate response using OpenAI API"""
@@ -157,7 +157,7 @@ class OpenAIProvider(LLMProvider):
 
         try:
             if response_model:
-                response = self.instructor_client.chat.completions.create(
+                response = self.instructor_client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     response_model=response_model,
@@ -171,7 +171,7 @@ class OpenAIProvider(LLMProvider):
                 tokens_in = None
                 tokens_out = None
             else:
-                response = self.client.chat.completions.create(
+                response = self.client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     **kwargs,
@@ -211,7 +211,7 @@ class OpenAIProvider(LLMProvider):
 
         except Exception as e:
             self.logger.error("OpenAI generation failed", error=str(e))
-            logfire.log_exception("OpenAI generation error")
+            logfire.error("OpenAI generation error")
             raise
 
     def is_available(self) -> bool:
@@ -240,7 +240,7 @@ class ReplicateProvider(LLMProvider):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Generate response using Replicate API"""
@@ -297,7 +297,7 @@ class ReplicateProvider(LLMProvider):
 
         except Exception as e:
             self.logger.error("Replicate generation failed", error=str(e))
-            logfire.log_exception("Replicate generation error")
+            logfire.error("Replicate generation error")
             raise
 
     def _messages_to_prompt(self, messages: list[dict[str, str]]) -> str:
@@ -338,7 +338,7 @@ class HuggingFaceProvider(LLMProvider):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Generate response using HuggingFace API"""
@@ -409,7 +409,7 @@ class HuggingFaceProvider(LLMProvider):
 
         except Exception as e:
             self.logger.error("HuggingFace generation failed", error=str(e))
-            logfire.log_exception("HuggingFace generation error")
+            logfire.error("HuggingFace generation error")
             raise
 
     def _messages_to_prompt(self, messages: list[dict[str, str]]) -> str:
@@ -458,7 +458,7 @@ class LLMStudioProvider(LLMProvider):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Generate response using LLM Studio"""
@@ -466,7 +466,7 @@ class LLMStudioProvider(LLMProvider):
 
         try:
             if response_model:
-                response = self.instructor_client.chat.completions.create(
+                response = self.instructor_client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     response_model=response_model,
@@ -484,7 +484,7 @@ class LLMStudioProvider(LLMProvider):
                     response.model_dump() if hasattr(response, "model_dump") else None
                 )
             else:
-                response = self.client.chat.completions.create(
+                response = self.client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     **kwargs,
@@ -528,7 +528,7 @@ class LLMStudioProvider(LLMProvider):
 
         except Exception as e:
             self.logger.error("LLM Studio generation failed", error=str(e))
-            logfire.log_exception("LLM Studio generation error")
+            logfire.error("LLM Studio generation error")
             raise
 
     async def is_available_async(self) -> bool:
@@ -574,13 +574,13 @@ class OpenAICompatibleProvider(LLMProvider):
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         **kwargs,
     ) -> LLMResponse:
         start_time = time.time()
         try:
             if response_model:
-                response = self.instructor_client.chat.completions.create(
+                response = self.instructor_client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     response_model=response_model,
@@ -598,7 +598,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     response.model_dump() if hasattr(response, "model_dump") else None
                 )
             else:
-                response = self.client.chat.completions.create(
+                response = self.client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=self.model,
                     messages=messages,
                     **kwargs,
@@ -634,7 +634,7 @@ class OpenAICompatibleProvider(LLMProvider):
             )
         except Exception as e:
             self.logger.error("OpenAI-compatible generation failed", error=str(e))
-            logfire.log_exception("OpenAI-compatible generation error")
+            logfire.error("OpenAI-compatible generation error")
             raise
 
     def is_available(self) -> bool:
@@ -652,7 +652,7 @@ class MultiLLMClient:
 
     def __init__(
         self,
-        primary_provider: str = None,
+        primary_provider: str | None = None,
         fallback_providers: list[str] | None = None,
     ):
         self.providers: dict[str, LLMProvider] = {}
@@ -702,7 +702,7 @@ class MultiLLMClient:
     async def generate(
         self,
         messages: list[dict[str, str]],
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         provider_override: str | None = None,
         **kwargs,
     ) -> LLMResponse:
@@ -759,7 +759,7 @@ class MultiLLMClient:
         # All providers failed
         error_msg = f"All LLM providers failed. Last error: {last_error}"
         self.logger.error("All providers failed", last_error=str(last_error))
-        logfire.log_exception("All LLM providers failed")
+        logfire.error("All LLM providers failed")
         raise RuntimeError(error_msg)
 
     def get_available_providers(self) -> list[str]:
@@ -779,7 +779,7 @@ class MultiLLMClient:
 
 # Convenience function for easy initialization
 def create_llm_client(
-    primary: str = None,
+    primary: str | None = None,
     fallbacks: list[str] | None = None,
     **provider_configs,
 ) -> MultiLLMClient:

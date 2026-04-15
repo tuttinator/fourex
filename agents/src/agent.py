@@ -678,6 +678,9 @@ class FourXAgent:
         self.player_id = player_id
         self.personality = personality
 
+        self.game_client: GameClient
+        self.resilient_connection: ResilientGameConnection | None
+
         # Use resilient connection if requested, otherwise fall back to basic client
         if use_persistent_client and game_client is None:
             self.resilient_connection = ResilientGameConnection(
@@ -952,7 +955,7 @@ class FourXAgent:
                 error=error_message,
             )
 
-            logfire.log_exception("Agent turn failed")
+            logfire.error("Agent turn failed", _exc_info=True)
 
             # Log the failed turn
             from .enhanced_logging import enhanced_logger
@@ -994,7 +997,7 @@ class FourXAgent:
         console.print(panel)
 
     def _convert_actions_to_api(
-        self, actions: list[GameAction], game_state: GameState = None
+        self, actions: list[GameAction], game_state: GameState | None = None
     ) -> list[dict[str, Any]]:
         """Convert structured actions to API format with automatic unit ID resolution"""
         api_actions = []
@@ -1018,6 +1021,8 @@ class FourXAgent:
                         # Use first available unit
                         unit_id = my_units[0].id
 
+                    if action.target_location is None:
+                        continue
                     api_action = {
                         "type": "MOVE",
                         "unit_id": unit_id,

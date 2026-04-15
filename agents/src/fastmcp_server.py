@@ -9,7 +9,7 @@ import json
 from typing import Any
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import FastMCP  # pyrefly: ignore[missing-import]
 from pydantic import BaseModel, Field
 
 from .agent import GameClient
@@ -512,7 +512,9 @@ async def calculate_distances(request: DistanceCalculationRequest) -> str:
             distance_matrix.append(row)
 
         # Also provide some useful summaries
-        all_distances = [d["distance"] for row in distance_matrix for d in row]
+        all_distances: list[int] = [  # pyrefly: ignore[bad-assignment]
+            d["distance"] for row in distance_matrix for d in row
+        ]
 
         result = {
             "distance_matrix": distance_matrix,
