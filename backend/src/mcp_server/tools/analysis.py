@@ -7,7 +7,7 @@ server. All tools use fog-of-war-redacted state via the authenticated
 player's API key.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -168,7 +168,7 @@ def register(mcp: FastMCP) -> None:
                 )
 
         expansion_opportunities.sort(
-            key=lambda x: int(x["nearby_resources"]),  # type: ignore[arg-type]
+            key=lambda x: int(x["nearby_resources"]),
             reverse=True,
         )
 
@@ -389,7 +389,7 @@ def register(mcp: FastMCP) -> None:
             )
 
         resource_opportunities.sort(
-            key=lambda x: float(x["priority"]),  # type: ignore[arg-type]
+            key=lambda x: float(x["priority"]),
             reverse=True,
         )
 
@@ -402,7 +402,7 @@ def register(mcp: FastMCP) -> None:
                     o for o in resource_opportunities if o["resource"] == "food"
                 ]
                 if food_ops:
-                    food_loc: dict[str, Any] = food_ops[0]["location"]  # type: ignore[assignment]
+                    food_loc = cast(dict[str, Any], food_ops[0]["location"])
                     advice_parts.append(
                         f"Low food ({stockpile.food}). Priority: develop food "
                         f"site at ({food_loc['x']},{food_loc['y']})."
@@ -412,7 +412,7 @@ def register(mcp: FastMCP) -> None:
                     o for o in resource_opportunities if o["resource"] == "wood"
                 ]
                 if wood_ops:
-                    wood_loc: dict[str, Any] = wood_ops[0]["location"]  # type: ignore[assignment]
+                    wood_loc = cast(dict[str, Any], wood_ops[0]["location"])
                     advice_parts.append(
                         f"Low wood ({stockpile.wood}). Consider wood site at "
                         f"({wood_loc['x']},{wood_loc['y']})."
@@ -421,7 +421,7 @@ def register(mcp: FastMCP) -> None:
                 o for o in resource_opportunities if o["resource"] == "crystal"
             ]
             if crystal_ops:
-                crys_loc: dict[str, Any] = crystal_ops[0]["location"]  # type: ignore[assignment]
+                crys_loc = cast(dict[str, Any], crystal_ops[0]["location"])
                 advice_parts.append(
                     f"Crystal available at ({crys_loc['x']},{crys_loc['y']}) - high priority."
                 )
