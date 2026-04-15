@@ -19,7 +19,7 @@ from ..game.models import (
     Unit,
     UnitType,
 )
-from ..game.rules import generate_map, resolve_turn
+from ..game.rules import generate_map, redact_state, resolve_turn
 from .websocket import broadcast_player_action, broadcast_turn_end, broadcast_turn_start
 
 
@@ -298,10 +298,28 @@ class PersistentGameController:
                     },
                 )
 
+        # Persist per-player actions to turn_actions table
+        completed_turn = state.turn
+        for player_id, player_actions in actions.items():
+            actions_json = [action.model_dump(mode="json") for action in player_actions]
+            await self.repo.upsert_turn_action(
+                game_id, player_id, completed_turn, actions_json
+            )
+
         # Resolve turn
         print(f"DEBUG: Calling resolve_turn with turn {state.turn}")
         result = resolve_turn(state, actions)
         print(f"DEBUG: Turn resolved, new turn is: {state.turn}")
+
+        # Save per-player fog-of-war-redacted snapshots to turn_snapshots
+        for player_id in state.players:
+            redacted = redact_state(state, player_id)
+            await self.repo.upsert_turn_snapshot(
+                game_id,
+                player_id,
+                completed_turn,
+                redacted.model_dump(mode="json"),
+            )
 
         # Save turn result to database
         print("DEBUG: Saving turn result to database")

@@ -879,6 +879,25 @@ class FourXAgent:
                 console.print("[green]Actions submitted successfully[/green]")
                 self.turn_history.append(plan)
 
+                # Persist scratchpad to database for observability
+                scratchpad_text = (
+                    f"Turn {game_state.turn} — {self.personality}\n"
+                    f"Analysis: {plan.strategic_analysis}\n"
+                    f"Priorities: {', '.join(plan.priorities)}\n"
+                    f"Actions: {'; '.join(a.type.value + ': ' + a.reasoning for a in plan.actions)}"
+                )
+                # Truncate to 4000 char cap
+                scratchpad_text = scratchpad_text[:4000]
+
+                if self.resilient_connection:
+                    self.resilient_connection.write_scratchpad(
+                        game_id, scratchpad_text, game_state.turn
+                    )
+                elif hasattr(self.game_client, "write_scratchpad"):
+                    self.game_client.write_scratchpad(
+                        game_id, scratchpad_text, game_state.turn
+                    )
+
                 self.logger.info(
                     "Turn completed successfully",
                     turn=game_state.turn,

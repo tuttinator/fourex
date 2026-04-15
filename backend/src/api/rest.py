@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.connection import get_database_session
@@ -115,6 +116,66 @@ async def submit_prompt_log(
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class ScratchpadWriteRequest(BaseModel):
+    content: str = Field(
+        max_length=4000, description="Scratchpad text (max 4000 chars)"
+    )
+    turn_number: int | None = Field(
+        default=None, description="Turn number (defaults to current turn)"
+    )
+
+
+@router.post("/scratchpad", tags=["memory"])
+async def write_scratchpad(
+    request: ScratchpadWriteRequest,
+    game_id: str = "default",
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, str]:
+    """Write agent scratchpad entry for the current (or specified) turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        turn = request.turn_number if request.turn_number is not None else state.turn
+        await controller.repo.upsert_agent_memory(
+            game_id, current_player, turn, request.content
+        )
+        return {"status": "scratchpad_saved", "turn": str(turn)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/scratchpad", tags=["memory"])
+async def read_scratchpad(
+    game_id: str = "default",
+    turn_number: int | None = None,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Read agent scratchpad entry for the current (or specified) turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        turn = turn_number if turn_number is not None else state.turn
+        memory = await controller.repo.get_agent_memory(game_id, current_player, turn)
+        return {
+            "turn": turn,
+            "content": memory.scratchpad_text if memory else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/games", tags=["games"])
