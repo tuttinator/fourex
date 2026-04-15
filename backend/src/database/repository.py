@@ -311,6 +311,20 @@ class GameRepository:
         await self.session.flush()
         return turn_action
 
+    async def get_all_turn_actions(
+        self, game_id: str, turn_number: int
+    ) -> list[TurnAction]:
+        """Get all submitted actions for a specific turn."""
+        result = await self.session.execute(
+            select(TurnAction).where(
+                and_(
+                    TurnAction.game_id == game_id,
+                    TurnAction.turn_number == turn_number,
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_turn_action(
         self, game_id: str, player_id: str, turn_number: int
     ) -> TurnAction | None:

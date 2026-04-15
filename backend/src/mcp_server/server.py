@@ -19,7 +19,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from ..database.connection import close_db, init_db
-from .tools import lifecycle
+from .tools import gameplay, lifecycle
 
 
 def create_mcp_server() -> FastMCP:
@@ -35,6 +35,7 @@ def create_mcp_server() -> FastMCP:
 
     # Register tool modules
     lifecycle.register(mcp)
+    gameplay.register(mcp)
 
     return mcp
 

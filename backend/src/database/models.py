@@ -52,6 +52,9 @@ class Game(Base):
     winner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     victory_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    # Turn timing (set when the game becomes active or a new turn starts)
+    turn_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), nullable=False
