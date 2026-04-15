@@ -15,7 +15,7 @@ description = "Run linting and type checking"
 run = """
 uv run black --check backend/src agents/src tests
 uv run ruff check backend/src agents/src tests
-uv run mypy backend/src
+uv run pyrefly check backend/src agents/src
 """
 
 [tasks.format]
@@ -57,7 +57,7 @@ description = "Clean up temporary files"
 run = """
 find . -type d -name "__pycache__" -exec rm -rf {} +
 find . -type f -name "*.pyc" -delete
-rm -rf .coverage .pytest_cache .mypy_cache
+rm -rf .coverage .pytest_cache .pyrefly_cache
 """
 
 # Database management
@@ -133,7 +133,7 @@ run = "cd agents && uv run ruff check src/ *.py"
 
 [tasks.agents-type-check]
 description = "Type check agent code"
-run = "cd agents && uv run mypy src/ --ignore-missing-imports"
+run = "uv run pyrefly check agents/src"
 
 [tasks.agents-clean]
 description = "Clean up agent log files"

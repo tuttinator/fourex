@@ -50,7 +50,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "black>=24.0.0",
     "ruff>=0.4.0",
-    "mypy>=1.10.0",
+    "pyrefly>=0.61.0",
 ]
 
 [tool.pytest.ini_options]
@@ -72,11 +72,8 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-warn_return_any = true
-warn_unused_configs = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["backend/src"]
+
+[tool.pyrefly]
+python-version = "3.12.0"
