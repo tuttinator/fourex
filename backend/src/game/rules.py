@@ -586,13 +586,13 @@ def resolve_turn(
         actions = player_actions.get(player_id, [])
 
         for action in actions:
-            if action.type == "MOVE":
+            if isinstance(action, MoveAction):
                 result = execute_move(state, action)
-            elif action.type == "ATTACK":
+            elif isinstance(action, AttackAction):
                 result = execute_attack(state, action)
-            elif action.type == "FOUND_CITY":
+            elif isinstance(action, FoundCityAction):
                 result = execute_found_city(state, action)
-            elif action.type == "TRAIN_UNIT":
+            elif isinstance(action, TrainUnitAction):
                 result = execute_train_unit(state, action)
             elif action.type == "BUILD_IMPROVEMENT":
                 # TODO: Implement improvement building

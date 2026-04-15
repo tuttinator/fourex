@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .models import (
+    Action,
     Coord,
     FoundCityAction,
     GameState,
@@ -112,9 +113,9 @@ def print_game_state(state: GameState, console: Console) -> None:
     console.print(table)
 
 
-def simulate_player_actions(state: GameState, player: PlayerId) -> list:
+def simulate_player_actions(state: GameState, player: PlayerId) -> list[Action]:
     """Generate some basic AI actions for testing."""
-    actions = []
+    actions: list[Action] = []
 
     # Simple AI: try to found cities with workers, train units in cities
     player_units = [unit for unit in state.units.values() if unit.owner == player]
@@ -247,7 +248,7 @@ def main():
         console.print(f"{player}: {score} points")
 
     if scores:
-        winner = max(scores, key=scores.get)
+        winner = max(scores, key=lambda k: scores[k])
         console.print(
             f"\n[bold green]Winner: {winner} with {scores[winner]} points![/bold green]"
         )
