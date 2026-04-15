@@ -1,17 +1,16 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import type { MapCanvasProps, GameState, Tile, Unit, City } from '@/types/game'
+import type { MapCanvasProps, Tile } from '@/types/game'
 import { TERRAIN_COLORS, UNIT_COLORS, PLAYER_COLORS } from '@/types/game'
 
-export function MapCanvas({ 
-  gameState, 
-  selectedPlayer, 
+export function MapCanvas({
+  gameState,
+  selectedPlayer,
   fogOfWarEnabled = false,
-  diffMode = false,
   onTileClick,
   onUnitClick,
-  onCityClick 
+  onCityClick
 }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoveredTile, setHoveredTile] = useState<{ tile: Tile; x: number; y: number } | null>(null)
@@ -120,7 +119,7 @@ export function MapCanvas({
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     }
 
-  }, [gameState, selectedPlayer, fogOfWarEnabled, diffMode])
+  }, [gameState, selectedPlayer, fogOfWarEnabled])
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current

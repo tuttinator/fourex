@@ -17,12 +17,7 @@ export default function HomePage() {
         <div className="flex gap-4 justify-center">
           <Button asChild size="lg">
             <Link href="/games">
-              View Active Games
-            </Link>
-          </Button>
-          <Button variant="outline" size="lg" asChild>
-            <Link href="/admin">
-              Admin Panel
+              View Games
             </Link>
           </Button>
         </div>

@@ -2,26 +2,26 @@
 
 import { useParams } from "next/navigation";
 import { useEffect } from "react";
+import Link from "next/link";
 import { EventLog } from "@/components/event-log";
-import { GameToolbar } from "@/components/game-toolbar";
 import { MapCanvas } from "@/components/map-canvas";
 import { PlayerList } from "@/components/player-list";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	selectCurrentGameState,
-	selectIsLive,
 	useGameStore,
 } from "@/store/game-store";
+import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react";
 
 export default function ObservePage() {
 	const { id: gameId } = useParams<{ id: string }>();
 
-	const connectToGame = useGameStore((state) => state.connectToGame);
+	const loadGameState = useGameStore((state) => state.loadGameState);
+	const reset = useGameStore((state) => state.reset);
 	const gameState = useGameStore(selectCurrentGameState);
-	const isLive = useGameStore(selectIsLive);
-	const connectionStatus = useGameStore((state) => state.connectionStatus);
 	const selectedPlayer = useGameStore((state) => state.selectedPlayer);
 	const fogOfWarEnabled = useGameStore((state) => state.fogOfWarEnabled);
 	const setSelectedPlayer = useGameStore((state) => state.setSelectedPlayer);
@@ -31,16 +31,19 @@ export default function ObservePage() {
 
 	useEffect(() => {
 		if (gameId) {
-			connectToGame(gameId).catch(console.error);
+			loadGameState(gameId).catch(console.error);
 		}
-	}, [gameId, connectToGame]);
+		return () => {
+			reset();
+		};
+	}, [gameId, loadGameState, reset]);
 
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center h-screen">
 				<div className="text-center">
-					<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-					<p>Connecting to game...</p>
+					<Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+					<p>Loading game state...</p>
 				</div>
 			</div>
 		);
@@ -49,8 +52,15 @@ export default function ObservePage() {
 	if (error) {
 		return (
 			<div className="flex items-center justify-center h-screen">
-				<div className="text-center text-red-500">
-					<p>Failed to connect to game: {error}</p>
+				<div className="text-center">
+					<AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
+					<p className="text-destructive mb-4">Failed to load game: {error}</p>
+					<Button asChild variant="outline">
+						<Link href="/games">
+							<ArrowLeft className="h-4 w-4 mr-2" />
+							Back to Games
+						</Link>
+					</Button>
 				</div>
 			</div>
 		);
@@ -59,7 +69,15 @@ export default function ObservePage() {
 	if (!gameState) {
 		return (
 			<div className="flex items-center justify-center h-screen">
-				<p>No game state available</p>
+				<div className="text-center">
+					<p className="text-muted-foreground mb-4">No game state available</p>
+					<Button asChild variant="outline">
+						<Link href="/games">
+							<ArrowLeft className="h-4 w-4 mr-2" />
+							Back to Games
+						</Link>
+					</Button>
+				</div>
 			</div>
 		);
 	}
@@ -70,17 +88,14 @@ export default function ObservePage() {
 			<div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
 				<div className="container mx-auto px-4 py-3 flex items-center justify-between">
 					<div className="flex items-center gap-4">
+						<Button asChild variant="ghost" size="sm">
+							<Link href="/games">
+								<ArrowLeft className="h-4 w-4 mr-2" />
+								Back
+							</Link>
+						</Button>
 						<h1 className="text-xl font-semibold">Game: {gameId}</h1>
-						<Badge variant={isLive ? "default" : "secondary"}>
-							{isLive ? "Live" : "Historical"}
-						</Badge>
-						<Badge
-							variant={connectionStatus === "open" ? "default" : "destructive"}
-						>
-							{typeof connectionStatus === "string"
-								? connectionStatus
-								: "unknown"}
-						</Badge>
+						<Badge variant="secondary">Snapshot</Badge>
 					</div>
 					<div className="text-sm text-muted-foreground">
 						Turn {gameState.turn} / {gameState.max_turns}
@@ -88,16 +103,13 @@ export default function ObservePage() {
 				</div>
 			</div>
 
-			{/* Toolbar */}
-			<GameToolbar />
-
 			{/* Main Content */}
 			<div className="flex-1 flex overflow-hidden">
 				{/* Map Area */}
 				<div className="flex-1 relative">
 					<MapCanvas
 						gameState={gameState}
-						selectedPlayer={selectedPlayer || undefined}
+						selectedPlayer={selectedPlayer ?? undefined}
 						fogOfWarEnabled={fogOfWarEnabled}
 					/>
 				</div>
@@ -115,7 +127,7 @@ export default function ObservePage() {
 							<PlayerList
 								players={gameState.players}
 								gameState={gameState}
-								selectedPlayer={selectedPlayer || undefined}
+								selectedPlayer={selectedPlayer ?? undefined}
 								onPlayerSelect={setSelectedPlayer}
 								onFogToggle={toggleFogOfWar}
 							/>
@@ -143,7 +155,7 @@ export default function ObservePage() {
 										<div className="flex justify-between">
 											<span>Map Size:</span>
 											<span>
-												{gameState.map_width}×{gameState.map_height}
+												{gameState.map_width}x{gameState.map_height}
 											</span>
 										</div>
 									</div>

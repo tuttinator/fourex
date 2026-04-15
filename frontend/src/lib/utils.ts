@@ -15,7 +15,7 @@ export function formatRelativeTime(date: Date): string {
   return `${Math.floor(diffInSeconds / 86400)}d ago`
 }
 
-export function debounce<T extends (...args: any[]) => void>(
+export function debounce<T extends (...args: never[]) => void>(
   func: T,
   delay: number
 ): (...args: Parameters<T>) => void {
@@ -27,7 +27,7 @@ export function debounce<T extends (...args: any[]) => void>(
   }
 }
 
-export function throttle<T extends (...args: any[]) => void>(
+export function throttle<T extends (...args: never[]) => void>(
   func: T,
   limit: number
 ): (...args: Parameters<T>) => void {
