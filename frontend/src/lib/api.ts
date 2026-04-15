@@ -1,6 +1,7 @@
 import type {
 	CreateGameRequest,
-	GameListResponse,
+	GamesListParams,
+	GamesListResponse,
 	GameState,
 } from "@/types/game";
 
@@ -69,9 +70,20 @@ async function fetchApi<T>(
 }
 
 export const api = {
-	async listGames(): Promise<string[]> {
-		const response = await fetchApi<GameListResponse>("/games");
-		return response.games;
+	async listGames(
+		params: GamesListParams = {},
+	): Promise<GamesListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.status) searchParams.set("status", params.status);
+		if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+		if (params.sort_order) searchParams.set("sort_order", params.sort_order);
+		if (params.offset !== undefined)
+			searchParams.set("offset", String(params.offset));
+		if (params.limit !== undefined)
+			searchParams.set("limit", String(params.limit));
+
+		const qs = searchParams.toString();
+		return fetchApi<GamesListResponse>(`/games${qs ? `?${qs}` : ""}`);
 	},
 
 	async createGame(
@@ -91,7 +103,8 @@ export const api = {
 
 // React Query keys
 export const queryKeys = {
-	games: ["games"] as const,
+	games: (params?: GamesListParams) =>
+		["games", params ?? {}] as const,
 	gameState: (gameId: string) => ["game", gameId] as const,
 };
 

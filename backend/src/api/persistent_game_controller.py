@@ -32,13 +32,9 @@ class PersistentGameController:
 
         # In-memory caches for performance
         self._game_cache: dict[str, GameState] = {}
-        self._pending_actions: dict[str, dict[PlayerId, list[Action]]] = defaultdict(
-            dict
-        )
+        self._pending_actions: dict[str, dict[PlayerId, list[Action]]] = defaultdict(dict)
 
-    async def create_game(
-        self, game_id: str, players: list[PlayerId], seed: int = 42
-    ) -> None:
+    async def create_game(self, game_id: str, players: list[PlayerId], seed: int = 42) -> None:
         """Create a new game instance with database persistence."""
         if len(players) < 2 or len(players) > 8:
             raise ValueError("Games require 2-8 players")
@@ -135,9 +131,7 @@ class PersistentGameController:
         self._pending_actions[game_id] = {}
 
         # Create initial snapshot
-        await self.repo.create_game_snapshot(
-            game_id=game_id, turn_number=0, state=state, snapshot_type="initial"
-        )
+        await self.repo.create_game_snapshot(game_id=game_id, turn_number=0, state=state, snapshot_type="initial")
 
     async def get_game_state(self, game_id: str) -> GameState | None:
         """Get the current state of a game."""
@@ -176,9 +170,7 @@ class PersistentGameController:
             print(f"Error loading game state for {game_id}: {e}")
             return None
 
-    async def submit_player_actions(
-        self, game_id: str, player_id: PlayerId, actions: list[Action]
-    ) -> None:
+    async def submit_player_actions(self, game_id: str, player_id: PlayerId, actions: list[Action]) -> None:
         """Submit actions for a player in the current turn."""
         print(
             f"DEBUG: Submitting actions for {player_id} in game {game_id}, turn {await self.get_current_turn(game_id)}"
@@ -206,12 +198,8 @@ class PersistentGameController:
         # Store in pending actions
         self._pending_actions[game_id][player_id] = actions
 
-        print(
-            f"DEBUG: Pending actions now: {list(self._pending_actions[game_id].keys())}"
-        )
-        print(
-            f"DEBUG: Need {len(state.players)} players, have {len(self._pending_actions[game_id])}"
-        )
+        print(f"DEBUG: Pending actions now: {list(self._pending_actions[game_id].keys())}")
+        print(f"DEBUG: Need {len(state.players)} players, have {len(self._pending_actions[game_id])}")
 
         # Check if all players have submitted actions
         if len(self._pending_actions[game_id]) == len(state.players):
@@ -262,6 +250,25 @@ class PersistentGameController:
         games = await self.repo.list_games(status=status)
         return [game.id for game in games]
 
+    async def list_games_with_metadata(
+        self,
+        status: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> tuple[list[DBGame], int]:
+        """List games with full metadata and total count."""
+        games = await self.repo.list_games(
+            status=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        total = await self.repo.count_games(status=status)
+        return games, total
+
     async def get_game_info(self, game_id: str) -> DBGame | None:
         """Get game database record with metadata."""
         return await self.repo.get_game(game_id)
@@ -302,9 +309,7 @@ class PersistentGameController:
         completed_turn = state.turn
         for player_id, player_actions in actions.items():
             actions_json = [action.model_dump(mode="json") for action in player_actions]
-            await self.repo.upsert_turn_action(
-                game_id, player_id, completed_turn, actions_json
-            )
+            await self.repo.upsert_turn_action(game_id, player_id, completed_turn, actions_json)
 
         # Resolve turn
         print(f"DEBUG: Calling resolve_turn with turn {state.turn}")
@@ -379,25 +384,17 @@ class PersistentGameController:
             for player in state.players:
                 score = 0
                 # Cities worth 5 points each
-                score += sum(
-                    5 for city in state.cities.values() if city.owner == player
-                )
+                score += sum(5 for city in state.cities.values() if city.owner == player)
                 # Units worth 1 point each
                 score += sum(1 for unit in state.units.values() if unit.owner == player)
                 # Resources worth 1 point per 50
-                resources = state.stockpiles.get(
-                    player, state.stockpiles[list(state.stockpiles.keys())[0]]
-                )
-                score += (
-                    resources.food + resources.wood + resources.ore + resources.crystal
-                ) // 50
+                resources = state.stockpiles.get(player, state.stockpiles[list(state.stockpiles.keys())[0]])
+                score += (resources.food + resources.wood + resources.ore + resources.crystal) // 50
                 scores[player] = score
 
             winner = max(scores, key=lambda k: scores[k]) if scores else None
             victory_type = "score"
-            print(
-                f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}"
-            )
+            print(f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}")
 
         # If game ended, update database
         if winner is not None or victory_type != "none":

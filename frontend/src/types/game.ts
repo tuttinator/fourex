@@ -84,14 +84,18 @@ export interface TurnResult {
 	state_hash: string;
 }
 
-// Game list for lobby
-export interface GameInfo {
-	id: string;
-	turn: number;
+// Game summary for listing
+export interface GameSummary {
+	game_id: string;
 	players: PlayerId[];
-	status: "active" | "finished";
+	turn: number;
+	max_turns: number;
+	status: "waiting" | "active" | "ended" | "created";
+	winner: string | null;
+	victory_type: string | null;
 	created_at: string;
-	winner?: PlayerId;
+	updated_at: string;
+	ended_at: string | null;
 }
 
 // API responses
@@ -106,8 +110,19 @@ export interface CreateGameRequest {
 	seed?: number;
 }
 
-export interface GameListResponse {
-	games: string[];
+export interface GamesListResponse {
+	games: GameSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+}
+
+export interface GamesListParams {
+	status?: "waiting" | "active" | "ended" | "created";
+	sort_by?: "created_at" | "turn" | "status";
+	sort_order?: "asc" | "desc";
+	offset?: number;
+	limit?: number;
 }
 
 // Frontend-specific types

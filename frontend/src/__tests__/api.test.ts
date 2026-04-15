@@ -9,18 +9,88 @@ beforeEach(() => {
 });
 
 describe("api.listGames", () => {
-	it("returns game IDs from the API", async () => {
+	const mockGamesResponse = {
+		games: [
+			{
+				game_id: "game-1",
+				players: ["p1", "p2"],
+				turn: 5,
+				max_turns: 100,
+				status: "active",
+				winner: null,
+				victory_type: null,
+				created_at: "2026-04-15T00:00:00",
+				updated_at: "2026-04-15T01:00:00",
+				ended_at: null,
+			},
+			{
+				game_id: "game-2",
+				players: ["p1", "p2", "p3"],
+				turn: 100,
+				max_turns: 100,
+				status: "ended",
+				winner: "p1",
+				victory_type: "score",
+				created_at: "2026-04-14T00:00:00",
+				updated_at: "2026-04-14T10:00:00",
+				ended_at: "2026-04-14T10:00:00",
+			},
+		],
+		total: 2,
+		offset: 0,
+		limit: 20,
+	};
+
+	it("returns games list with metadata from the API", async () => {
 		mockFetch.mockResolvedValueOnce({
 			ok: true,
-			json: async () => ({ games: ["game-1", "game-2"] }),
+			json: async () => mockGamesResponse,
 		});
 
 		const result = await api.listGames();
-		expect(result).toEqual(["game-1", "game-2"]);
+		expect(result.games).toHaveLength(2);
+		expect(result.games[0].game_id).toBe("game-1");
+		expect(result.games[0].status).toBe("active");
+		expect(result.total).toBe(2);
 		expect(mockFetch).toHaveBeenCalledWith(
 			expect.stringContaining("/games"),
 			expect.any(Object),
 		);
+	});
+
+	it("sends query params for filtering", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ ...mockGamesResponse, games: [mockGamesResponse.games[0]], total: 1 }),
+		});
+
+		await api.listGames({ status: "active" });
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("status=active");
+	});
+
+	it("sends query params for sorting", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockGamesResponse,
+		});
+
+		await api.listGames({ sort_by: "turn", sort_order: "asc" });
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("sort_by=turn");
+		expect(calledUrl).toContain("sort_order=asc");
+	});
+
+	it("sends query params for pagination", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockGamesResponse,
+		});
+
+		await api.listGames({ offset: 20, limit: 10 });
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("offset=20");
+		expect(calledUrl).toContain("limit=10");
 	});
 
 	it("throws ApiError on non-ok response", async () => {
@@ -31,7 +101,6 @@ describe("api.listGames", () => {
 		});
 
 		await expect(api.listGames()).rejects.toThrow(ApiError);
-		await expect(api.listGames()).rejects.toThrow();
 	});
 
 	it("throws ApiError on network failure", async () => {
@@ -104,8 +173,15 @@ describe("api.createGame", () => {
 });
 
 describe("queryKeys", () => {
-	it("generates stable keys", () => {
-		expect(queryKeys.games).toEqual(["games"]);
+	it("generates stable keys for games list", () => {
+		expect(queryKeys.games()).toEqual(["games", {}]);
+		expect(queryKeys.games({ status: "active" })).toEqual([
+			"games",
+			{ status: "active" },
+		]);
+	});
+
+	it("generates stable keys for game state", () => {
 		expect(queryKeys.gameState("abc")).toEqual(["game", "abc"]);
 	});
 });

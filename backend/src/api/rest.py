@@ -2,9 +2,9 @@
 REST API endpoints for game state and actions.
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -121,12 +121,8 @@ async def submit_prompt_log(
 
 
 class ScratchpadWriteRequest(BaseModel):
-    content: str = Field(
-        max_length=4000, description="Scratchpad text (max 4000 chars)"
-    )
-    turn_number: int | None = Field(
-        default=None, description="Turn number (defaults to current turn)"
-    )
+    content: str = Field(max_length=4000, description="Scratchpad text (max 4000 chars)")
+    turn_number: int | None = Field(default=None, description="Turn number (defaults to current turn)")
 
 
 @router.post("/scratchpad", tags=["memory"])
@@ -144,9 +140,7 @@ async def write_scratchpad(
             raise HTTPException(status_code=404, detail="Game not found")
 
         turn = request.turn_number if request.turn_number is not None else state.turn
-        await controller.repo.upsert_agent_memory(
-            game_id, current_player, turn, request.content
-        )
+        await controller.repo.upsert_agent_memory(game_id, current_player, turn, request.content)
         return {"status": "scratchpad_saved", "turn": str(turn)}
     except HTTPException:
         raise
@@ -180,17 +174,73 @@ async def read_scratchpad(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class GameSummary(BaseModel):
+    """Summary of a single game for listing."""
+
+    game_id: str
+    players: list[str]
+    turn: int
+    max_turns: int
+    status: str
+    winner: str | None
+    victory_type: str | None
+    created_at: str
+    updated_at: str
+    ended_at: str | None
+
+
+class GamesListResponse(BaseModel):
+    """Paginated games list response."""
+
+    games: list[GameSummary]
+    total: int
+    offset: int
+    limit: int
+
+
 @router.get("/games", tags=["games"])
 async def list_games(
+    status: Literal["waiting", "active", "ended", "created"] | None = Query(
+        default=None, description="Filter by game status"
+    ),
+    sort_by: Literal["created_at", "turn", "status"] = Query(default="created_at", description="Field to sort by"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc", description="Sort direction"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    limit: int = Query(default=20, ge=1, le=100, description="Page size"),
     session: AsyncSession = Depends(get_database_session),
-) -> dict[str, list[str]]:
+) -> GamesListResponse:
     """
-    List all active games.
+    List games with full metadata, pagination, filtering, and sorting.
     """
     try:
         controller = get_persistent_game_controller(session)
-        game_ids = await controller.list_games()
-        return {"games": game_ids}
+        games, total = await controller.list_games_with_metadata(
+            status=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        return GamesListResponse(
+            games=[
+                GameSummary(
+                    game_id=g.id,
+                    players=g.players,
+                    turn=g.turn,
+                    max_turns=g.max_turns,
+                    status=g.status,
+                    winner=g.winner,
+                    victory_type=g.victory_type,
+                    created_at=g.created_at.isoformat(),
+                    updated_at=g.updated_at.isoformat(),
+                    ended_at=g.ended_at.isoformat() if g.ended_at else None,
+                )
+                for g in games
+            ],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -260,9 +310,7 @@ async def restore_game(
         controller = get_persistent_game_controller(session)
         state = await controller.restore_game_state(game_id)
         if not state:
-            raise HTTPException(
-                status_code=404, detail="Game not found or no snapshot available"
-            )
+            raise HTTPException(status_code=404, detail="Game not found or no snapshot available")
 
         return {
             "status": "game_restored",
