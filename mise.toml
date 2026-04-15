@@ -143,19 +143,19 @@ run = "cd agents && rm -rf logs/*.json test_logs/"
 description = "Show recent agent game logs"
 run = "cd agents && ls -la logs/ | head -10 || echo 'No logs found'"
 
-# MCP server tasks (placeholder - implemented in Phase 4)
+# MCP server tasks
 [tasks.serve]
 description = "Run MCP server in stdio mode"
-run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+run = "uv run python -m backend.src.mcp_server.server stdio"
 
 [tasks.serve-http]
-description = "Run MCP server in streamable-http mode"
-run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+description = "Run MCP server in streamable-http mode (port 8020)"
+run = "uv run python -m backend.src.mcp_server.server http"
 
 [tasks.inspect]
 description = "Launch MCP Inspector against stdio server"
-run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+run = "npx @modelcontextprotocol/inspector uv run python -m backend.src.mcp_server.server stdio"
 
 [tasks.inspect-http]
 description = "Launch MCP Inspector against HTTP server"
-run = "echo 'Not yet implemented — see Phase 4 of the plan'"
+run = "npx @modelcontextprotocol/inspector http://localhost:8020/mcp"
