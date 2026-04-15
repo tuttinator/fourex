@@ -5,7 +5,7 @@ REST API endpoints for game state and actions.
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,9 @@ router = APIRouter()
 security = HTTPBearer()
 
 
-def get_current_player(token: str = Depends(security)) -> PlayerId:
+def get_current_player(
+    token: HTTPAuthorizationCredentials = Depends(security),
+) -> PlayerId:
     """Extract player ID from Bearer token."""
     # Simple token validation - in production, use JWT
     if not token.credentials.startswith("player_"):
@@ -29,7 +31,7 @@ def get_current_player(token: str = Depends(security)) -> PlayerId:
 
 
 def get_current_player_optional(
-    token: str = Depends(HTTPBearer(auto_error=False)),
+    token: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
 ) -> PlayerId | None:
     """Extract player ID from Bearer token, returning None if no token provided."""
     if not token or not token.credentials:

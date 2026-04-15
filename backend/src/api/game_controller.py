@@ -193,7 +193,7 @@ class GameController:
                 ) // 50
                 scores[player] = score
 
-            winner = max(scores, key=scores.get) if scores else None
+            winner = max(scores, key=lambda k: scores[k]) if scores else None
             print(
                 f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}"
             )
