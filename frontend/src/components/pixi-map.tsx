@@ -117,8 +117,20 @@ export function PixiMap({
     const { map_width, map_height, tiles, units, cities, players } = gameState
     const tileLookup = buildTileLookup(tiles)
 
-    // Terrain layer
+    // Terrain layer — draw all tiles, marking unexplored ones as dark
     const terrainGfx = new Graphics()
+    if (fogOfWarEnabled) {
+      // Draw unexplored tiles first (dark background for full grid)
+      for (let gy = 0; gy < map_height; gy++) {
+        for (let gx = 0; gx < map_width; gx++) {
+          if (!tileLookup.has(`${gx},${gy}`)) {
+            terrainGfx.rect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            terrainGfx.fill(0x0a0a14)
+          }
+        }
+      }
+    }
+    // Draw visible tiles
     for (const tile of tiles) {
       const x = tile.loc.x * TILE_SIZE
       const y = tile.loc.y * TILE_SIZE
@@ -279,14 +291,6 @@ export function PixiMap({
       label.x = ux + TILE_SIZE / 2
       label.y = uy + TILE_SIZE / 2
       world.addChild(label)
-    }
-
-    // Fog of war overlay
-    if (fogOfWarEnabled && selectedPlayer) {
-      const fogGfx = new Graphics()
-      fogGfx.rect(0, 0, map_width * TILE_SIZE, map_height * TILE_SIZE)
-      fogGfx.fill({ color: 0x000000, alpha: 0.5 })
-      world.addChild(fogGfx)
     }
 
     // Interactive layer for hover/click detection

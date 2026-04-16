@@ -332,7 +332,19 @@ describe("queryKeys", () => {
 		expect(queryKeys.gameDetail("abc")).toEqual(["game", "abc", "detail"]);
 	});
 
-	it("generates stable keys for game state", () => {
-		expect(queryKeys.gameState("abc")).toEqual(["game", "abc"]);
+	it("generates stable keys for game state in god mode", () => {
+		expect(queryKeys.gameState("abc")).toEqual(["game", "abc", "state", "god"]);
+	});
+
+	it("generates stable keys for game state with player perspective", () => {
+		expect(queryKeys.gameState("abc", "alice")).toEqual(["game", "abc", "state", "alice"]);
+	});
+
+	it("generates distinct keys for different perspectives", () => {
+		const godKey = queryKeys.gameState("abc");
+		const aliceKey = queryKeys.gameState("abc", "alice");
+		const bobKey = queryKeys.gameState("abc", "bob");
+		expect(godKey).not.toEqual(aliceKey);
+		expect(aliceKey).not.toEqual(bobKey);
 	});
 });

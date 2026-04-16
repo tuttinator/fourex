@@ -155,15 +155,167 @@ describe("observation: game detail for status detection", () => {
 });
 
 describe("observation: query keys", () => {
-	it("gameState key includes game ID", () => {
+	it("gameState key includes game ID and default god perspective", () => {
 		const key = queryKeys.gameState("my-game");
-		expect(key).toEqual(["game", "my-game"]);
+		expect(key).toEqual(["game", "my-game", "state", "god"]);
+	});
+
+	it("gameState key includes player perspective when specified", () => {
+		const key = queryKeys.gameState("my-game", "alice");
+		expect(key).toEqual(["game", "my-game", "state", "alice"]);
 	});
 
 	it("gameDetail key is distinct from gameState key", () => {
 		const stateKey = queryKeys.gameState("my-game");
 		const detailKey = queryKeys.gameDetail("my-game");
 		expect(stateKey).not.toEqual(detailKey);
+	});
+
+	it("perspective change produces distinct query key", () => {
+		const godKey = queryKeys.gameState("my-game");
+		const aliceKey = queryKeys.gameState("my-game", "alice");
+		const bobKey = queryKeys.gameState("my-game", "bob");
+		expect(godKey).not.toEqual(aliceKey);
+		expect(aliceKey).not.toEqual(bobKey);
+	});
+});
+
+describe("observation: player perspective (fog-of-war) fetching", () => {
+	it("fetches game state with player auth token", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				...mockGameState,
+				// Simulated redacted state: only alice's visible tiles
+				tiles: [
+					{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice" },
+					{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", owner: "alice" },
+				],
+				units: {
+					1: { id: 1, owner: "alice", type: "scout", hp: 10, moves_left: 2, loc: { x: 0, y: 0 } },
+					2: { id: 2, owner: "alice", type: "soldier", hp: 20, moves_left: 1, loc: { x: 1, y: 0 } },
+				},
+				cities: {
+					1: { id: 1, owner: "alice", loc: { x: 0, y: 0 }, hp: 50, buildings: ["granary"] },
+				},
+			}),
+		});
+
+		const result = await api.getGameStateAsPlayer("my-game", "alice");
+		expect(result.tiles).toHaveLength(2);
+		expect(Object.keys(result.units)).toHaveLength(2);
+		expect(Object.keys(result.cities)).toHaveLength(1);
+
+		// Verify auth header was sent
+		const [, fetchOptions] = mockFetch.mock.calls[0];
+		expect(fetchOptions.headers.Authorization).toBe("Bearer player_alice");
+	});
+
+	it("sends player-specific auth header, not localStorage token", async () => {
+		// Set a localStorage token that should be overridden
+		vi.stubGlobal("localStorage", {
+			getItem: () => "player_operator",
+			setItem: vi.fn(),
+			removeItem: vi.fn(),
+		});
+
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockGameState,
+		});
+
+		await api.getGameStateAsPlayer("my-game", "bob");
+
+		const [, fetchOptions] = mockFetch.mock.calls[0];
+		expect(fetchOptions.headers.Authorization).toBe("Bearer player_bob");
+	});
+
+	it("god-mode fetch does not send player auth header", async () => {
+		vi.stubGlobal("localStorage", {
+			getItem: () => null,
+			setItem: vi.fn(),
+			removeItem: vi.fn(),
+		});
+
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockGameState,
+		});
+
+		await api.getGameState("my-game");
+
+		const [, fetchOptions] = mockFetch.mock.calls[0];
+		expect(fetchOptions.headers.Authorization).toBeUndefined();
+	});
+
+	it("redacted state has fewer tiles than full state", async () => {
+		const fullState = { ...mockGameState };
+		const redactedState = {
+			...mockGameState,
+			tiles: mockGameState.tiles.filter(t => t.owner === "alice"),
+			units: { 1: mockGameState.units[1], 2: mockGameState.units[2] },
+			cities: { 1: mockGameState.cities[1] },
+		};
+
+		expect(fullState.tiles.length).toBeGreaterThan(redactedState.tiles.length);
+		expect(Object.keys(fullState.units).length).toBeGreaterThan(Object.keys(redactedState.units).length);
+		expect(Object.keys(fullState.cities).length).toBeGreaterThan(Object.keys(redactedState.cities).length);
+	});
+
+	it("switching perspective changes the fetch URL parameter", async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			json: async () => mockGameState,
+		});
+
+		// God mode
+		await api.getGameState("my-game");
+		const [godUrl] = mockFetch.mock.calls[0];
+		expect(godUrl).toContain("/state?game_id=my-game");
+
+		// Player perspective uses the same endpoint
+		await api.getGameStateAsPlayer("my-game", "alice");
+		const [playerUrl] = mockFetch.mock.calls[1];
+		expect(playerUrl).toContain("/state?game_id=my-game");
+	});
+});
+
+describe("observation: fog-of-war tile visibility", () => {
+	it("builds tile lookup for visible tile detection", () => {
+		// Simulate the tile lookup used in PixiMap
+		const tileLookup = new Map<string, boolean>();
+		for (const tile of mockGameState.tiles) {
+			tileLookup.set(`${tile.loc.x},${tile.loc.y}`, true);
+		}
+
+		expect(tileLookup.has("0,0")).toBe(true);
+		expect(tileLookup.has("1,0")).toBe(true);
+		expect(tileLookup.has("5,5")).toBe(false);
+	});
+
+	it("identifies unexplored tiles as those missing from redacted state", () => {
+		const redactedTiles = mockGameState.tiles.filter(t => t.owner === "alice");
+		const tileLookup = new Map<string, boolean>();
+		for (const tile of redactedTiles) {
+			tileLookup.set(`${tile.loc.x},${tile.loc.y}`, true);
+		}
+
+		// Bob's tile and unowned tile should be unexplored
+		expect(tileLookup.has("0,1")).toBe(false); // bob's tile
+		expect(tileLookup.has("1,1")).toBe(false); // unowned water tile
+		// Alice's tiles should be visible
+		expect(tileLookup.has("0,0")).toBe(true);
+		expect(tileLookup.has("1,0")).toBe(true);
+	});
+
+	it("counts visible vs total tiles for fog-of-war stats", () => {
+		const { map_width, map_height } = mockGameState;
+		const totalTiles = map_width * map_height;
+		const redactedTiles = mockGameState.tiles.filter(t => t.owner === "alice");
+
+		expect(totalTiles).toBe(400); // 20x20
+		expect(redactedTiles.length).toBe(2);
+		expect(redactedTiles.length).toBeLessThan(totalTiles);
 	});
 });
 

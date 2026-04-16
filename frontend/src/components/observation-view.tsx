@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
 import { api, queryKeys, ApiError } from '@/lib/api'
 import { EventLog } from '@/components/event-log'
 import { PixiMap } from '@/components/pixi-map'
-import { PlayerList } from '@/components/player-list'
+import { PerspectiveSelector } from '@/components/perspective-selector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,8 +21,8 @@ interface ObservationViewProps {
 }
 
 export function ObservationView({ gameId }: ObservationViewProps) {
-  const [selectedPlayer, setSelectedPlayer] = useState<PlayerId | null>(null)
-  const [fogOfWarEnabled, setFogOfWarEnabled] = useState(false)
+  // null = god-mode, string = player perspective
+  const [perspective, setPerspective] = useState<PlayerId | null>(null)
 
   const {
     data: gameDetail,
@@ -41,15 +41,16 @@ export function ObservationView({ gameId }: ObservationViewProps) {
     error,
     refetch,
   } = useQuery({
-    queryKey: queryKeys.gameState(gameId),
-    queryFn: () => api.getGameState(gameId),
+    queryKey: queryKeys.gameState(gameId, perspective),
+    queryFn: () =>
+      perspective
+        ? api.getGameStateAsPlayer(gameId, perspective)
+        : api.getGameState(gameId),
     refetchInterval: isActive ? ACTIVE_POLL_INTERVAL : false,
     enabled: isActive || isEnded,
   })
 
-  const handleFogToggle = useCallback((enabled: boolean) => {
-    setFogOfWarEnabled(enabled)
-  }, [])
+  const isFogOfWar = perspective !== null
 
   if (isLoading) {
     return (
@@ -97,6 +98,10 @@ export function ObservationView({ gameId }: ObservationViewProps) {
     )
   }
 
+  // Use the detail's player list for the perspective selector
+  // (god-mode state always has the full player list; fog-of-war state might not)
+  const allPlayers = gameDetail?.players ?? gameState.players
+
   return (
     <div className="flex flex-col h-full">
       {/* Status bar */}
@@ -115,9 +120,14 @@ export function ObservationView({ gameId }: ObservationViewProps) {
           {isEnded && (
             <Badge variant="outline" className="text-xs">Ended</Badge>
           )}
+          {isFogOfWar && (
+            <Badge variant="secondary" className="text-xs">
+              {perspective}&apos;s view
+            </Badge>
+          )}
         </div>
         <div className="text-xs text-muted-foreground">
-          {gameState.players.length} players &middot; {Object.keys(gameState.units).length} units &middot; {Object.keys(gameState.cities).length} cities
+          {allPlayers.length} players &middot; {Object.keys(gameState.units).length} units &middot; {Object.keys(gameState.cities).length} cities
         </div>
       </div>
 
@@ -127,8 +137,8 @@ export function ObservationView({ gameId }: ObservationViewProps) {
         <div className="flex-1 relative">
           <PixiMap
             gameState={gameState}
-            selectedPlayer={selectedPlayer ?? undefined}
-            fogOfWarEnabled={fogOfWarEnabled}
+            selectedPlayer={perspective ?? undefined}
+            fogOfWarEnabled={isFogOfWar}
           />
         </div>
 
@@ -142,12 +152,10 @@ export function ObservationView({ gameId }: ObservationViewProps) {
             </TabsList>
 
             <TabsContent value="players" className="flex-1 overflow-auto">
-              <PlayerList
-                players={gameState.players}
-                gameState={gameState}
-                selectedPlayer={selectedPlayer ?? undefined}
-                onPlayerSelect={setSelectedPlayer}
-                onFogToggle={handleFogToggle}
+              <PerspectiveSelector
+                players={allPlayers}
+                perspective={perspective}
+                onPerspectiveChange={setPerspective}
               />
             </TabsContent>
 
@@ -176,9 +184,15 @@ export function ObservationView({ gameId }: ObservationViewProps) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Players:</span>
-                      <span>{gameState.players.length}</span>
+                      <span>{allPlayers.length}</span>
                     </div>
-                    {gameState.players.map((player) => {
+                    {isFogOfWar && (
+                      <div className="flex justify-between text-yellow-600 dark:text-yellow-400">
+                        <span>Visible Tiles:</span>
+                        <span>{gameState.tiles.length} / {gameState.map_width * gameState.map_height}</span>
+                      </div>
+                    )}
+                    {allPlayers.map((player) => {
                       const units = Object.values(gameState.units).filter(u => u.owner === player)
                       const cities = Object.values(gameState.cities).filter(c => c.owner === player)
                       const resources = gameState.stockpiles[player]

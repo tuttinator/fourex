@@ -134,6 +134,14 @@ export const api = {
 	async getGameState(gameId: string): Promise<GameState> {
 		return fetchApi(`/state?game_id=${gameId}`);
 	},
+
+	async getGameStateAsPlayer(gameId: string, playerId: string): Promise<GameState> {
+		return fetchApi(`/state?game_id=${gameId}`, {
+			headers: {
+				Authorization: `Bearer player_${playerId}`,
+			},
+		});
+	},
 };
 
 // React Query keys
@@ -141,7 +149,8 @@ export const queryKeys = {
 	games: (params?: GamesListParams) =>
 		["games", params ?? {}] as const,
 	gameDetail: (gameId: string) => ["game", gameId, "detail"] as const,
-	gameState: (gameId: string) => ["game", gameId] as const,
+	gameState: (gameId: string, perspective?: string | null) =>
+		["game", gameId, "state", perspective ?? "god"] as const,
 };
 
 // Utility functions
