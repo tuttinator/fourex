@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.connection import get_database_session
+from ..database.repository import GameRepository
 from ..game.models import Action, CreateGameRequest, GameState, PlayerId, PromptLog
 from ..game.rules import redact_state
 from .persistent_game_controller import get_persistent_game_controller
@@ -478,6 +479,211 @@ def _game_detail_response(game: Any) -> GameDetailResponse:
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,
     )
+
+
+# --- Turn history & replay endpoints ---
+
+
+class TurnSummary(BaseModel):
+    """Summary of a single turn for listing."""
+
+    turn_number: int
+    state_hash: str
+    player_count: int
+    completed_at: str | None
+
+
+class TurnListResponse(BaseModel):
+    """Paginated turn list response."""
+
+    turns: list[TurnSummary]
+    total: int
+    offset: int
+    limit: int
+
+
+class TurnDetailResponse(BaseModel):
+    """Full turn detail with actions and results."""
+
+    turn_number: int
+    player_actions: dict[str, list[dict[str, Any]]]
+    action_results: dict[str, list[dict[str, Any]]]
+    state_hash: str
+    completed_at: str | None
+
+
+class PromptLogResponse(BaseModel):
+    """A single prompt log entry."""
+
+    player_id: str
+    prompt: str
+    response: str
+    tokens_in: int
+    tokens_out: int
+    latency_ms: int
+    llm_provider: str | None
+    llm_model: str | None
+
+
+class TurnPromptsResponse(BaseModel):
+    """All prompt logs for a turn."""
+
+    turn_number: int
+    prompts: list[PromptLogResponse]
+
+
+@router.get("/games/{game_id}/turns", tags=["replay"])
+async def list_turns(
+    game_id: str,
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    limit: int = Query(default=50, ge=1, le=200, description="Page size"),
+    session: AsyncSession = Depends(get_database_session),
+) -> TurnListResponse:
+    """List all turns for a game with pagination."""
+    try:
+        repo = GameRepository(session)
+
+        game = await repo.get_game(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        total = await repo.count_turns(game_id)
+        turns = await repo.get_turn_history_paginated(
+            game_id, limit=limit, offset=offset
+        )
+
+        return TurnListResponse(
+            turns=[
+                TurnSummary(
+                    turn_number=t.turn_number,
+                    state_hash=t.state_hash,
+                    player_count=len(t.player_actions),
+                    completed_at=t.completed_at.isoformat() if t.completed_at else None,
+                )
+                for t in turns
+            ],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/games/{game_id}/turns/{turn_number}", tags=["replay"])
+async def get_turn_detail(
+    game_id: str,
+    turn_number: int,
+    session: AsyncSession = Depends(get_database_session),
+) -> TurnDetailResponse:
+    """Get full turn detail including player actions and action results."""
+    try:
+        repo = GameRepository(session)
+
+        game = await repo.get_game(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        turn = await repo.get_game_turn(game_id, turn_number)
+        if not turn:
+            raise HTTPException(status_code=404, detail="Turn not found")
+
+        return TurnDetailResponse(
+            turn_number=turn.turn_number,
+            player_actions=turn.player_actions,
+            action_results=turn.action_results,
+            state_hash=turn.state_hash,
+            completed_at=turn.completed_at.isoformat() if turn.completed_at else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/games/{game_id}/turns/{turn_number}/state", tags=["replay"])
+async def get_turn_state(
+    game_id: str,
+    turn_number: int,
+    player: str | None = Query(
+        default=None, description="Player ID for fog-of-war view"
+    ),
+    session: AsyncSession = Depends(get_database_session),
+) -> GameState:
+    """
+    Get game state snapshot at a specific turn.
+
+    Without player param: returns full god-mode state from GameSnapshot.
+    With player param: returns fog-of-war redacted state from TurnSnapshot.
+    """
+    try:
+        repo = GameRepository(session)
+
+        game = await repo.get_game(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        if player:
+            snapshot = await repo.get_turn_snapshot(game_id, player, turn_number)
+            if not snapshot:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No snapshot found for player '{player}' at turn {turn_number}",
+                )
+            return GameState.model_validate(snapshot.state_json)
+        else:
+            snapshot = await repo.get_game_snapshot_at_turn(game_id, turn_number)
+            if not snapshot:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No god-mode snapshot at turn {turn_number}. "
+                    f"Full snapshots are saved every 10 turns, plus initial and final states.",
+                )
+            return GameState.model_validate(snapshot.complete_state)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/games/{game_id}/turns/{turn_number}/prompts", tags=["replay"])
+async def get_turn_prompts(
+    game_id: str,
+    turn_number: int,
+    session: AsyncSession = Depends(get_database_session),
+) -> TurnPromptsResponse:
+    """Get LLM prompt logs for a specific turn."""
+    try:
+        repo = GameRepository(session)
+
+        game = await repo.get_game(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        logs = await repo.get_prompt_logs_for_turn(game_id, turn_number)
+
+        return TurnPromptsResponse(
+            turn_number=turn_number,
+            prompts=[
+                PromptLogResponse(
+                    player_id=log.player_id,
+                    prompt=log.prompt,
+                    response=log.response,
+                    tokens_in=log.tokens_in,
+                    tokens_out=log.tokens_out,
+                    latency_ms=log.latency_ms,
+                    llm_provider=log.llm_provider,
+                    llm_model=log.llm_model,
+                )
+                for log in logs
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/games/{game_id}/restore", tags=["games"])

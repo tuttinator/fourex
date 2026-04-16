@@ -151,6 +151,45 @@ export interface GamesListParams {
 	limit?: number;
 }
 
+// Turn history & replay types
+export interface TurnSummary {
+	turn_number: number;
+	state_hash: string;
+	player_count: number;
+	completed_at: string | null;
+}
+
+export interface TurnListResponse {
+	turns: TurnSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+}
+
+export interface TurnDetailResponse {
+	turn_number: number;
+	player_actions: Record<PlayerId, ActionResult[]>;
+	action_results: Record<PlayerId, ActionResult[]>;
+	state_hash: string;
+	completed_at: string | null;
+}
+
+export interface PromptLogEntry {
+	player_id: PlayerId;
+	prompt: string;
+	response: string;
+	tokens_in: number;
+	tokens_out: number;
+	latency_ms: number;
+	llm_provider: string | null;
+	llm_model: string | null;
+}
+
+export interface TurnPromptsResponse {
+	turn_number: number;
+	prompts: PromptLogEntry[];
+}
+
 // Frontend-specific types
 export interface GameStore {
 	gameId: string | null;

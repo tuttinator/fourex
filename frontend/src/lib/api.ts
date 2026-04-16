@@ -5,6 +5,9 @@ import type {
 	GamesListParams,
 	GamesListResponse,
 	GameState,
+	TurnDetailResponse,
+	TurnListResponse,
+	TurnPromptsResponse,
 } from "@/types/game";
 
 const API_BASE_URL =
@@ -142,6 +145,50 @@ export const api = {
 			},
 		});
 	},
+
+	async listTurns(
+		gameId: string,
+		params: { offset?: number; limit?: number } = {},
+	): Promise<TurnListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.offset !== undefined)
+			searchParams.set("offset", String(params.offset));
+		if (params.limit !== undefined)
+			searchParams.set("limit", String(params.limit));
+		const qs = searchParams.toString();
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns${qs ? `?${qs}` : ""}`,
+		);
+	},
+
+	async getTurnDetail(
+		gameId: string,
+		turnNumber: number,
+	): Promise<TurnDetailResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}`,
+		);
+	},
+
+	async getTurnState(
+		gameId: string,
+		turnNumber: number,
+		player?: string,
+	): Promise<GameState> {
+		const params = player ? `?player=${encodeURIComponent(player)}` : "";
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/state${params}`,
+		);
+	},
+
+	async getTurnPrompts(
+		gameId: string,
+		turnNumber: number,
+	): Promise<TurnPromptsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/prompts`,
+		);
+	},
 };
 
 // React Query keys
@@ -151,6 +198,14 @@ export const queryKeys = {
 	gameDetail: (gameId: string) => ["game", gameId, "detail"] as const,
 	gameState: (gameId: string, perspective?: string | null) =>
 		["game", gameId, "state", perspective ?? "god"] as const,
+	turnList: (gameId: string) =>
+		["game", gameId, "turns"] as const,
+	turnDetail: (gameId: string, turnNumber: number) =>
+		["game", gameId, "turn", turnNumber, "detail"] as const,
+	turnState: (gameId: string, turnNumber: number, perspective?: string | null) =>
+		["game", gameId, "turn", turnNumber, "state", perspective ?? "god"] as const,
+	turnPrompts: (gameId: string, turnNumber: number) =>
+		["game", gameId, "turn", turnNumber, "prompts"] as const,
 };
 
 // Utility functions

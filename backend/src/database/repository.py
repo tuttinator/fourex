@@ -550,6 +550,71 @@ class GameRepository:
         )
         return list(result.scalars().all())
 
+    async def get_turn_history_paginated(
+        self,
+        game_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[GameTurn]:
+        """Get turns for a game with pagination."""
+        result = await self.session.execute(
+            select(GameTurn)
+            .where(GameTurn.game_id == game_id)
+            .order_by(GameTurn.turn_number)
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all())
+
+    async def count_turns(self, game_id: str) -> int:
+        """Count total turns for a game."""
+        result = await self.session.execute(
+            select(func.count(GameTurn.id)).where(GameTurn.game_id == game_id)
+        )
+        return result.scalar_one()
+
+    async def get_game_turn(self, game_id: str, turn_number: int) -> GameTurn | None:
+        """Get a specific turn by game and turn number."""
+        result = await self.session.execute(
+            select(GameTurn).where(
+                and_(
+                    GameTurn.game_id == game_id,
+                    GameTurn.turn_number == turn_number,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_game_snapshot_at_turn(
+        self, game_id: str, turn_number: int
+    ) -> GameSnapshot | None:
+        """Get the game snapshot at a specific turn."""
+        result = await self.session.execute(
+            select(GameSnapshot).where(
+                and_(
+                    GameSnapshot.game_id == game_id,
+                    GameSnapshot.turn_number == turn_number,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_prompt_logs_for_turn(
+        self, game_id: str, turn_number: int
+    ) -> list[PromptLog]:
+        """Get all prompt logs for a specific turn."""
+        result = await self.session.execute(
+            select(PromptLog)
+            .where(
+                and_(
+                    PromptLog.game_id == game_id,
+                    PromptLog.turn_number == turn_number,
+                )
+            )
+            .order_by(PromptLog.player_id)
+        )
+        return list(result.scalars().all())
+
     async def get_player_prompt_logs(
         self, game_id: str, player_id: str, limit: int = 100
     ) -> list[PromptLog]:
