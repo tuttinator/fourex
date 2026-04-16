@@ -55,6 +55,8 @@ def _validate_actions_against_state(
 
     from ...game.rules import (
         execute_attack,
+        execute_build_building,
+        execute_build_improvement,
         execute_found_city,
         execute_move,
         execute_train_unit,
@@ -75,6 +77,10 @@ def _validate_actions_against_state(
             r = execute_found_city(test_state, action)
         elif isinstance(action, TrainUnitAction):
             r = execute_train_unit(test_state, action)
+        elif isinstance(action, BuildImprovementAction):
+            r = execute_build_improvement(test_state, action)
+        elif isinstance(action, BuildBuildingAction):
+            r = execute_build_building(test_state, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}

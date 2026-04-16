@@ -7,11 +7,13 @@ from copy import deepcopy
 
 from .models import (
     BUILDING_STATS,
+    IMPROVEMENT_STATS,
     UNIT_STATS,
     Action,
     ActionResult,
     AttackAction,
     BuildBuildingAction,
+    BuildImprovementAction,
     City,
     Coord,
     DiplomaticState,
@@ -522,6 +524,101 @@ def execute_train_unit(state: GameState, action: TrainUnitAction) -> ActionResul
     )
 
 
+def execute_build_improvement(
+    state: GameState, action: BuildImprovementAction
+) -> ActionResult:
+    """Execute building a tile improvement using a worker."""
+    worker = state.get_unit(action.worker_id)
+    if not worker:
+        return ActionResult(
+            success=False,
+            message=f"Worker {action.worker_id} not found",
+            action=action,
+        )
+
+    if worker.type != UnitType.WORKER:
+        return ActionResult(
+            success=False,
+            message=f"Unit {worker.id} is not a worker",
+            action=action,
+        )
+
+    # Check if improvement type is valid
+    if action.improvement not in IMPROVEMENT_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid improvement type: {action.improvement}",
+            action=action,
+        )
+
+    improvement_stats = IMPROVEMENT_STATS[action.improvement]
+
+    # Check the tile the worker is on
+    tile = state.get_tile(worker.loc)
+    if not tile:
+        return ActionResult(
+            success=False,
+            message="Invalid location for improvement",
+            action=action,
+        )
+
+    # Check if tile already has an improvement
+    if tile.improvement is not None:
+        return ActionResult(
+            success=False,
+            message=f"Tile at {worker.loc} already has improvement {tile.improvement}",
+            action=action,
+        )
+
+    # Validate terrain
+    if tile.terrain not in improvement_stats.valid_terrain:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Cannot build {action.improvement} on {tile.terrain}; "
+                f"requires {[t.value for t in improvement_stats.valid_terrain]}"
+            ),
+            action=action,
+        )
+
+    # Validate required resource on tile
+    if improvement_stats.required_resource is not None:
+        if tile.resource != improvement_stats.required_resource:
+            return ActionResult(
+                success=False,
+                message=(
+                    f"Cannot build {action.improvement} here; "
+                    f"requires {improvement_stats.required_resource} resource on tile"
+                ),
+                action=action,
+            )
+
+    # Check if player can afford the improvement
+    player_resources = state.stockpiles.get(worker.owner, ResourceBag())
+    if not player_resources.can_afford(improvement_stats.cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {worker.owner} cannot afford {action.improvement}",
+            action=action,
+        )
+
+    # Deduct resources
+    state.stockpiles[worker.owner] = player_resources - improvement_stats.cost
+
+    # Place improvement on tile
+    tile.improvement = action.improvement
+
+    # Consume worker (same pattern as found_city)
+    tile.unit_id = None
+    del state.units[worker.id]
+
+    return ActionResult(
+        success=True,
+        message=f"Improvement {action.improvement} built at {worker.loc}",
+        action=action,
+    )
+
+
 def execute_build_building(
     state: GameState, action: BuildBuildingAction
 ) -> ActionResult:
@@ -737,13 +834,8 @@ def resolve_turn(
                 result = execute_found_city(state, action)
             elif isinstance(action, TrainUnitAction):
                 result = execute_train_unit(state, action)
-            elif action.type == "BUILD_IMPROVEMENT":
-                # TODO: Implement improvement building
-                result = ActionResult(
-                    success=False,
-                    message="Improvement building not implemented yet",
-                    action=action,
-                )
+            elif isinstance(action, BuildImprovementAction):
+                result = execute_build_improvement(state, action)
             elif isinstance(action, BuildBuildingAction):
                 result = execute_build_building(state, action)
             else:

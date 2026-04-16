@@ -176,6 +176,43 @@ UNIT_STATS = {
 }
 
 
+class ImprovementStats(BaseModel):
+    """Base stats for tile improvement types."""
+
+    cost: ResourceBag
+    valid_terrain: list[Terrain]
+    required_resource: Resource | None = None
+    effect: str
+
+
+IMPROVEMENT_STATS = {
+    ImprovementType.FARM: ImprovementStats(
+        cost=ResourceBag(wood=20),
+        valid_terrain=[Terrain.PLAINS],
+        required_resource=Resource.FOOD,
+        effect="+2 food bonus (total +3 food on food tile)",
+    ),
+    ImprovementType.MINE: ImprovementStats(
+        cost=ResourceBag(wood=20),
+        valid_terrain=[Terrain.MOUNTAIN],
+        required_resource=Resource.ORE,
+        effect="+2 ore bonus (total +3 ore on ore tile)",
+    ),
+    ImprovementType.LUMBER_MILL: ImprovementStats(
+        cost=ResourceBag(wood=10),
+        valid_terrain=[Terrain.FOREST],
+        required_resource=None,
+        effect="+2 wood bonus (total +3 wood on forest tile)",
+    ),
+    ImprovementType.CRYSTAL_EXTRACTOR: ImprovementStats(
+        cost=ResourceBag(wood=20, ore=10),
+        valid_terrain=[Terrain.PLAINS, Terrain.FOREST, Terrain.MOUNTAIN],
+        required_resource=Resource.CRYSTAL,
+        effect="+1 crystal bonus (total +2 crystal on crystal tile)",
+    ),
+}
+
+
 class BuildingStats(BaseModel):
     """Base stats for building types."""
 
