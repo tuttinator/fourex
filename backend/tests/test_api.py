@@ -73,7 +73,8 @@ class TestGameEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "games" in data
-        assert game_id in data["games"]
+        game_ids = [g["game_id"] for g in data["games"]]
+        assert game_id in game_ids
 
     def test_get_game_state(self, client, auth_headers):
         """Test getting game state."""
