@@ -618,8 +618,63 @@ def _expand_borders(state: GameState, city: City) -> None:
         tile.city_id = city.id
 
 
+def _calculate_tile_yield(tile: Tile) -> ResourceBag:
+    """Calculate the resource yield for an owned tile.
+
+    Base yields (from terrain/resource):
+    - Food resource tile: +1 food
+    - Wood resource tile: +1 wood
+    - Ore resource tile: +1 ore
+    - Crystal resource tile: +1 crystal
+    - Forest tile (no wood resource): +1 wood
+    - Plains without resource: +0
+
+    Improved tile yields (total, replacing base):
+    - Farm on food tile: +3 food
+    - Mine on ore tile: +3 ore
+    - Lumber mill on forest: +3 wood
+    - Crystal extractor on crystal tile: +2 crystal
+    """
+    resources = ResourceBag()
+
+    # Base yield from resource
+    if tile.resource == Resource.FOOD:
+        resources.food += 1
+    elif tile.resource == Resource.WOOD:
+        resources.wood += 1
+    elif tile.resource == Resource.ORE:
+        resources.ore += 1
+    elif tile.resource == Resource.CRYSTAL:
+        resources.crystal += 1
+    elif tile.terrain == Terrain.FOREST:
+        # Forest tiles without a resource still yield +1 wood
+        resources.wood += 1
+
+    # Improvement bonus (on top of base yield)
+    if tile.improvement:
+        if tile.improvement == ImprovementType.FARM and tile.resource == Resource.FOOD:
+            resources.food += 2  # +2 bonus → total +3 food
+        elif tile.improvement == ImprovementType.MINE and tile.resource == Resource.ORE:
+            resources.ore += 2  # +2 bonus → total +3 ore
+        elif tile.improvement == ImprovementType.LUMBER_MILL:
+            resources.wood += 2  # +2 bonus → total +3 wood
+        elif (
+            tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
+            and tile.resource == Resource.CRYSTAL
+        ):
+            resources.crystal += 1  # +1 bonus → total +2 crystal
+
+    return resources
+
+
 def collect_resources(state: GameState) -> None:
-    """Collect resources from cities and improvements at turn end."""
+    """Collect resources from cities and tile yields at turn end.
+
+    Each city produces base food (+1, boosted by Granary). Additionally,
+    all tiles within city borders generate yields based on their terrain,
+    resource, and improvement.
+    """
+    # Base city food production (independent of territory)
     for city in state.cities.values():
         base_food = 1
         food_production = int(base_food * city.food_multiplier())
@@ -628,30 +683,20 @@ def collect_resources(state: GameState) -> None:
         current_resources.food += food_production
         state.stockpiles[city.owner] = current_resources
 
-    # Collect from tile improvements
+    # Collect yields from all owned tiles (within city borders)
     for tile in state.tiles:
-        if tile.improvement and tile.owner:
-            resources_generated = ResourceBag()
+        if tile.owner is None:
+            continue
+        if tile.city_id is not None and tile.city_id in state.cities:
+            # Skip the city tile itself — it contributes base food above
+            city = state.cities[tile.city_id]
+            if city.loc == tile.loc:
+                continue
 
-            if (
-                tile.improvement == ImprovementType.FARM
-                and tile.resource == Resource.FOOD
-            ):
-                resources_generated.food += 2
-            elif (
-                tile.improvement == ImprovementType.MINE
-                and tile.resource == Resource.ORE
-            ):
-                resources_generated.ore += 2
-            elif (
-                tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
-                and tile.resource == Resource.CRYSTAL
-            ):
-                resources_generated.crystal += 1
-
-            if resources_generated != ResourceBag():
-                current_resources = state.stockpiles.get(tile.owner, ResourceBag())
-                state.stockpiles[tile.owner] = current_resources + resources_generated
+        tile_yield = _calculate_tile_yield(tile)
+        if tile_yield != ResourceBag():
+            current_resources = state.stockpiles.get(tile.owner, ResourceBag())
+            state.stockpiles[tile.owner] = current_resources + tile_yield
 
 
 def reset_unit_moves(state: GameState) -> None:
