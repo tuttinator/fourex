@@ -4,12 +4,12 @@ import { useParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
+import { ObservationView } from '@/components/observation-view'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ArrowLeft,
-  Eye,
   Loader2,
   AlertCircle,
   Play,
@@ -142,73 +142,54 @@ export default function GameDetailPage() {
     )
   }
 
-  const isCreator = currentPlayer === game.creator
-  const isInGame = currentPlayer !== null && game.players.includes(currentPlayer)
-  const isFull = game.players.length >= game.player_slots
-  const canStart = isCreator && isFull && game.status === 'waiting'
-
-  // If game is active or ended, show redirect to observe
+  // Active or ended: show observation view with header
   if (game.status === 'active' || game.status === 'ended') {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-3xl">
-        <div className="mb-6">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/games">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Games
-            </Link>
-          </Button>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-2xl">{game.game_id}</CardTitle>
-              <Badge variant={statusVariant(game.status)}>{game.status}</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Turn:</span>{' '}
-                <span className="font-medium">{game.turn} / {game.max_turns}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Players:</span>{' '}
-                <span className="font-medium">{game.players.length}</span>
-              </div>
-              {game.winner && (
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">Winner:</span>{' '}
-                  <span className="font-medium">{game.winner}</span>
-                  {game.victory_type && (
-                    <span className="text-muted-foreground"> ({game.victory_type})</span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <Button asChild className="flex-1">
-                <Link href={`/games/${game.game_id}/observe`}>
-                  <Eye className="h-4 w-4 mr-2" />
-                  Observe
+      <div className="h-screen flex flex-col">
+        {/* Header */}
+        <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/games">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Back
                 </Link>
               </Button>
-              <Button asChild variant="outline" className="flex-1">
+              <h1 className="text-xl font-semibold">{game.game_id}</h1>
+              <Badge variant={statusVariant(game.status)}>{game.status}</Badge>
+              {game.winner && (
+                <span className="text-sm text-muted-foreground">
+                  Winner: {game.winner}
+                  {game.victory_type && ` (${game.victory_type})`}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <Button asChild variant="outline" size="sm">
                 <Link href={`/games/${game.game_id}/replay`}>
                   <Play className="h-4 w-4 mr-2" />
                   Replay
                 </Link>
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {/* Observation view fills remaining space */}
+        <div className="flex-1 overflow-hidden">
+          <ObservationView gameId={gameId} />
+        </div>
       </div>
     )
   }
 
   // Waiting room view
+  const isCreator = currentPlayer === game.creator
+  const isInGame = currentPlayer !== null && game.players.includes(currentPlayer)
+  const isFull = game.players.length >= game.player_slots
+  const canStart = isCreator && isFull && game.status === 'waiting'
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
       <div className="mb-6">

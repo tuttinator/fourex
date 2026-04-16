@@ -1,0 +1,213 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { api, ApiError, queryKeys } from "@/lib/api";
+import type { GameState } from "@/types/game";
+
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+beforeEach(() => {
+	mockFetch.mockReset();
+});
+
+const mockGameState: GameState = {
+	turn: 5,
+	rng_state: 42,
+	map_width: 20,
+	map_height: 20,
+	tiles: [
+		{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice" },
+		{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", owner: "alice" },
+		{ id: 2, loc: { x: 0, y: 1 }, terrain: "mountain", owner: "bob" },
+		{ id: 3, loc: { x: 1, y: 1 }, terrain: "water" },
+	],
+	units: {
+		1: { id: 1, owner: "alice", type: "scout", hp: 10, moves_left: 2, loc: { x: 0, y: 0 } },
+		2: { id: 2, owner: "alice", type: "soldier", hp: 20, moves_left: 1, loc: { x: 1, y: 0 } },
+		3: { id: 3, owner: "bob", type: "worker", hp: 8, moves_left: 2, loc: { x: 0, y: 1 } },
+	},
+	cities: {
+		1: { id: 1, owner: "alice", loc: { x: 0, y: 0 }, hp: 50, buildings: ["granary"] },
+		2: { id: 2, owner: "bob", loc: { x: 0, y: 1 }, hp: 50, buildings: [] },
+	},
+	players: ["alice", "bob"],
+	diplomacy: { "alice,bob": "peace" },
+	stockpiles: {
+		alice: { food: 100, wood: 50, ore: 30, crystal: 10 },
+		bob: { food: 80, wood: 60, ore: 20, crystal: 5 },
+	},
+	next_unit_id: 4,
+	next_city_id: 3,
+	max_turns: 100,
+};
+
+describe("observation: getGameState polling", () => {
+	it("fetches game state for observation", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockGameState,
+		});
+
+		const result = await api.getGameState("my-game");
+		expect(result.turn).toBe(5);
+		expect(result.players).toEqual(["alice", "bob"]);
+		expect(Object.keys(result.units)).toHaveLength(3);
+		expect(Object.keys(result.cities)).toHaveLength(2);
+	});
+
+	it("returns updated state on subsequent polls", async () => {
+		const turn5 = { ...mockGameState, turn: 5 };
+		const turn6 = { ...mockGameState, turn: 6 };
+
+		mockFetch
+			.mockResolvedValueOnce({ ok: true, json: async () => turn5 })
+			.mockResolvedValueOnce({ ok: true, json: async () => turn6 });
+
+		const first = await api.getGameState("my-game");
+		expect(first.turn).toBe(5);
+
+		const second = await api.getGameState("my-game");
+		expect(second.turn).toBe(6);
+	});
+
+	it("throws ApiError with 404 for missing game", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 404,
+			json: async () => ({ detail: "Game not found" }),
+		});
+
+		try {
+			await api.getGameState("nonexistent");
+			expect.fail("Should have thrown");
+		} catch (err) {
+			expect(err).toBeInstanceOf(ApiError);
+			expect((err as ApiError).status).toBe(404);
+			expect((err as ApiError).message).toBe("Game not found");
+		}
+	});
+
+	it("throws ApiError on network failure", async () => {
+		mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+
+		try {
+			await api.getGameState("my-game");
+			expect.fail("Should have thrown");
+		} catch (err) {
+			expect(err).toBeInstanceOf(ApiError);
+			expect((err as ApiError).status).toBe(0);
+		}
+	});
+});
+
+describe("observation: game detail for status detection", () => {
+	it("returns active status for running game", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "my-game",
+				player_slots: 2,
+				players: ["alice", "bob"],
+				creator: "alice",
+				turn: 5,
+				max_turns: 100,
+				map_width: 20,
+				map_height: 20,
+				seed: 42,
+				status: "active",
+				winner: null,
+				victory_type: null,
+				created_at: "2026-04-16T00:00:00",
+				updated_at: "2026-04-16T01:00:00",
+				ended_at: null,
+			}),
+		});
+
+		const detail = await api.getGameDetail("my-game");
+		expect(detail.status).toBe("active");
+	});
+
+	it("returns ended status with winner for completed game", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "my-game",
+				player_slots: 2,
+				players: ["alice", "bob"],
+				creator: "alice",
+				turn: 100,
+				max_turns: 100,
+				map_width: 20,
+				map_height: 20,
+				seed: 42,
+				status: "ended",
+				winner: "alice",
+				victory_type: "score",
+				created_at: "2026-04-16T00:00:00",
+				updated_at: "2026-04-16T02:00:00",
+				ended_at: "2026-04-16T02:00:00",
+			}),
+		});
+
+		const detail = await api.getGameDetail("my-game");
+		expect(detail.status).toBe("ended");
+		expect(detail.winner).toBe("alice");
+	});
+});
+
+describe("observation: query keys", () => {
+	it("gameState key includes game ID", () => {
+		const key = queryKeys.gameState("my-game");
+		expect(key).toEqual(["game", "my-game"]);
+	});
+
+	it("gameDetail key is distinct from gameState key", () => {
+		const stateKey = queryKeys.gameState("my-game");
+		const detailKey = queryKeys.gameDetail("my-game");
+		expect(stateKey).not.toEqual(detailKey);
+	});
+});
+
+describe("observation: game state data for event log", () => {
+	it("provides per-player unit counts from game state", () => {
+		const aliceUnits = Object.values(mockGameState.units).filter(
+			(u) => u.owner === "alice",
+		);
+		const bobUnits = Object.values(mockGameState.units).filter(
+			(u) => u.owner === "bob",
+		);
+		expect(aliceUnits).toHaveLength(2);
+		expect(bobUnits).toHaveLength(1);
+	});
+
+	it("provides per-player city counts from game state", () => {
+		const aliceCities = Object.values(mockGameState.cities).filter(
+			(c) => c.owner === "alice",
+		);
+		const bobCities = Object.values(mockGameState.cities).filter(
+			(c) => c.owner === "bob",
+		);
+		expect(aliceCities).toHaveLength(1);
+		expect(bobCities).toHaveLength(1);
+	});
+
+	it("provides per-player territory counts from game state", () => {
+		const aliceTerritory = mockGameState.tiles.filter(
+			(t) => t.owner === "alice",
+		).length;
+		const bobTerritory = mockGameState.tiles.filter(
+			(t) => t.owner === "bob",
+		).length;
+		expect(aliceTerritory).toBe(2);
+		expect(bobTerritory).toBe(1);
+	});
+
+	it("provides per-player resource totals from game state", () => {
+		const aliceResources = mockGameState.stockpiles["alice"];
+		expect(aliceResources).toBeDefined();
+		expect(aliceResources.food + aliceResources.wood + aliceResources.ore + aliceResources.crystal).toBe(190);
+
+		const bobResources = mockGameState.stockpiles["bob"];
+		expect(bobResources).toBeDefined();
+		expect(bobResources.food + bobResources.wood + bobResources.ore + bobResources.crystal).toBe(165);
+	});
+});
