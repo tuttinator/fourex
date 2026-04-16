@@ -359,14 +359,7 @@ export default function ReplayPage() {
             <TabsContent value="prompts" className="flex-1 overflow-hidden">
               {turnPrompts && turnPrompts.prompts.length > 0 ? (
                 <PromptAccordion
-                  prompts={turnPrompts.prompts.map((p) => ({
-                    player: p.player_id,
-                    prompt: p.prompt,
-                    response: p.response,
-                    tokens_in: p.tokens_in,
-                    tokens_out: p.tokens_out,
-                    latency_ms: p.latency_ms,
-                  }))}
+                  prompts={turnPrompts.prompts}
                   players={allPlayers}
                   selectedTurn={effectiveTurn}
                 />

@@ -237,7 +237,7 @@ export interface PlayerListProps {
 }
 
 export interface PromptAccordionProps {
-	prompts: PromptLog[];
+	prompts: PromptLogEntry[];
 	players: PlayerId[];
 	selectedTurn: number;
 }
