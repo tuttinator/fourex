@@ -19,8 +19,17 @@ mise run install
 # Run tests
 mise run test
 
-# Start development server
-mise run run-dev
+# Start backend dev server (FastAPI on :8010)
+mise run backend
+
+# Start frontend dev server (Next.js on :3000)
+mise run frontend
+
+# Run AI agents (quick test game)
+mise run quick
+
+# Run MCP server (stdio mode)
+mise run serve
 
 # Run CLI demo with 4 players for 10 turns
 mise run run-cli
@@ -68,7 +77,7 @@ mise run test-cov
 
 # Start with Docker Compose
 docker-compose up -d postgres redis
-mise run run-dev
+mise run backend
 ```
 
 ## Architecture

@@ -13,19 +13,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 mise run install
 
 # Run backend dev server (FastAPI on :8010)
-mise run run-dev
-# Or: cd backend && uv run python src/main.py
+mise run backend
 
 # Run frontend dev server (Next.js on :3000)
-cd frontend && npm run dev
+mise run frontend
 
 # Run backend tests
 mise run backend-test          # backend tests only
 mise run test                  # root-level tests (tests/ dir)
 uv run pytest tests/test_turn_progression.py -k "test_name"  # single test
 
-# Run quick agent game
-mise run quick
+# Run AI agents
+mise run quick                 # quick test game
+mise run classic               # classic 3-player game
+mise run showcase              # personality showcase (4 players)
+mise run interactive           # interactive game setup
+
+# Run MCP server
+mise run serve                 # stdio mode
+mise run serve-http            # streamable-http mode (port 8020)
+mise run mcp-server            # agent MCP server
 
 # Formatting and linting
 mise run format                # black + ruff --fix

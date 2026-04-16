@@ -44,9 +44,13 @@ PYTHONPATH=. uv run pytest tests/
 description = "Run tests with coverage"
 run = "uv run pytest --cov=backend/src --cov-report=term-missing tests/"
 
-[tasks.run-dev]
+[tasks.backend]
 description = "Run backend development server (FastAPI on :8010)"
 run = "DEBUG=false uv run --directory backend uvicorn src.main:app --reload --host 0.0.0.0 --port 8010"
+
+[tasks.frontend]
+description = "Run frontend development server (Next.js on :3000)"
+run = "cd frontend && npm run dev"
 
 [tasks.run-cli]
 description = "Run CLI with random seed"
@@ -86,10 +90,6 @@ description = "Show detailed game info (pass GAME=<id>)"
 run = "cd backend && uv run python manage_db.py game-info ${GAME}"
 
 # Backend development
-[tasks.backend-dev]
-description = "Run backend development server"
-run = "cd backend && DEBUG=false uv run python src/main.py"
-
 [tasks.backend-test]
 description = "Run backend tests"
 run = "DEBUG=false PYTHONPATH=. uv run pytest backend/tests/"

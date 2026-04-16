@@ -59,3 +59,4 @@ yarn-error.log*
 
 .claude/
 ralph/
+frontend/tsconfig.tsbuildinfo

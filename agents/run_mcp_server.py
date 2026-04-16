@@ -31,7 +31,7 @@ def main():
     console.print(f"Game Backend: {args.game_backend}")
 
     try:
-        from src.mcp_server import main as mcp_main
+        from src.fastmcp_server import main as mcp_main
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:

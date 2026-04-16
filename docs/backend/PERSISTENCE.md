@@ -52,7 +52,7 @@ mise run db-info GAME=<game_id>
 ### Run the backend
 
 ```bash
-mise run run-dev
+mise run backend
 ```
 
 The backend listens on:
