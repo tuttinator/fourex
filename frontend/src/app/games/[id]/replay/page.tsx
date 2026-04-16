@@ -3,7 +3,7 @@
 import { useParams } from 'next/navigation'
 import { useEffect } from 'react'
 import { useGameStore, selectCurrentGameState } from '@/store/game-store'
-import { MapCanvas } from '@/components/map-canvas'
+import { PixiMap } from '@/components/pixi-map'
 import { PromptAccordion } from '@/components/prompt-accordion'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -109,7 +109,7 @@ export default function ReplayPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Map Area */}
         <div className="flex-1 relative">
-          <MapCanvas
+          <PixiMap
             gameState={gameState}
             selectedPlayer={selectedPlayer ?? undefined}
             fogOfWarEnabled={fogOfWarEnabled}
