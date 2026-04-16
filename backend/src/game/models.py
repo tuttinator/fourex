@@ -44,6 +44,9 @@ class BuildingType(str, Enum):
     GRANARY = "granary"
     BARRACKS = "barracks"
     WALLS = "walls"
+    MONUMENT = "monument"
+    LIBRARY = "library"
+    TEMPLE = "temple"
 
 
 class ImprovementType(str, Enum):
@@ -52,6 +55,7 @@ class ImprovementType(str, Enum):
     FARM = "farm"
     MINE = "mine"
     CRYSTAL_EXTRACTOR = "crystal_extractor"
+    LUMBER_MILL = "lumber_mill"
 
 
 class DiplomaticState(str, Enum):
@@ -190,6 +194,17 @@ BUILDING_STATS = {
     BuildingType.WALLS: BuildingStats(
         cost=ResourceBag(ore=40), hp=15, effect="City gains +5 HP & ranged counter-fire"
     ),
+    BuildingType.MONUMENT: BuildingStats(
+        cost=ResourceBag(wood=20), hp=5, effect="+1 culture/turn"
+    ),
+    BuildingType.LIBRARY: BuildingStats(
+        cost=ResourceBag(wood=30, ore=10), hp=5, effect="+2 culture/turn"
+    ),
+    BuildingType.TEMPLE: BuildingStats(
+        cost=ResourceBag(wood=30, ore=20, crystal=10),
+        hp=5,
+        effect="+3 culture/turn",
+    ),
 }
 
 
@@ -245,6 +260,8 @@ class City(BaseModel):
     hp: int = 10
     build_queue: BuildJob | None = None
     buildings: set[BuildingType] = Field(default_factory=set)
+    culture: int = 0
+    border_radius: int = 0
 
     def has_walls(self) -> bool:
         """Check if city has defensive walls."""
@@ -257,6 +274,17 @@ class City(BaseModel):
     def unit_cost_multiplier(self) -> float:
         """Get unit training cost multiplier from buildings."""
         return 0.75 if BuildingType.BARRACKS in self.buildings else 1.0
+
+    def culture_per_turn(self) -> int:
+        """Get culture output per turn from base + buildings."""
+        culture = 1  # base
+        if BuildingType.MONUMENT in self.buildings:
+            culture += 1
+        if BuildingType.LIBRARY in self.buildings:
+            culture += 2
+        if BuildingType.TEMPLE in self.buildings:
+            culture += 3
+        return culture
 
 
 class DiplomacyRequest(BaseModel):

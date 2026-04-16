@@ -6,10 +6,12 @@ import random
 from copy import deepcopy
 
 from .models import (
+    BUILDING_STATS,
     UNIT_STATS,
     Action,
     ActionResult,
     AttackAction,
+    BuildBuildingAction,
     City,
     Coord,
     DiplomaticState,
@@ -520,6 +522,102 @@ def execute_train_unit(state: GameState, action: TrainUnitAction) -> ActionResul
     )
 
 
+def execute_build_building(
+    state: GameState, action: BuildBuildingAction
+) -> ActionResult:
+    """Execute building construction in a city."""
+    city = state.get_city(action.city_id)
+    if not city:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} not found",
+            action=action,
+        )
+
+    # Check ownership
+    player_id = city.owner
+    for player in state.players:
+        if player == player_id:
+            break
+    else:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} owner not found in players",
+            action=action,
+        )
+
+    # Check if building type is valid
+    if action.building_type not in BUILDING_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid building type: {action.building_type}",
+            action=action,
+        )
+
+    # Check if building already exists in city
+    if action.building_type in city.buildings:
+        return ActionResult(
+            success=False,
+            message=f"City {city.id} already has {action.building_type}",
+            action=action,
+        )
+
+    # Check resource cost
+    building_stats = BUILDING_STATS[action.building_type]
+    player_resources = state.stockpiles.get(player_id, ResourceBag())
+    if not player_resources.can_afford(building_stats.cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {player_id} cannot afford {action.building_type}",
+            action=action,
+        )
+
+    # Deduct resources and add building
+    state.stockpiles[player_id] = player_resources - building_stats.cost
+    city.buildings.add(action.building_type)
+
+    return ActionResult(
+        success=True,
+        message=f"Building {action.building_type} constructed in city {city.id}",
+        action=action,
+    )
+
+
+# Culture thresholds: cumulative culture required for each border radius
+CULTURE_THRESHOLDS = {1: 10, 2: 30, 3: 60}
+
+
+def accumulate_culture(state: GameState) -> None:
+    """Accumulate culture for all cities and expand borders if thresholds are crossed."""
+    for city in state.cities.values():
+        city.culture += city.culture_per_turn()
+
+        # Check for border expansion
+        for radius in (1, 2, 3):
+            if (
+                city.border_radius < radius
+                and city.culture >= CULTURE_THRESHOLDS[radius]
+            ):
+                city.border_radius = radius
+                _expand_borders(state, city)
+
+
+def _expand_borders(state: GameState, city: City) -> None:
+    """Claim tiles within the city's border radius that aren't already owned."""
+    for tile in state.tiles:
+        distance = city.loc.distance_to(tile.loc)
+        if distance > city.border_radius:
+            continue
+        if distance == 0:
+            continue  # City tile already owned at founding
+        if tile.owner is not None:
+            continue  # First-to-reach: already claimed
+        if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
+            continue  # Cannot own water or mountains
+        tile.owner = city.owner
+        tile.city_id = city.id
+
+
 def collect_resources(state: GameState) -> None:
     """Collect resources from cities and improvements at turn end."""
     for city in state.cities.values():
@@ -601,13 +699,8 @@ def resolve_turn(
                     message="Improvement building not implemented yet",
                     action=action,
                 )
-            elif action.type == "BUILD_BUILDING":
-                # TODO: Implement building construction
-                result = ActionResult(
-                    success=False,
-                    message="Building construction not implemented yet",
-                    action=action,
-                )
+            elif isinstance(action, BuildBuildingAction):
+                result = execute_build_building(state, action)
             else:
                 result = ActionResult(
                     success=False,
@@ -618,6 +711,9 @@ def resolve_turn(
             player_results.append(result)
 
         results[player_id] = player_results
+
+    # Expand borders (culture accumulation + border expansion)
+    accumulate_culture(state)
 
     # Collect resources at end of turn
     collect_resources(state)
