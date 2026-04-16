@@ -13,6 +13,7 @@ describe("api.listGames", () => {
 		games: [
 			{
 				game_id: "game-1",
+				player_slots: 2,
 				players: ["p1", "p2"],
 				turn: 5,
 				max_turns: 100,
@@ -25,6 +26,7 @@ describe("api.listGames", () => {
 			},
 			{
 				game_id: "game-2",
+				player_slots: 3,
 				players: ["p1", "p2", "p3"],
 				turn: 100,
 				max_turns: 100,
@@ -172,6 +174,151 @@ describe("api.createGame", () => {
 	});
 });
 
+describe("api.createLobby", () => {
+	const mockDetail = {
+		game_id: "lobby-1",
+		player_slots: 4,
+		players: [],
+		creator: "alice",
+		turn: 0,
+		max_turns: 100,
+		map_width: 20,
+		map_height: 20,
+		seed: 42,
+		status: "waiting",
+		winner: null,
+		victory_type: null,
+		created_at: "2026-04-16T00:00:00",
+		updated_at: "2026-04-16T00:00:00",
+		ended_at: null,
+	};
+
+	it("sends POST to /games with query param and body", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockDetail,
+		});
+
+		const result = await api.createLobby("lobby-1", {
+			player_slots: 4,
+			seed: 42,
+		});
+
+		expect(result.game_id).toBe("lobby-1");
+		expect(result.player_slots).toBe(4);
+		expect(result.status).toBe("waiting");
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("/games?");
+		expect(calledUrl).toContain("game_id=lobby-1");
+		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+	});
+});
+
+describe("api.getGameDetail", () => {
+	it("fetches game detail by ID", async () => {
+		const mockDetail = {
+			game_id: "test-game",
+			player_slots: 2,
+			players: ["p1"],
+			creator: "p1",
+			turn: 0,
+			max_turns: 100,
+			map_width: 20,
+			map_height: 20,
+			seed: 42,
+			status: "waiting",
+			winner: null,
+			victory_type: null,
+			created_at: "2026-04-16T00:00:00",
+			updated_at: "2026-04-16T00:00:00",
+			ended_at: null,
+		};
+
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockDetail,
+		});
+
+		const result = await api.getGameDetail("test-game");
+		expect(result.game_id).toBe("test-game");
+		expect(result.player_slots).toBe(2);
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("/games/test-game");
+	});
+
+	it("returns 404 for missing game", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 404,
+			json: async () => ({ detail: "Game not found" }),
+		});
+
+		await expect(api.getGameDetail("missing")).rejects.toThrow("Game not found");
+	});
+});
+
+describe("api.joinGame", () => {
+	it("sends POST to join endpoint", async () => {
+		const mockDetail = {
+			game_id: "g1",
+			player_slots: 2,
+			players: ["alice"],
+			creator: "alice",
+			status: "waiting",
+		};
+
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => mockDetail,
+		});
+
+		const result = await api.joinGame("g1");
+		expect(result.players).toContain("alice");
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("/games/g1/join");
+		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+	});
+
+	it("throws on full game", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 400,
+			json: async () => ({ detail: "Game g1 is full (2 slots)" }),
+		});
+
+		await expect(api.joinGame("g1")).rejects.toThrow("full");
+	});
+});
+
+describe("api.leaveGame", () => {
+	it("sends POST to leave endpoint", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ game_id: "g1", players: [], status: "waiting" }),
+		});
+
+		await api.leaveGame("g1");
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("/games/g1/leave");
+		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+	});
+});
+
+describe("api.startGame", () => {
+	it("sends POST to start endpoint", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ status: "game_started", game_id: "g1" }),
+		});
+
+		const result = await api.startGame("g1");
+		expect(result.status).toBe("game_started");
+		const calledUrl = mockFetch.mock.calls[0][0] as string;
+		expect(calledUrl).toContain("/games/g1/start");
+		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+	});
+});
+
 describe("queryKeys", () => {
 	it("generates stable keys for games list", () => {
 		expect(queryKeys.games()).toEqual(["games", {}]);
@@ -179,6 +326,10 @@ describe("queryKeys", () => {
 			"games",
 			{ status: "active" },
 		]);
+	});
+
+	it("generates stable keys for game detail", () => {
+		expect(queryKeys.gameDetail("abc")).toEqual(["game", "abc", "detail"]);
 	});
 
 	it("generates stable keys for game state", () => {

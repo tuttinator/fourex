@@ -87,6 +87,7 @@ export interface TurnResult {
 // Game summary for listing
 export interface GameSummary {
 	game_id: string;
+	player_slots: number;
 	players: PlayerId[];
 	turn: number;
 	max_turns: number;
@@ -108,6 +109,31 @@ export interface ApiResponse<T> {
 export interface CreateGameRequest {
 	players: PlayerId[];
 	seed?: number;
+}
+
+export interface CreateLobbyRequest {
+	player_slots: number;
+	map_width?: number;
+	map_height?: number;
+	seed?: number;
+}
+
+export interface GameDetailResponse {
+	game_id: string;
+	player_slots: number;
+	players: PlayerId[];
+	creator: string | null;
+	turn: number;
+	max_turns: number;
+	map_width: number;
+	map_height: number;
+	seed: number;
+	status: "waiting" | "active" | "ended" | "created";
+	winner: string | null;
+	victory_type: string | null;
+	created_at: string;
+	updated_at: string;
+	ended_at: string | null;
 }
 
 export interface GamesListResponse {

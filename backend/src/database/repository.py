@@ -44,6 +44,9 @@ class GameRepository:
         max_turns: int = 100,
         map_width: int = 20,
         map_height: int = 20,
+        player_slots: int = 2,
+        creator: str | None = None,
+        status: str = "created",
     ) -> Game:
         """Create a new game record."""
         # Create initial game state
@@ -72,12 +75,30 @@ class GameRepository:
             rng_state=seed,
             state=initial_state,
             players=players,
-            status="created",
+            player_slots=player_slots,
+            creator=creator,
+            status=status,
         )
 
         self.session.add(game)
         await self.session.flush()
         return game
+
+    async def update_game_players(self, game_id: str, players: list[str]) -> None:
+        """Update the players list for a game."""
+        await self.session.execute(
+            update(Game)
+            .where(Game.id == game_id)
+            .values(players=players, updated_at=self._utcnow())
+        )
+
+    async def update_game_status(self, game_id: str, status: str) -> None:
+        """Update the status of a game."""
+        await self.session.execute(
+            update(Game)
+            .where(Game.id == game_id)
+            .values(status=status, updated_at=self._utcnow())
+        )
 
     async def get_game(self, game_id: str) -> Game | None:
         """Get game by ID."""
@@ -86,7 +107,9 @@ class GameRepository:
 
     async def get_game_with_turns(self, game_id: str) -> Game | None:
         """Get game with all turns loaded."""
-        result = await self.session.execute(select(Game).options(selectinload(Game.turns)).where(Game.id == game_id))
+        result = await self.session.execute(
+            select(Game).options(selectinload(Game.turns)).where(Game.id == game_id)
+        )
         return result.scalar_one_or_none()
 
     async def list_games(
@@ -146,7 +169,9 @@ class GameRepository:
         """Save complete game state (alias for update_game_state)."""
         await self.update_game_state(game_id, state)
 
-    async def end_game(self, game_id: str, winner: str | None = None, victory_type: str = "score") -> None:
+    async def end_game(
+        self, game_id: str, winner: str | None = None, victory_type: str = "score"
+    ) -> None:
         """Mark game as ended."""
         await self.session.execute(
             update(Game)
@@ -170,12 +195,16 @@ class GameRepository:
         # Convert actions to serializable format
         actions_dict = {}
         for player, actions in player_actions.items():
-            actions_dict[player] = [action.model_dump(mode="json") for action in actions]
+            actions_dict[player] = [
+                action.model_dump(mode="json") for action in actions
+            ]
 
         # Convert action results to serializable format
         results_dict = {}
         for player, results in turn_result.player_actions.items():
-            results_dict[player] = [result.model_dump(mode="json") for result in results]
+            results_dict[player] = [
+                result.model_dump(mode="json") for result in results
+            ]
 
         game_turn = GameTurn(
             game_id=game_id,
@@ -210,7 +239,9 @@ class GameRepository:
         await self.session.flush()
         return player_actions
 
-    async def save_prompt_log(self, game_id: str, prompt_log: GamePromptLog) -> PromptLog:
+    async def save_prompt_log(
+        self, game_id: str, prompt_log: GamePromptLog
+    ) -> PromptLog:
         """Save LLM prompt log."""
         db_prompt_log = PromptLog(
             game_id=game_id,
@@ -248,7 +279,9 @@ class GameRepository:
         await self.session.flush()
         return memory
 
-    async def get_agent_memory(self, game_id: str, player_id: str, turn_number: int) -> AgentMemory | None:
+    async def get_agent_memory(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> AgentMemory | None:
         """Read scratchpad text for a specific player turn."""
         result = await self.session.execute(
             select(AgentMemory).where(
@@ -282,7 +315,9 @@ class GameRepository:
         await self.session.flush()
         return snapshot
 
-    async def get_turn_snapshot(self, game_id: str, player_id: str, turn_number: int) -> TurnSnapshot | None:
+    async def get_turn_snapshot(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> TurnSnapshot | None:
         """Read a specific turn snapshot."""
         result = await self.session.execute(
             select(TurnSnapshot).where(
@@ -321,7 +356,9 @@ class GameRepository:
         await self.session.flush()
         return turn_action
 
-    async def get_all_turn_actions(self, game_id: str, turn_number: int) -> list[TurnAction]:
+    async def get_all_turn_actions(
+        self, game_id: str, turn_number: int
+    ) -> list[TurnAction]:
         """Get all submitted actions for a specific turn."""
         result = await self.session.execute(
             select(TurnAction).where(
@@ -333,7 +370,9 @@ class GameRepository:
         )
         return list(result.scalars().all())
 
-    async def get_turn_action(self, game_id: str, player_id: str, turn_number: int) -> TurnAction | None:
+    async def get_turn_action(
+        self, game_id: str, player_id: str, turn_number: int
+    ) -> TurnAction | None:
         """Read submitted actions for a specific player turn."""
         result = await self.session.execute(
             select(TurnAction).where(
@@ -346,7 +385,9 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_player_turn_actions(self, game_id: str, player_id: str) -> list[TurnAction]:
+    async def get_player_turn_actions(
+        self, game_id: str, player_id: str
+    ) -> list[TurnAction]:
         """Get all submitted actions for a player across all turns, ordered by turn."""
         result = await self.session.execute(
             select(TurnAction)
@@ -387,7 +428,9 @@ class GameRepository:
         await self.session.flush()
         return api_key
 
-    async def get_player_api_key(self, game_id: str, player_id: str) -> PlayerApiKey | None:
+    async def get_player_api_key(
+        self, game_id: str, player_id: str
+    ) -> PlayerApiKey | None:
         """Read a player API key row by game and player."""
         result = await self.session.execute(
             select(PlayerApiKey).where(
@@ -399,12 +442,16 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
-    async def validate_player_api_key(self, plaintext_key: str, now: datetime | None = None) -> PlayerApiKey | None:
+    async def validate_player_api_key(
+        self, plaintext_key: str, now: datetime | None = None
+    ) -> PlayerApiKey | None:
         """Validate a plaintext key by matching its hash and checking expiry."""
         key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
         current_time = now or self._utcnow()
 
-        result = await self.session.execute(select(PlayerApiKey).where(PlayerApiKey.key_hash == key_hash))
+        result = await self.session.execute(
+            select(PlayerApiKey).where(PlayerApiKey.key_hash == key_hash)
+        )
         api_key = result.scalar_one_or_none()
 
         if not api_key:
@@ -497,11 +544,15 @@ class GameRepository:
     async def get_turn_history(self, game_id: str) -> list[GameTurn]:
         """Get all turns for a game."""
         result = await self.session.execute(
-            select(GameTurn).where(GameTurn.game_id == game_id).order_by(GameTurn.turn_number)
+            select(GameTurn)
+            .where(GameTurn.game_id == game_id)
+            .order_by(GameTurn.turn_number)
         )
         return list(result.scalars().all())
 
-    async def get_player_prompt_logs(self, game_id: str, player_id: str, limit: int = 100) -> list[PromptLog]:
+    async def get_player_prompt_logs(
+        self, game_id: str, player_id: str, limit: int = 100
+    ) -> list[PromptLog]:
         """Get prompt logs for a specific player in a game."""
         result = await self.session.execute(
             select(PromptLog)
@@ -511,7 +562,9 @@ class GameRepository:
         )
         return list(result.scalars().all())
 
-    async def update_player_stats(self, player_id: str, game_result: dict[str, Any]) -> None:
+    async def update_player_stats(
+        self, player_id: str, game_result: dict[str, Any]
+    ) -> None:
         """Update or create player statistics."""
         # This would be implemented to aggregate player performance
         # For now, we'll keep it as a placeholder

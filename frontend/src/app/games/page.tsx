@@ -57,7 +57,7 @@ function GameCard({ game }: { game: GameSummary }) {
         <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
           <div className="flex items-center gap-1">
             <Users className="h-3.5 w-3.5" />
-            <span>{game.players.length} player{game.players.length !== 1 ? 's' : ''}</span>
+            <span>{game.players.length}/{game.player_slots} player{game.player_slots !== 1 ? 's' : ''}</span>
           </div>
           <div className="flex items-center gap-1">
             <Swords className="h-3.5 w-3.5" />
@@ -77,9 +77,9 @@ function GameCard({ game }: { game: GameSummary }) {
         </p>
 
         <Button asChild size="sm" className="w-full">
-          <Link href={`/games/${game.game_id}/observe`}>
+          <Link href={`/games/${game.game_id}`}>
             <Eye className="h-4 w-4 mr-2" />
-            Observe
+            {game.status === 'waiting' ? 'View Lobby' : 'View Game'}
           </Link>
         </Button>
       </CardContent>

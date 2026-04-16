@@ -43,6 +43,10 @@ class Game(Base):
     map_height: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     rng_state: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # Lobby configuration
+    player_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    creator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Game state
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     players: Mapped[list[str]] = mapped_column(JSON, nullable=False)

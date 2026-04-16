@@ -32,10 +32,206 @@ class PersistentGameController:
 
         # In-memory caches for performance
         self._game_cache: dict[str, GameState] = {}
-        self._pending_actions: dict[str, dict[PlayerId, list[Action]]] = defaultdict(dict)
+        self._pending_actions: dict[str, dict[PlayerId, list[Action]]] = defaultdict(
+            dict
+        )
 
-    async def create_game(self, game_id: str, players: list[PlayerId], seed: int = 42) -> None:
-        """Create a new game instance with database persistence."""
+    async def create_lobby(
+        self,
+        game_id: str,
+        player_slots: int,
+        map_width: int,
+        map_height: int,
+        seed: int,
+        creator: str,
+    ) -> None:
+        """Create a game lobby in waiting status. Map is generated but no units are placed."""
+        if player_slots < 2 or player_slots > 8:
+            raise ValueError("Games require 2-8 player slots")
+
+        existing_game = await self.repo.get_game(game_id)
+        if existing_game:
+            raise ValueError(f"Game {game_id} already exists")
+
+        # Generate map at creation time
+        tiles = generate_map(map_width, map_height, seed)
+
+        # Create game state with no players yet (they join via /join)
+        state = GameState(
+            rng_state=seed,
+            tiles=tiles,
+            players=[],
+            map_width=map_width,
+            map_height=map_height,
+            max_turns=100,
+        )
+
+        # Save to database with waiting status
+        await self.repo.create_game(
+            game_id=game_id,
+            players=[],
+            seed=seed,
+            map_width=map_width,
+            map_height=map_height,
+            max_turns=100,
+            player_slots=player_slots,
+            creator=creator,
+            status="waiting",
+        )
+
+        # Update game state in database
+        await self.repo.update_game_state(game_id, state)
+
+        # Cache the game state
+        self._game_cache[game_id] = state
+        self._pending_actions[game_id] = {}
+
+    async def join_game(self, game_id: str, player_id: str) -> None:
+        """A player joins a waiting game."""
+        db_game = await self.repo.get_game(game_id)
+        if not db_game:
+            raise ValueError(f"Game {game_id} not found")
+
+        if db_game.status != "waiting":
+            raise ValueError(f"Game {game_id} is not in waiting status")
+
+        players = list(db_game.players)
+        if player_id in players:
+            raise ValueError(f"Player {player_id} is already in the game")
+
+        if len(players) >= db_game.player_slots:
+            raise ValueError(f"Game {game_id} is full ({db_game.player_slots} slots)")
+
+        players.append(player_id)
+        await self.repo.update_game_players(game_id, players)
+
+        # Update cached state if present
+        if game_id in self._game_cache:
+            self._game_cache[game_id].players = players
+
+    async def leave_game(self, game_id: str, player_id: str) -> None:
+        """A player leaves a waiting game."""
+        db_game = await self.repo.get_game(game_id)
+        if not db_game:
+            raise ValueError(f"Game {game_id} not found")
+
+        if db_game.status != "waiting":
+            raise ValueError(f"Game {game_id} is not in waiting status")
+
+        players = list(db_game.players)
+        if player_id not in players:
+            raise ValueError(f"Player {player_id} is not in the game")
+
+        players.remove(player_id)
+        await self.repo.update_game_players(game_id, players)
+
+        # Update cached state if present
+        if game_id in self._game_cache:
+            self._game_cache[game_id].players = players
+
+    async def start_game(self, game_id: str, creator: str) -> None:
+        """Creator starts a waiting game. Validates slots are full, places units, transitions to active."""
+        db_game = await self.repo.get_game(game_id)
+        if not db_game:
+            raise ValueError(f"Game {game_id} not found")
+
+        if db_game.status != "waiting":
+            raise ValueError(f"Game {game_id} is not in waiting status")
+
+        if db_game.creator != creator:
+            raise ValueError("Only the game creator can start the game")
+
+        players = list(db_game.players)
+        if len(players) != db_game.player_slots:
+            raise ValueError(
+                f"All {db_game.player_slots} slots must be filled before starting "
+                f"(currently {len(players)})"
+            )
+
+        # Load the game state (map was generated at lobby creation)
+        state = await self.get_game_state(game_id)
+        if not state:
+            raise ValueError(f"Game state for {game_id} not found")
+
+        # Initialize player stockpiles
+        for player in players:
+            state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
+
+        # Place starting units
+        self._place_starting_units(state, players, db_game.seed)
+
+        # Transition to active
+        await self.repo.update_game_status(game_id, "active")
+        await self.repo.update_game_state(game_id, state)
+
+        # Cache
+        self._game_cache[game_id] = state
+        self._pending_actions[game_id] = {}
+
+        # Create initial snapshot
+        await self.repo.create_game_snapshot(
+            game_id=game_id, turn_number=0, state=state, snapshot_type="initial"
+        )
+
+    @staticmethod
+    def _place_starting_units(
+        state: GameState, players: list[PlayerId], seed: int
+    ) -> None:
+        """Place one starting WORKER per player on suitable terrain."""
+        rng = random.Random(seed)
+        tiles = state.tiles
+        map_w = state.map_width
+        map_h = state.map_height
+        margin = min(2, map_w // 5, map_h // 5)
+        unit_id = state.next_unit_id
+
+        for player in players:
+            placed = False
+            for _ in range(100):
+                x = rng.randint(margin, map_w - margin - 1)
+                y = rng.randint(margin, map_h - margin - 1)
+                coord = Coord(x=x, y=y)
+
+                tile = next((t for t in tiles if t.loc == coord), None)
+                if tile and tile.terrain in ["plains", "forest"]:
+                    too_close = any(
+                        coord.distance_to(u.loc) < 5 for u in state.units.values()
+                    )
+                    if not too_close:
+                        worker = Unit(
+                            id=unit_id,
+                            owner=player,
+                            type=UnitType.WORKER,
+                            hp=100,
+                            moves_left=2,
+                            loc=coord,
+                        )
+                        state.units[unit_id] = worker
+                        unit_id += 1
+                        placed = True
+                        break
+
+            if not placed:
+                for tile in tiles:
+                    if tile.terrain in ["plains", "forest"]:
+                        worker = Unit(
+                            id=unit_id,
+                            owner=player,
+                            type=UnitType.WORKER,
+                            hp=100,
+                            moves_left=2,
+                            loc=tile.loc,
+                        )
+                        state.units[unit_id] = worker
+                        unit_id += 1
+                        break
+
+        state.next_unit_id = unit_id
+
+    async def create_game(
+        self, game_id: str, players: list[PlayerId], seed: int = 42
+    ) -> None:
+        """Create a new game instance with database persistence (legacy: immediate start)."""
         if len(players) < 2 or len(players) > 8:
             raise ValueError("Games require 2-8 players")
 
@@ -58,60 +254,8 @@ class PersistentGameController:
         for player in players:
             state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
 
-        # Add starting worker for each player
-        rng = random.Random(seed)
-        unit_id = 1
-
-        for i, player in enumerate(players):
-            # Find a good starting position (plains or forest, away from other players)
-            attempts = 0
-            while attempts < 100:  # Prevent infinite loop
-                x = rng.randint(2, 17)  # Keep away from edges
-                y = rng.randint(2, 17)
-                coord = Coord(x=x, y=y)
-
-                # Find the tile at this coordinate
-                tile = next((t for t in tiles if t.loc == coord), None)
-                if tile and tile.terrain in ["plains", "forest"]:
-                    # Check if it's far enough from other players
-                    too_close = False
-                    for existing_unit in state.units.values():
-                        if coord.distance_to(existing_unit.loc) < 5:
-                            too_close = True
-                            break
-
-                    if not too_close:
-                        # Create starting worker
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=coord,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        break
-
-                attempts += 1
-
-            # Fallback: if we couldn't find a good position, just place it somewhere
-            if player not in [u.owner for u in state.units.values()]:
-                # Find any plains/forest tile
-                for tile in tiles:
-                    if tile.terrain in ["plains", "forest"]:
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=tile.loc,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        break
+        # Place starting units
+        self._place_starting_units(state, players, seed)
 
         # Save to database
         await self.repo.create_game(
@@ -121,6 +265,7 @@ class PersistentGameController:
             map_width=20,
             map_height=20,
             max_turns=100,
+            player_slots=len(players),
         )
 
         # Update game state in database
@@ -131,7 +276,9 @@ class PersistentGameController:
         self._pending_actions[game_id] = {}
 
         # Create initial snapshot
-        await self.repo.create_game_snapshot(game_id=game_id, turn_number=0, state=state, snapshot_type="initial")
+        await self.repo.create_game_snapshot(
+            game_id=game_id, turn_number=0, state=state, snapshot_type="initial"
+        )
 
     async def get_game_state(self, game_id: str) -> GameState | None:
         """Get the current state of a game."""
@@ -170,7 +317,9 @@ class PersistentGameController:
             print(f"Error loading game state for {game_id}: {e}")
             return None
 
-    async def submit_player_actions(self, game_id: str, player_id: PlayerId, actions: list[Action]) -> None:
+    async def submit_player_actions(
+        self, game_id: str, player_id: PlayerId, actions: list[Action]
+    ) -> None:
         """Submit actions for a player in the current turn."""
         print(
             f"DEBUG: Submitting actions for {player_id} in game {game_id}, turn {await self.get_current_turn(game_id)}"
@@ -198,8 +347,12 @@ class PersistentGameController:
         # Store in pending actions
         self._pending_actions[game_id][player_id] = actions
 
-        print(f"DEBUG: Pending actions now: {list(self._pending_actions[game_id].keys())}")
-        print(f"DEBUG: Need {len(state.players)} players, have {len(self._pending_actions[game_id])}")
+        print(
+            f"DEBUG: Pending actions now: {list(self._pending_actions[game_id].keys())}"
+        )
+        print(
+            f"DEBUG: Need {len(state.players)} players, have {len(self._pending_actions[game_id])}"
+        )
 
         # Check if all players have submitted actions
         if len(self._pending_actions[game_id]) == len(state.players):
@@ -309,7 +462,9 @@ class PersistentGameController:
         completed_turn = state.turn
         for player_id, player_actions in actions.items():
             actions_json = [action.model_dump(mode="json") for action in player_actions]
-            await self.repo.upsert_turn_action(game_id, player_id, completed_turn, actions_json)
+            await self.repo.upsert_turn_action(
+                game_id, player_id, completed_turn, actions_json
+            )
 
         # Resolve turn
         print(f"DEBUG: Calling resolve_turn with turn {state.turn}")
@@ -384,17 +539,25 @@ class PersistentGameController:
             for player in state.players:
                 score = 0
                 # Cities worth 5 points each
-                score += sum(5 for city in state.cities.values() if city.owner == player)
+                score += sum(
+                    5 for city in state.cities.values() if city.owner == player
+                )
                 # Units worth 1 point each
                 score += sum(1 for unit in state.units.values() if unit.owner == player)
                 # Resources worth 1 point per 50
-                resources = state.stockpiles.get(player, state.stockpiles[list(state.stockpiles.keys())[0]])
-                score += (resources.food + resources.wood + resources.ore + resources.crystal) // 50
+                resources = state.stockpiles.get(
+                    player, state.stockpiles[list(state.stockpiles.keys())[0]]
+                )
+                score += (
+                    resources.food + resources.wood + resources.ore + resources.crystal
+                ) // 50
                 scores[player] = score
 
             winner = max(scores, key=lambda k: scores[k]) if scores else None
             victory_type = "score"
-            print(f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}")
+            print(
+                f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}"
+            )
 
         # If game ended, update database
         if winner is not None or victory_type != "none":

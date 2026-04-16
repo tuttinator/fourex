@@ -1,5 +1,7 @@
 import type {
 	CreateGameRequest,
+	CreateLobbyRequest,
+	GameDetailResponse,
 	GamesListParams,
 	GamesListResponse,
 	GameState,
@@ -96,6 +98,39 @@ export const api = {
 		});
 	},
 
+	async createLobby(
+		gameId: string,
+		request: CreateLobbyRequest,
+	): Promise<GameDetailResponse> {
+		const params = new URLSearchParams({ game_id: gameId });
+		return fetchApi(`/games?${params}`, {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+	},
+
+	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}`);
+	},
+
+	async joinGame(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/join`, {
+			method: "POST",
+		});
+	},
+
+	async leaveGame(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/leave`, {
+			method: "POST",
+		});
+	},
+
+	async startGame(gameId: string): Promise<{ status: string; game_id: string }> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/start`, {
+			method: "POST",
+		});
+	},
+
 	async getGameState(gameId: string): Promise<GameState> {
 		return fetchApi(`/state?game_id=${gameId}`);
 	},
@@ -105,6 +140,7 @@ export const api = {
 export const queryKeys = {
 	games: (params?: GamesListParams) =>
 		["games", params ?? {}] as const,
+	gameDetail: (gameId: string) => ["game", gameId, "detail"] as const,
 	gameState: (gameId: string) => ["game", gameId] as const,
 };
 
