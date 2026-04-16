@@ -119,10 +119,6 @@ run = "cd agents && uv run python run_agents.py --preset advanced_strategies"
 description = "Run interactive game setup"
 run = "cd agents && uv run python run_agents.py --interactive"
 
-[tasks.mcp-server]
-description = "Run MCP server for tool use"
-run = "cd agents && uv run python run_mcp_server.py"
-
 [tasks.agents-format]
 description = "Format agent code"
 run = "cd agents && uv run black src/ *.py"
@@ -146,15 +142,15 @@ run = "cd agents && ls -la logs/ | head -10 || echo 'No logs found'"
 # MCP server tasks
 [tasks.serve]
 description = "Run MCP server in stdio mode"
-run = "uv run python -m backend.src.mcp_server.server stdio"
+run = "uv run fourex-mcp stdio"
 
 [tasks.serve-http]
 description = "Run MCP server in streamable-http mode (port 8020)"
-run = "uv run python -m backend.src.mcp_server.server http"
+run = "uv run fourex-mcp-http"
 
 [tasks.inspect]
 description = "Launch MCP Inspector against stdio server"
-run = "npx @modelcontextprotocol/inspector uv run python -m backend.src.mcp_server.server stdio"
+run = "npx @modelcontextprotocol/inspector uv run fourex-mcp stdio"
 
 [tasks.inspect-http]
 description = "Launch MCP Inspector against HTTP server"

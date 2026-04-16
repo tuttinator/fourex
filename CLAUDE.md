@@ -29,10 +29,11 @@ mise run classic               # classic 3-player game
 mise run showcase              # personality showcase (4 players)
 mise run interactive           # interactive game setup
 
-# Run MCP server
-mise run serve                 # stdio mode
-mise run serve-http            # streamable-http mode (port 8020)
-mise run mcp-server            # agent MCP server
+# Run MCP server (single canonical server in backend/src/mcp_server/)
+mise run serve                 # stdio mode (via fourex-mcp entry point)
+mise run serve-http            # streamable-http mode, port 8020 (via fourex-mcp-http)
+mise run inspect               # MCP Inspector against stdio server
+mise run inspect-http          # MCP Inspector against HTTP server
 
 # Formatting and linting
 mise run format                # black + ruff --fix
@@ -56,11 +57,20 @@ Three main components, each with its own source tree:
 - `src/database/` — SQLAlchemy async (asyncpg) with Alembic migrations
 - `src/config.py` — `pydantic-settings` based config, reads from `.env`
 
+### backend/src/mcp_server/ — MCP Server (single canonical server)
+- `server.py` — FastMCP server with stdio and streamable-http transports, CORS, `/healthz`
+- `tools/lifecycle.py` — Game creation and joining (`create_game`, `join_game`, `get_game_info`)
+- `tools/gameplay.py` — Turn flow (`get_game_state`, `submit_actions`, `validate_actions`, `is_my_turn`)
+- `tools/analysis.py` — Strategic analysis (`analyze_territory`, `evaluate_military_position`, `find_resource_opportunities`, `calculate_distances`)
+- `tools/memory.py` — Agent memory (`write_scratchpad`, `read_scratchpad`)
+- `tools/history.py` — Turn history (`get_turn_history`, `get_turn_snapshot`)
+- All tools use FastMCP v3 annotations (`readOnlyHint`, `openWorldHint`) and `tags` for categorisation
+- Entry points: `fourex-mcp` (stdio), `fourex-mcp-http` (HTTP on :8020)
+
 ### agents/ — AI Agent System
-- `src/agent.py` — `FourXAgent` class: LLM-driven agent that observes game state, plans, and submits actions
+- `src/agent.py` — `FourXAgent` class: LLM-driven agent that observes game state, plans, and submits actions via REST (MCP migration pending)
 - `src/orchestrator.py` — `GameOrchestrator`: runs a full game loop, creates agents with personalities (aggressive/defensive/economic), manages turn execution
 - `src/llm_providers.py` — `MultiLLMClient` with provider fallback chain: Modal Ollama > LLM Studio (local, default :1234) > OpenAI. All providers extract `<think>...</think>` tokens from responses
-- `src/fastmcp_server.py` — FastMCP server exposing game analysis tools (territory, military, resources, action validation) for MCP-compatible clients
 - `src/personalities.py` — Agent personality definitions
 
 ### frontend/ — Next.js UI

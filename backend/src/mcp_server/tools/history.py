@@ -28,6 +28,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["history", "query"]},
     )
     async def get_turn_history(api_key: str) -> dict[str, Any]:
         """Get your action history across all past turns.
@@ -81,6 +82,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["history", "query"]},
     )
     async def get_turn_snapshot(
         api_key: str,

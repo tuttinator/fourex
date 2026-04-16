@@ -32,6 +32,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=False,
             openWorldHint=False,
         ),
+        meta={"tags": ["memory"]},
     )
     async def write_scratchpad(
         api_key: str,
@@ -99,6 +100,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["memory"]},
     )
     async def read_scratchpad(
         api_key: str,

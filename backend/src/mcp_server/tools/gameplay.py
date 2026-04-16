@@ -180,6 +180,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["gameplay", "query"]},
     )
     async def get_game_state(api_key: str) -> dict[str, Any]:
         """Get your current view of the game world.
@@ -226,6 +227,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=False,
             openWorldHint=False,
         ),
+        meta={"tags": ["gameplay", "action"]},
     )
     async def submit_actions(
         api_key: str,
@@ -347,6 +349,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["gameplay", "validation"]},
     )
     async def validate_actions(
         api_key: str,
@@ -402,6 +405,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["gameplay", "query"]},
     )
     async def is_my_turn(api_key: str) -> dict[str, Any]:
         """Check your turn status.

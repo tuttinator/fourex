@@ -177,7 +177,7 @@ def test_agent_mcp_integration():
         from src.agent import FourXAgent
 
         agent = FourXAgent("test_player", "balanced")
-        mcp_available = agent.mcp_client.is_available()
+        mcp_available = agent.mcp_client is not None and agent.mcp_client.is_available()
         console.print(
             f"[green]✓ Agent MCP integration works, MCP available: {mcp_available}[/green]"
         )

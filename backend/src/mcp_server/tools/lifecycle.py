@@ -30,6 +30,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=False,
             openWorldHint=False,
         ),
+        meta={"tags": ["lifecycle", "setup"]},
     )
     async def create_game(
         players: list[str],
@@ -173,6 +174,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=False,
             openWorldHint=False,
         ),
+        meta={"tags": ["lifecycle", "setup"]},
     )
     async def join_game(
         game_id: str,
@@ -275,6 +277,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["lifecycle", "query"]},
     )
     async def get_game_info(
         game_id: str,

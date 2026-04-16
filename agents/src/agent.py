@@ -698,10 +698,9 @@ class FourXAgent:
             fallback_providers=fallback_providers or ["openai"],
         )
 
-        # Initialize FastMCP client for advanced game analysis
-        from .fastmcp_client import FastMCPGameClient
-
-        self.mcp_client = FastMCPGameClient(player_id, game_backend_url)
+        # Legacy FastMCP client removed — agents will migrate to MCP-only
+        # operation in Phase 6. For now, MCP analysis is disabled.
+        self.mcp_client = None
 
         self.turn_history: list[TurnPlan] = []
         self.logger = logger.bind(component="agent", player_id=player_id)
@@ -797,7 +796,7 @@ class FourXAgent:
 
             # Run MCP analysis first if available
             mcp_analysis = None
-            if self.mcp_client.is_available():
+            if self.mcp_client is not None and self.mcp_client.is_available():
                 console.print(
                     f"[cyan]Running MCP analysis for {self.player_id}...[/cyan]"
                 )

@@ -100,6 +100,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["analysis", "strategy"]},
     )
     async def analyze_territory(
         api_key: str,
@@ -214,6 +215,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["analysis", "strategy"]},
     )
     async def evaluate_military_position(
         api_key: str,
@@ -326,6 +328,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["analysis", "strategy"]},
     )
     async def find_resource_opportunities(
         api_key: str,
@@ -466,6 +469,7 @@ def register(mcp: FastMCP) -> None:
             readOnlyHint=True,
             openWorldHint=False,
         ),
+        meta={"tags": ["analysis", "utility"]},
     )
     async def calculate_distances(
         from_locations: list[dict[str, int]],

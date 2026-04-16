@@ -123,5 +123,14 @@ def main() -> None:
         uvicorn.run(app, host=args.host, port=args.port)
 
 
+def main_http() -> None:
+    """CLI entry point for the MCP server in HTTP mode (used by fourex-mcp-http)."""
+    import uvicorn
+
+    mcp = create_mcp_server()
+    app = create_http_app(mcp)
+    uvicorn.run(app, host="0.0.0.0", port=8020)
+
+
 if __name__ == "__main__":
     main()
