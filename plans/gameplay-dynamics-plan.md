@@ -12,7 +12,7 @@ Durable decisions that apply across all phases:
 - **Victory configuration**: `GameState` gains `victory_conditions: list[str]` (subset of `["domination", "economic", "elimination", "score"]`, default all four). Victory checking consolidates into `rules.py` as a pure function, replacing the existing `_check_victory` in the persistent game controller.
 - **Tile ownership**: Tiles gain ownership through cultural border expansion, not just city founding. `tile.owner` is set/cleared by the border expansion logic during turn resolution.
 - **Turn resolution order**: Sequential player-order action resolution is retained. The new systems slot into `resolve_turn()` in this order: reset moves → process actions → expand borders → heal units → collect resources → check victory → advance turn.
-- **MCP tool surface**: Existing tools (`get_game_state`, `get_game_info`, `submit_actions`, `validate_actions`) return enriched data (culture, borders, victory progress). No new MCP tools are required — territory and victory info are embedded in the game state response.
+- **MCP tool surface**: Existing tools (`get_game_state`, `get_game_info`, `submit_actions`, `validate_actions`) return enriched data (culture, borders, victory progress). One new MCP tool is added: `get_valid_moves` (registered in `tools/analysis.py`) returns all legal move destinations for a unit, preventing agents from wasting turns on illegal moves. Territory and victory info are embedded in the game state response.
 - **Building costs**: Monument (20 wood), Library (30 wood + 10 ore), Temple (30 wood + 20 ore + 10 crystal). Improvement costs: Farm (10 wood), Mine (10 wood), Lumber mill (10 ore), Crystal extractor (10 ore + 5 crystal).
 - **Culture thresholds**: Radius 1 at 10 culture, radius 2 at 30, radius 3 at 60. Base culture per city: 1/turn. Monument +1, Library +2, Temple +3. Max with all buildings: 7/turn.
 
@@ -168,4 +168,36 @@ Write tests covering: soldier heals in friendly territory, scout does not heal, 
 - [ ] Healing does not consume any resources
 - [ ] Healing runs in `resolve_turn()` after actions and border expansion, before resource collection
 - [ ] Tests cover: healing in friendly territory, scout exclusion, moved unit exclusion, non-owned tile exclusion, max HP cap, zero resource cost
+- [ ] All existing tests still pass
+
+---
+
+## Phase 6: Valid Moves Query
+
+**User stories**: 31, 32, 33
+
+### What to build
+
+Add a `get_valid_moves` MCP tool that returns all legal destination tiles for a given unit. This is a pure read-only query — it does not modify game state.
+
+First, add a pure function `get_valid_moves(state: GameState, unit_id: int, visible_coords: set[tuple[int, int]]) -> list[dict]` in `rules.py` (or a new `queries.py` if preferred — but `rules.py` already holds the movement validation logic, so colocation is simpler). The function iterates all tiles within Manhattan distance <= `unit.moves_left`, filters to tiles that are: (a) passable (not water, not mountain), (b) not occupied by another unit, and (c) within the provided `visible_coords` set. For each valid tile, return `x`, `y`, `terrain`, `has_resource`, `resource_type`, `has_improvement`, `owner`, and `distance`.
+
+Then, register a `get_valid_moves` MCP tool in `tools/analysis.py` (it fits the analysis category). The tool authenticates via `api_key`, retrieves the redacted state, validates that the requested `unit_id` belongs to the authenticated player and is present in the redacted state, calls the pure function, and returns the results along with the unit's current position, type, and `moves_left`.
+
+Wire it into the MCP server via the existing `analysis.register(mcp)` call — no changes needed to `server.py`.
+
+Write tests covering: valid moves on open terrain, mountains and water excluded, occupied tiles excluded, fog-of-war tiles excluded, unit with zero moves left returns empty list, unit not owned by player returns error, invalid unit ID returns error.
+
+### Acceptance criteria
+
+- [ ] Pure function `get_valid_moves()` in `rules.py` computes reachable tiles for a unit
+- [ ] Reachability checks: Manhattan distance <= `moves_left`, terrain passable, tile unoccupied, tile visible
+- [ ] Each result tile includes: `x`, `y`, `terrain`, `has_resource`, `resource_type`, `has_improvement`, `owner`, `distance`
+- [ ] `get_valid_moves` MCP tool registered in `tools/analysis.py` with `readOnlyHint=True`
+- [ ] Tool validates unit ownership (must belong to authenticated player)
+- [ ] Tool returns unit metadata: `unit_id`, `unit_type`, `current_position`, `moves_left`
+- [ ] Fog-of-war respected: tiles outside player's vision are excluded even if within movement range
+- [ ] Unit with 0 `moves_left` returns an empty `valid_tiles` list
+- [ ] Invalid or enemy `unit_id` returns an error
+- [ ] Tests cover: open terrain moves, mountain/water exclusion, occupied tile exclusion, fog exclusion, zero moves, ownership validation, error cases
 - [ ] All existing tests still pass

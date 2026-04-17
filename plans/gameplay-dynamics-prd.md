@@ -54,6 +54,9 @@ Introduce five interconnected gameplay systems that transform the engine from a 
 28. As an AI agent, I want victory conditions to be queryable via MCP tools, so that I can evaluate progress toward different win states.
 29. As an AI agent, I want territorial information included in game state, so that I can reason about border expansion and contested regions.
 30. As an AI agent, I want resource yield projections available, so that I can evaluate the economic value of different expansion paths.
+31. As an AI agent, I want to query all valid move destinations for a unit, so that I never waste a turn on an illegal move.
+32. As an AI agent, I want valid move results to include terrain, resource, and ownership metadata, so that I can evaluate destination quality without additional tool calls.
+33. As a player, I want to see where my units can move before committing actions, so that I can plan my turn without trial-and-error.
 
 ## Implementation Decisions
 
@@ -129,6 +132,24 @@ Introduce five interconnected gameplay systems that transform the engine from a 
 
 - The existing sequential player-order action resolution is retained as a deliberate design choice. Player 1's actions resolve before Player 2's. This is a core feature, not a bug.
 
+## Valid Moves Query
+
+### Problem
+
+During test games, AI agents (and human players using Claude) repeatedly issued illegal moves — walking into mountains, water, occupied tiles, or destinations beyond the unit's remaining movement points. The game engine validates moves and rejects them, but there is no way to ask "where can this unit go?" before committing an action. Agents waste turns on trial-and-error movement, and the `validate_actions` tool only reports pass/fail after the fact.
+
+### Solution
+
+Add a `get_valid_moves` MCP tool that, given a unit ID, returns all legal destination tiles for that unit this turn. The tool uses the player's fog-of-war-redacted state, so it only reveals tiles the player can already see. It also returns the unit's current position, moves remaining, and the set of reachable coordinates with terrain and occupancy metadata — everything an agent needs to make an informed movement decision in a single call.
+
+### Implementation Decisions
+
+- **Reachability**: A tile is reachable if it is within Manhattan distance <= `moves_left`, the terrain is passable (not water, not mountain), and the tile is not occupied by another unit. This mirrors the existing `validate_move()` logic in `rules.py`.
+- **Fog of war**: Only tiles visible to the player are included. Tiles within movement range but outside fog of war are excluded (the unit can't see them, so the agent shouldn't know they're reachable).
+- **Response shape**: Returns `unit_id`, `unit_type`, `current_position`, `moves_left`, and a list of `valid_tiles` — each with `x`, `y`, `terrain`, `has_resource`, `resource_type`, `has_improvement`, `owner` (tile ownership), and `distance` (moves required to reach it). This gives agents enough context to evaluate destinations without a second round-trip.
+- **Read-only**: The tool is strictly read-only (`readOnlyHint=True`). It does not modify game state.
+- **One unit at a time**: The tool takes a single `unit_id`. Agents needing moves for multiple units make multiple calls. This keeps the response focused and avoids confusion about inter-unit move conflicts (two units can't occupy the same tile, but the tool doesn't model sequential dependencies within a turn).
+
 ## Out of Scope
 
 - **Diplomacy system changes**: The existing diplomacy model (alliance states) is unchanged. No new diplomatic actions (trade, war declarations, treaties).
@@ -142,7 +163,7 @@ Introduce five interconnected gameplay systems that transform the engine from a 
 
 ## Further Notes
 
-- These five features are tightly coupled. Culture/territory must be implemented first, as tile yields and improvement building both depend on tile ownership. The suggested implementation order is: (1) culture & borders, (2) tile yields, (3) lumber mill & improvement costs, (4) victory conditions, (5) healing.
+- These six features are tightly coupled. Culture/territory must be implemented first, as tile yields and improvement building both depend on tile ownership. The suggested implementation order is: (1) culture & borders, (2) tile yields, (3) lumber mill & improvement costs, (4) victory conditions, (5) healing, (6) valid moves query. The valid moves tool is independent and can be implemented at any point, but is listed last as it is an agent quality-of-life feature rather than a core mechanic.
 - The economic victory threshold of 1000 may need tuning after playtesting. With a well-developed economy (3 cities, improved tiles), a player might generate 20-30 resources/turn, making economic victory achievable around turn 40-50 — roughly aligned with the default 50-turn game length.
 - The culture thresholds (10, 30, 60) assume 1-7 culture/turn per city. A city with only base culture reaches radius 1 at turn 10, radius 2 at turn 30, radius 3 at turn 60. With all three cultural buildings, those milestones drop to roughly turns 2, 5, and 9. This creates a strong incentive to invest in cultural buildings early.
 - Worker consumption on improvement building means workers are a recurring cost. At 30 food per worker, players must balance unit production between workers (economic) and military units (defensive/offensive). This is intentional tension.
