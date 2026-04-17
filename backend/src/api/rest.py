@@ -634,14 +634,22 @@ async def get_turn_state(
                 )
             return GameState.model_validate(snapshot.state_json)
         else:
+            # Try god-mode snapshot first
             snapshot = await repo.get_game_snapshot_at_turn(game_id, turn_number)
-            if not snapshot:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No god-mode snapshot at turn {turn_number}. "
-                    f"Full snapshots are saved every 10 turns, plus initial and final states.",
-                )
-            return GameState.model_validate(snapshot.complete_state)
+            if snapshot:
+                return GameState.model_validate(snapshot.complete_state)
+
+            # Fall back to current game state if requesting the latest turn
+            state = GameState.model_validate(game.state)
+            if turn_number == state.turn:
+                return state
+
+            raise HTTPException(
+                status_code=404,
+                detail=f"No god-mode snapshot at turn {turn_number}. "
+                f"Full snapshots are saved every 10 turns, plus initial and final states. "
+                f"Try adding a player parameter for fog-of-war view.",
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -698,7 +706,9 @@ async def restore_game(
         controller = get_persistent_game_controller(session)
         state = await controller.restore_game_state(game_id)
         if not state:
-            raise HTTPException(status_code=404, detail="Game not found or no snapshot available")
+            raise HTTPException(
+                status_code=404, detail="Game not found or no snapshot available"
+            )
 
         return {
             "status": "game_restored",

@@ -143,6 +143,15 @@ async def _check_and_resolve_turn(
             state_json=redacted.model_dump(mode="json"),
         )
 
+    # Save periodic god-mode snapshots (every 10 turns) for replay
+    if state.turn % 10 == 0:
+        await repo.create_game_snapshot(
+            game_id=game_id,
+            turn_number=state.turn,
+            state=state,
+            snapshot_type="periodic",
+        )
+
     # Save the turn result
     await repo.save_turn_result(game_id, turn_result, player_actions)
 
@@ -163,6 +172,13 @@ async def _check_and_resolve_turn(
     # Check if game should end (max turns reached)
     if state.turn >= game.max_turns:
         await repo.end_game(game_id, victory_type="score")
+        # Save final god-mode snapshot for replay
+        await repo.create_game_snapshot(
+            game_id=game_id,
+            turn_number=state.turn,
+            state=state,
+            snapshot_type="final",
+        )
 
     return {
         "turn_resolved": current_turn,

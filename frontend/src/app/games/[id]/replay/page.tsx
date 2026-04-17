@@ -33,12 +33,20 @@ export default function ReplayPage() {
 
   const [selectedTurn, setSelectedTurn] = useState<number>(1)
   const [perspective, setPerspective] = useState<PlayerId | null>(null)
+  const [perspectiveInitialised, setPerspectiveInitialised] = useState(false)
 
   // Fetch game detail for player list and status
   const { data: gameDetail } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),
     queryFn: () => api.getGameDetail(gameId),
   })
+
+  // Default to first player's perspective once we know the player list,
+  // so replay works even when god-mode snapshots are sparse.
+  if (gameDetail?.players?.length && !perspectiveInitialised) {
+    setPerspective(gameDetail.players[0])
+    setPerspectiveInitialised(true)
+  }
 
   // Fetch turn list to know available turns
   const {
