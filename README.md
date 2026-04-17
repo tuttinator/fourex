@@ -74,6 +74,58 @@ curl -X POST "http://localhost:8010/api/v1/actions?game_id=test" \
   -d '[{"type": "MOVE", "unit_id": 1, "to": {"x": 5, "y": 6}}]'
 ```
 
+## Playing with an AI Agent (Claude Code / Goose)
+
+![Claude Code playing FourEx](docs/claude-code-screenshot.png)
+
+AI agents can play FourEx directly via the MCP server defined in `.mcp.json`. Tools like [Claude Code](https://claude.ai/code) and [Goose](https://block.github.io/goose/) automatically discover this file and connect to the server — no manual configuration needed.
+
+### How it works
+
+The `.mcp.json` file at the project root declares the `fourex-mcp` server:
+
+```json
+{
+  "mcpServers": {
+    "fourex-mcp": {
+      "command": "uv",
+      "args": ["run", "fourex-mcp", "stdio"]
+    }
+  }
+}
+```
+
+When you open this project in Claude Code or Goose, the agent connects to the MCP server over stdio and gains access to game tools — creating games, reading state, submitting actions, and strategic analysis.
+
+### Quick start prompts
+
+Once you've opened the project, try these prompts:
+
+**Claude Code:**
+```
+Create a new 4X game with 2 AI players and play as player 1.
+Focus on economic growth early, then build military.
+```
+
+```
+Join the existing game and tell me what you see.
+What are the nearest resources and where should I expand?
+```
+
+```
+/play-4x
+```
+
+**Goose:**
+```
+Use the fourex-mcp tools to create a 2-player game with seed 42.
+Join as player 1 and play the first 10 turns with a balanced strategy.
+```
+
+```
+Analyse my current game state and suggest the best moves for this turn.
+```
+
 ## Development
 
 ```bash
