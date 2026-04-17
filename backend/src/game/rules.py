@@ -445,6 +445,10 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
     tile.unit_id = None
     del state.units[worker.id]
 
+    # Claim adjacent tiles immediately — cities start at border radius 1.
+    city.border_radius = 1
+    _expand_borders(state, city)
+
     return ActionResult(
         success=True,
         message=f"City {city.id} founded at {worker.loc}",
@@ -681,8 +685,10 @@ def execute_build_building(
     )
 
 
-# Culture thresholds: cumulative culture required for each border radius
-CULTURE_THRESHOLDS = {1: 10, 2: 30, 3: 60}
+# Culture thresholds: cumulative culture required for each border radius.
+# Radius 1 is claimed immediately on founding (threshold 0); radius 2 at 15
+# culture and radius 3 at 40 culture.
+CULTURE_THRESHOLDS = {1: 0, 2: 15, 3: 40}
 
 
 def accumulate_culture(state: GameState) -> None:
@@ -701,7 +707,12 @@ def accumulate_culture(state: GameState) -> None:
 
 
 def _expand_borders(state: GameState, city: City) -> None:
-    """Claim tiles within the city's border radius that aren't already owned."""
+    """Claim tiles within the city's border radius that aren't already owned.
+
+    Water and mountain tiles can be owned — they contribute whatever resource
+    they carry (e.g. ore on a mountain) but still cannot host cities or
+    non-mine improvements.
+    """
     for tile in state.tiles:
         distance = city.loc.distance_to(tile.loc)
         if distance > city.border_radius:
@@ -710,8 +721,6 @@ def _expand_borders(state: GameState, city: City) -> None:
             continue  # City tile already owned at founding
         if tile.owner is not None:
             continue  # First-to-reach: already claimed
-        if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
-            continue  # Cannot own water or mountains
         tile.owner = city.owner
         tile.city_id = city.id
 

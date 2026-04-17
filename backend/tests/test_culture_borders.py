@@ -209,7 +209,9 @@ class TestCultureAccumulation:
     def test_base_culture_accumulation(self):
         state = _make_state_with_grid()
         state.players = ["p1"]
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
+        # Cities founded via execute_found_city start at border_radius=1; use
+        # that canonical state here so the test focuses on culture counting.
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), border_radius=1)
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
@@ -217,7 +219,7 @@ class TestCultureAccumulation:
 
         accumulate_culture(state)
         assert city.culture == 1
-        assert city.border_radius == 0
+        assert city.border_radius == 1
 
     def test_culture_with_monument(self):
         state = _make_state_with_grid()
@@ -226,6 +228,7 @@ class TestCultureAccumulation:
             id=1,
             owner="p1",
             loc=Coord(x=5, y=5),
+            border_radius=1,
             buildings={BuildingType.MONUMENT},
         )
         state.cities[1] = city
@@ -243,6 +246,7 @@ class TestCultureAccumulation:
             id=1,
             owner="p1",
             loc=Coord(x=5, y=5),
+            border_radius=1,
             buildings={
                 BuildingType.MONUMENT,
                 BuildingType.LIBRARY,
@@ -261,17 +265,18 @@ class TestCultureAccumulation:
 class TestBorderExpansion:
     """Test border expansion at culture thresholds."""
 
-    def test_radius_1_at_10_culture(self):
-        """Border expands to radius 1 when culture reaches 10."""
+    def test_radius_1_immediate(self):
+        """Radius 1 expands immediately (threshold 0) — the first
+        ``accumulate_culture`` call after founding claims adjacent tiles."""
         state = _make_state_with_grid()
         state.players = ["p1"]
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=9)
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
         tile.owner = "p1"
 
-        accumulate_culture(state)  # culture goes from 9 to 10
+        accumulate_culture(state)
         assert city.border_radius == 1
 
         # Check that Manhattan distance 1 tiles are claimed
@@ -285,21 +290,18 @@ class TestBorderExpansion:
             assert claimed_tile.owner == "p1", f"Tile at {coord} should be owned by p1"
             assert claimed_tile.city_id == 1
 
-    def test_radius_2_at_30_culture(self):
-        """Border expands to radius 2 when culture reaches 30."""
+    def test_radius_2_at_15_culture(self):
+        """Border expands to radius 2 when culture reaches 15."""
         state = _make_state_with_grid()
         state.players = ["p1"]
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=29, border_radius=1)
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=14, border_radius=1)
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
         tile.owner = "p1"
         # Pre-claim radius 1 tiles
         for t in state.tiles:
-            if city.loc.distance_to(t.loc) <= 1 and t.terrain not in (
-                Terrain.WATER,
-                Terrain.MOUNTAIN,
-            ):
+            if city.loc.distance_to(t.loc) <= 1:
                 t.owner = "p1"
                 t.city_id = 1
 
@@ -310,21 +312,18 @@ class TestBorderExpansion:
         tile_r2 = state.get_tile(Coord(x=5, y=3))
         assert tile_r2.owner == "p1"
 
-    def test_radius_3_at_60_culture(self):
-        """Border expands to radius 3 when culture reaches 60."""
+    def test_radius_3_at_40_culture(self):
+        """Border expands to radius 3 when culture reaches 40."""
         state = _make_state_with_grid()
         state.players = ["p1"]
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=59, border_radius=2)
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=39, border_radius=2)
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
         tile.owner = "p1"
         # Pre-claim radius 2 tiles
         for t in state.tiles:
-            if city.loc.distance_to(t.loc) <= 2 and t.terrain not in (
-                Terrain.WATER,
-                Terrain.MOUNTAIN,
-            ):
+            if city.loc.distance_to(t.loc) <= 2:
                 t.owner = "p1"
                 t.city_id = 1
 
@@ -340,10 +339,9 @@ class TestBorderExpansion:
         state = _make_state_with_grid()
         state.players = ["p1", "p2"]
 
-        # p2's city at (4, 5) already owns the tile at (5, 5) ... no, let's use
-        # two cities close together where their borders would overlap
-        city1 = City(id=1, owner="p1", loc=Coord(x=3, y=5), culture=9)
-        city2 = City(id=2, owner="p2", loc=Coord(x=5, y=5), culture=0, border_radius=1)
+        # Two cities close enough that their borders would overlap at (4,5).
+        city1 = City(id=1, owner="p1", loc=Coord(x=3, y=5))
+        city2 = City(id=2, owner="p2", loc=Coord(x=5, y=5), border_radius=1)
         state.cities[1] = city1
         state.cities[2] = city2
 
@@ -360,21 +358,21 @@ class TestBorderExpansion:
         contested.owner = "p2"
         contested.city_id = 2
 
-        # Now p1 gets to radius 1 — should NOT claim (4,5) because p2 already owns it
+        # p1 expands to radius 1 — must NOT claim (4,5) because p2 owns it
         accumulate_culture(state)
         assert city1.border_radius == 1
         assert contested.owner == "p2"
         assert contested.city_id == 2
 
-    def test_water_tiles_excluded(self):
-        """Water tiles cannot be claimed."""
+    def test_water_tiles_claimed(self):
+        """Water tiles within borders are owned (they yield whatever resource
+        they carry, and contribute nothing if bare)."""
         state = _make_state_with_grid()
         state.players = ["p1"]
-        # Make tile at (5, 6) water
         water_tile = state.get_tile(Coord(x=5, y=6))
         water_tile.terrain = Terrain.WATER
 
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=9)
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
@@ -382,26 +380,30 @@ class TestBorderExpansion:
 
         accumulate_culture(state)
         assert city.border_radius == 1
-        assert water_tile.owner is None
+        assert water_tile.owner == "p1"
+        assert water_tile.city_id == 1
 
-    def test_mountain_tiles_excluded(self):
-        """Mountain tiles cannot be claimed."""
+    def test_mountain_tiles_claimed(self):
+        """Mountain tiles within borders are owned — ore/crystal on mountains
+        contributes to income via _calculate_tile_yield."""
         state = _make_state_with_grid()
         state.players = ["p1"]
         mountain_tile = state.get_tile(Coord(x=5, y=4))
         mountain_tile.terrain = Terrain.MOUNTAIN
 
-        city = City(id=1, owner="p1", loc=Coord(x=5, y=5), culture=9)
+        city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
         tile.city_id = 1
         tile.owner = "p1"
 
         accumulate_culture(state)
-        assert mountain_tile.owner is None
+        assert mountain_tile.owner == "p1"
+        assert mountain_tile.city_id == 1
 
-    def test_newly_founded_city_radius_0(self):
-        """Newly founded cities start at radius 0 with only the city tile owned."""
+    def test_newly_founded_city_radius_1(self):
+        """Newly founded cities start at radius 1, owning adjacent tiles
+        immediately so they have tile yields from turn 1."""
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(food=50)
@@ -426,22 +428,31 @@ class TestBorderExpansion:
 
         city = list(state.cities.values())[0]
         assert city.culture == 0
-        assert city.border_radius == 0
+        assert city.border_radius == 1
 
-        # Only city tile should be owned
-        for t in state.tiles:
-            if t.loc == Coord(x=5, y=5):
-                assert t.owner == "p1"
-            else:
-                assert t.owner is None
+        # City tile and all Manhattan-distance-1 tiles should be owned.
+        for coord in [
+            Coord(x=5, y=5),
+            Coord(x=5, y=4),
+            Coord(x=5, y=6),
+            Coord(x=4, y=5),
+            Coord(x=6, y=5),
+        ]:
+            t = state.get_tile(coord)
+            assert t.owner == "p1", f"Tile at {coord} should be owned by p1"
+            assert t.city_id == city.id
+
+        # Tiles at distance 2 should remain unowned.
+        far = state.get_tile(Coord(x=5, y=3))
+        assert far.owner is None
 
     def test_tile_belongs_to_at_most_one_city(self):
         """Each tile belongs to at most one city after expansion."""
         state = _make_state_with_grid()
         state.players = ["p1"]
 
-        city1 = City(id=1, owner="p1", loc=Coord(x=3, y=5), culture=9)
-        city2 = City(id=2, owner="p1", loc=Coord(x=7, y=5), culture=9)
+        city1 = City(id=1, owner="p1", loc=Coord(x=3, y=5))
+        city2 = City(id=2, owner="p1", loc=Coord(x=7, y=5))
         state.cities[1] = city1
         state.cities[2] = city2
 
