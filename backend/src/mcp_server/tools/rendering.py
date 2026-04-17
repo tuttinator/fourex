@@ -452,6 +452,9 @@ def register(mcp: FastMCP) -> None:
             bytestring=svg_str.encode("utf-8"),
             scale=scale,
         )
+        if not isinstance(png_bytes, bytes):
+            return {"error": "Failed to render map image."}
+
         b64 = base64.b64encode(png_bytes).decode("ascii")
 
         return {
