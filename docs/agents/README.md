@@ -1,11 +1,11 @@
 # 4X AI Agents
 
-AI agents that play the 4X strategy game using Modal (cloud) or local LLM Studio integration.
+AI agents that play the 4X strategy game against the backend API.
 
 ## Features
 
 - **Multiple Agent Personalities**: 8 different strategic personalities including aggressive, defensive, explorer, economic, diplomatic, balanced, tech-focused, and opportunist
-- **LLM Integration**: Uses Modal (cloud, OpenAI-compatible) by default, with optional local LLM Studio fallback
+- **LLM Integration**: Supports Modal Ollama, local LLM Studio, and OpenAI fallback
 - **Game Orchestration**: Manages multiple agents in a single game with turn-based coordination
 - **Rich Logging**: Comprehensive game logs with agent decisions, timing, and outcomes
 - **Flexible Configuration**: Command-line, interactive, or file-based configuration options
@@ -15,19 +15,32 @@ AI agents that play the 4X strategy game using Modal (cloud) or local LLM Studio
 1. Install dependencies:
 
 ```bash
-cd .. && uv sync --dev
+cd .. && mise run install
 ```
 
 2. Make sure you have:
-   - The game backend running at `http://localhost:8000`
-   - **(Recommended)** Modal Ollama server deployed (see below)
-   - **(Optional)** LLM Studio running at `http://localhost:1234` with a model loaded
+   - The game backend running at `http://localhost:8010`
+   - **(Optional)** Modal Ollama configured via `MODAL_OLLAMA_URL`
+   - **(Optional)** LLM Studio running at `http://localhost:1234`
+   - **(Optional)** `OPENAI_API_KEY` if you want OpenAI fallback
 
 3. Test the connection:
 
 ```bash
 uv run python -c "from src.agent import FourXAgent; print('Agent setup successful!')"
 ```
+
+## Provider Selection
+
+Provider selection is driven by `agents/src/llm_providers.py`.
+
+Current behavior:
+
+- If `MODAL_OLLAMA_URL` is set, Modal Ollama is primary.
+- Otherwise, LLM Studio is primary.
+- If `OPENAI_API_KEY` is set, OpenAI is added as a fallback provider.
+
+That means OpenAI is not the default primary provider unless you explicitly wire it that way in code.
 
 ## LLM Provider Options
 
@@ -41,11 +54,11 @@ MODAL_OLLAMA_URL=https://your-modal-endpoint-url/v1
 MODAL_OLLAMA_MODEL=qwen3:32b
 ```
 
-- The agents will use this endpoint by default for all LLM calls.
+- If `MODAL_OLLAMA_URL` is set, this becomes the primary provider.
 
-### 2. Local LLM Studio (Optional, Fallback)
+### 2. Local LLM Studio
 
-- If `MODAL_OLLAMA_URL` is not set, the agents will use LLM Studio at `http://localhost:1234/v1` (or as configured in `.env`).
+- If `MODAL_OLLAMA_URL` is not set, the agents use LLM Studio at `http://localhost:1234/v1` by default.
 - Set the following in your `.env` if you want to override the default:
 
 ```
@@ -53,9 +66,10 @@ LLM_STUDIO_URL=http://localhost:1234/v1
 LLM_STUDIO_MODEL=qwen/qwen3-32b
 ```
 
-### 3. OpenAI (Fallback)
+### 3. OpenAI Fallback
 
-- If neither Modal nor LLM Studio is available, and you have an `OPENAI_API_KEY` set, the agents will use OpenAI's API as a fallback.
+- If `OPENAI_API_KEY` is set, OpenAI can be used as a fallback provider.
+- This matters for tests as well: if LLM Studio is unavailable and OpenAI is configured, agent-driven tests may make live OpenAI calls.
 
 ## Usage
 
@@ -64,7 +78,7 @@ LLM_STUDIO_MODEL=qwen/qwen3-32b
 Run a quick test game with 2 players:
 
 ```bash
-uv run python run_agents.py --preset quick_test
+mise run quick
 ```
 
 ### Interactive Setup
@@ -72,7 +86,7 @@ uv run python run_agents.py --preset quick_test
 Set up a custom game interactively:
 
 ```bash
-uv run python run_agents.py --interactive
+mise run interactive
 ```
 
 ### Command Line Options
@@ -169,7 +183,7 @@ uv run python run_agents.py --config my_config.json
     "Charlie": "economic"
   },
   "max_turns": 100,
-  "game_backend_url": "http://localhost:8000/api/v1",
+  "game_backend_url": "http://localhost:8010/api/v1",
   "llm_backend_url": "https://your-modal-endpoint-url/v1",
   "llm_model": "qwen3:32b"
 }
@@ -177,7 +191,11 @@ uv run python run_agents.py --config my_config.json
 
 ### LLM Configuration
 
-The agents use an OpenAI-compatible API. By default, this is the Modal Ollama endpoint if set, otherwise local LLM Studio, then OpenAI.
+The agents use whichever provider chain is available under the current environment:
+
+- Modal Ollama first if configured
+- otherwise LLM Studio
+- OpenAI as fallback when `OPENAI_API_KEY` is present
 
 Example Modal Ollama request:
 

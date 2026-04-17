@@ -17,7 +17,7 @@ class TestTurnProgression:
 
     @pytest.fixture
     def base_url(self):
-        return "http://localhost:8000/api/v1"
+        return "http://localhost:8010/api/v1"
 
     @pytest.fixture
     def game_id(self):
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     import sys
 
     test = TestTurnProgression()
-    base_url = "http://localhost:8000/api/v1"
+    base_url = "http://localhost:8010/api/v1"
     game_id = f"manual_test_{int(time.time())}"
     players = ["ManualAlice", "ManualBob"]
 

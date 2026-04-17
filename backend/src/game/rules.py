@@ -6,10 +6,14 @@ import random
 from copy import deepcopy
 
 from .models import (
+    BUILDING_STATS,
+    IMPROVEMENT_STATS,
     UNIT_STATS,
     Action,
     ActionResult,
     AttackAction,
+    BuildBuildingAction,
+    BuildImprovementAction,
     City,
     Coord,
     DiplomaticState,
@@ -26,6 +30,7 @@ from .models import (
     TurnResult,
     Unit,
     UnitType,
+    VictoryResult,
 )
 
 
@@ -520,8 +525,254 @@ def execute_train_unit(state: GameState, action: TrainUnitAction) -> ActionResul
     )
 
 
+def execute_build_improvement(
+    state: GameState, action: BuildImprovementAction
+) -> ActionResult:
+    """Execute building a tile improvement using a worker."""
+    worker = state.get_unit(action.worker_id)
+    if not worker:
+        return ActionResult(
+            success=False,
+            message=f"Worker {action.worker_id} not found",
+            action=action,
+        )
+
+    if worker.type != UnitType.WORKER:
+        return ActionResult(
+            success=False,
+            message=f"Unit {worker.id} is not a worker",
+            action=action,
+        )
+
+    # Check if improvement type is valid
+    if action.improvement not in IMPROVEMENT_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid improvement type: {action.improvement}",
+            action=action,
+        )
+
+    improvement_stats = IMPROVEMENT_STATS[action.improvement]
+
+    # Check the tile the worker is on
+    tile = state.get_tile(worker.loc)
+    if not tile:
+        return ActionResult(
+            success=False,
+            message="Invalid location for improvement",
+            action=action,
+        )
+
+    # Check if tile already has an improvement
+    if tile.improvement is not None:
+        return ActionResult(
+            success=False,
+            message=f"Tile at {worker.loc} already has improvement {tile.improvement}",
+            action=action,
+        )
+
+    # Validate terrain
+    if tile.terrain not in improvement_stats.valid_terrain:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Cannot build {action.improvement} on {tile.terrain}; "
+                f"requires {[t.value for t in improvement_stats.valid_terrain]}"
+            ),
+            action=action,
+        )
+
+    # Validate required resource on tile
+    if improvement_stats.required_resource is not None:
+        if tile.resource != improvement_stats.required_resource:
+            return ActionResult(
+                success=False,
+                message=(
+                    f"Cannot build {action.improvement} here; "
+                    f"requires {improvement_stats.required_resource} resource on tile"
+                ),
+                action=action,
+            )
+
+    # Check if player can afford the improvement
+    player_resources = state.stockpiles.get(worker.owner, ResourceBag())
+    if not player_resources.can_afford(improvement_stats.cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {worker.owner} cannot afford {action.improvement}",
+            action=action,
+        )
+
+    # Deduct resources
+    state.stockpiles[worker.owner] = player_resources - improvement_stats.cost
+
+    # Place improvement on tile
+    tile.improvement = action.improvement
+
+    # Consume worker (same pattern as found_city)
+    tile.unit_id = None
+    del state.units[worker.id]
+
+    return ActionResult(
+        success=True,
+        message=f"Improvement {action.improvement} built at {worker.loc}",
+        action=action,
+    )
+
+
+def execute_build_building(
+    state: GameState, action: BuildBuildingAction
+) -> ActionResult:
+    """Execute building construction in a city."""
+    city = state.get_city(action.city_id)
+    if not city:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} not found",
+            action=action,
+        )
+
+    # Check ownership
+    player_id = city.owner
+    for player in state.players:
+        if player == player_id:
+            break
+    else:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} owner not found in players",
+            action=action,
+        )
+
+    # Check if building type is valid
+    if action.building_type not in BUILDING_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid building type: {action.building_type}",
+            action=action,
+        )
+
+    # Check if building already exists in city
+    if action.building_type in city.buildings:
+        return ActionResult(
+            success=False,
+            message=f"City {city.id} already has {action.building_type}",
+            action=action,
+        )
+
+    # Check resource cost
+    building_stats = BUILDING_STATS[action.building_type]
+    player_resources = state.stockpiles.get(player_id, ResourceBag())
+    if not player_resources.can_afford(building_stats.cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {player_id} cannot afford {action.building_type}",
+            action=action,
+        )
+
+    # Deduct resources and add building
+    state.stockpiles[player_id] = player_resources - building_stats.cost
+    city.buildings.add(action.building_type)
+
+    return ActionResult(
+        success=True,
+        message=f"Building {action.building_type} constructed in city {city.id}",
+        action=action,
+    )
+
+
+# Culture thresholds: cumulative culture required for each border radius
+CULTURE_THRESHOLDS = {1: 10, 2: 30, 3: 60}
+
+
+def accumulate_culture(state: GameState) -> None:
+    """Accumulate culture for all cities and expand borders if thresholds are crossed."""
+    for city in state.cities.values():
+        city.culture += city.culture_per_turn()
+
+        # Check for border expansion
+        for radius in (1, 2, 3):
+            if (
+                city.border_radius < radius
+                and city.culture >= CULTURE_THRESHOLDS[radius]
+            ):
+                city.border_radius = radius
+                _expand_borders(state, city)
+
+
+def _expand_borders(state: GameState, city: City) -> None:
+    """Claim tiles within the city's border radius that aren't already owned."""
+    for tile in state.tiles:
+        distance = city.loc.distance_to(tile.loc)
+        if distance > city.border_radius:
+            continue
+        if distance == 0:
+            continue  # City tile already owned at founding
+        if tile.owner is not None:
+            continue  # First-to-reach: already claimed
+        if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
+            continue  # Cannot own water or mountains
+        tile.owner = city.owner
+        tile.city_id = city.id
+
+
+def _calculate_tile_yield(tile: Tile) -> ResourceBag:
+    """Calculate the resource yield for an owned tile.
+
+    Base yields (from terrain/resource):
+    - Food resource tile: +1 food
+    - Wood resource tile: +1 wood
+    - Ore resource tile: +1 ore
+    - Crystal resource tile: +1 crystal
+    - Forest tile (no wood resource): +1 wood
+    - Plains without resource: +0
+
+    Improved tile yields (total, replacing base):
+    - Farm on food tile: +3 food
+    - Mine on ore tile: +3 ore
+    - Lumber mill on forest: +3 wood
+    - Crystal extractor on crystal tile: +2 crystal
+    """
+    resources = ResourceBag()
+
+    # Base yield from resource
+    if tile.resource == Resource.FOOD:
+        resources.food += 1
+    elif tile.resource == Resource.WOOD:
+        resources.wood += 1
+    elif tile.resource == Resource.ORE:
+        resources.ore += 1
+    elif tile.resource == Resource.CRYSTAL:
+        resources.crystal += 1
+    elif tile.terrain == Terrain.FOREST:
+        # Forest tiles without a resource still yield +1 wood
+        resources.wood += 1
+
+    # Improvement bonus (on top of base yield)
+    if tile.improvement:
+        if tile.improvement == ImprovementType.FARM and tile.resource == Resource.FOOD:
+            resources.food += 2  # +2 bonus → total +3 food
+        elif tile.improvement == ImprovementType.MINE and tile.resource == Resource.ORE:
+            resources.ore += 2  # +2 bonus → total +3 ore
+        elif tile.improvement == ImprovementType.LUMBER_MILL:
+            resources.wood += 2  # +2 bonus → total +3 wood
+        elif (
+            tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
+            and tile.resource == Resource.CRYSTAL
+        ):
+            resources.crystal += 1  # +1 bonus → total +2 crystal
+
+    return resources
+
+
 def collect_resources(state: GameState) -> None:
-    """Collect resources from cities and improvements at turn end."""
+    """Collect resources from cities and tile yields at turn end.
+
+    Each city produces base food (+1, boosted by Granary). Additionally,
+    all tiles within city borders generate yields based on their terrain,
+    resource, and improvement.
+    """
+    # Base city food production (independent of territory)
     for city in state.cities.values():
         base_food = 1
         food_production = int(base_food * city.food_multiplier())
@@ -530,30 +781,149 @@ def collect_resources(state: GameState) -> None:
         current_resources.food += food_production
         state.stockpiles[city.owner] = current_resources
 
-    # Collect from tile improvements
+    # Collect yields from all owned tiles (within city borders)
     for tile in state.tiles:
-        if tile.improvement and tile.owner:
-            resources_generated = ResourceBag()
+        if tile.owner is None:
+            continue
+        if tile.city_id is not None and tile.city_id in state.cities:
+            # Skip the city tile itself — it contributes base food above
+            city = state.cities[tile.city_id]
+            if city.loc == tile.loc:
+                continue
 
-            if (
-                tile.improvement == ImprovementType.FARM
-                and tile.resource == Resource.FOOD
-            ):
-                resources_generated.food += 2
-            elif (
-                tile.improvement == ImprovementType.MINE
-                and tile.resource == Resource.ORE
-            ):
-                resources_generated.ore += 2
-            elif (
-                tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
-                and tile.resource == Resource.CRYSTAL
-            ):
-                resources_generated.crystal += 1
+        tile_yield = _calculate_tile_yield(tile)
+        if tile_yield != ResourceBag():
+            current_resources = state.stockpiles.get(tile.owner, ResourceBag())
+            state.stockpiles[tile.owner] = current_resources + tile_yield
 
-            if resources_generated != ResourceBag():
-                current_resources = state.stockpiles.get(tile.owner, ResourceBag())
-                state.stockpiles[tile.owner] = current_resources + resources_generated
+
+def eliminate_player(state: GameState, player_id: PlayerId) -> None:
+    """Eliminate a player: remove cities, clear tile ownership, destroy improvements.
+
+    The player remains in state.players for history but is added to eliminated_players.
+    """
+    if player_id in state.eliminated_players:
+        return
+
+    state.eliminated_players.append(player_id)
+
+    # Remove all cities owned by the player
+    city_ids_to_remove = [
+        cid for cid, city in state.cities.items() if city.owner == player_id
+    ]
+    for cid in city_ids_to_remove:
+        city = state.cities[cid]
+        city_tile = state.get_tile(city.loc)
+        if city_tile:
+            city_tile.city_id = None
+        del state.cities[cid]
+
+    # Remove all units owned by the player
+    unit_ids_to_remove = [
+        uid for uid, unit in state.units.items() if unit.owner == player_id
+    ]
+    for uid in unit_ids_to_remove:
+        unit = state.units[uid]
+        tile = state.get_tile(unit.loc)
+        if tile:
+            tile.unit_id = None
+        del state.units[uid]
+
+    # Clear tile ownership and destroy improvements
+    for tile in state.tiles:
+        if tile.owner == player_id:
+            tile.owner = None
+            tile.city_id = None
+            tile.improvement = None
+
+
+def calculate_scores(state: GameState) -> dict[PlayerId, int]:
+    """Calculate scores for all active players.
+
+    Weights: cities (50), territory tiles (2), units (10), resources (1 per 10).
+    """
+    scores: dict[PlayerId, int] = {}
+    active_players = [p for p in state.players if p not in state.eliminated_players]
+    for player in active_players:
+        score = 0
+        # Cities: 50 points each
+        score += sum(50 for city in state.cities.values() if city.owner == player)
+        # Territory: 2 points per owned tile
+        score += sum(2 for tile in state.tiles if tile.owner == player)
+        # Units: 10 points each
+        score += sum(10 for unit in state.units.values() if unit.owner == player)
+        # Resources: 1 point per 10 resources
+        resources = state.stockpiles.get(player, ResourceBag())
+        total_resources = (
+            resources.food + resources.wood + resources.ore + resources.crystal
+        )
+        score += total_resources // 10
+        scores[player] = score
+    return scores
+
+
+def check_elimination(state: GameState) -> list[PlayerId]:
+    """Check for players that should be eliminated this turn.
+
+    A player is eliminated when:
+    - They lose their last city (if they ever had one)
+    - They lose their last unit without ever having founded a city
+    """
+    if "elimination" not in state.victory_conditions:
+        return []
+
+    newly_eliminated: list[PlayerId] = []
+    for player in state.players:
+        if player in state.eliminated_players:
+            continue
+
+        has_city = any(city.owner == player for city in state.cities.values())
+        has_unit = any(unit.owner == player for unit in state.units.values())
+
+        if not has_city and not has_unit:
+            # Player has nothing — eliminate
+            newly_eliminated.append(player)
+
+    return newly_eliminated
+
+
+def check_victory(state: GameState) -> VictoryResult:
+    """Check all enabled victory conditions. Returns VictoryResult.
+
+    Priority order when multiple conditions trigger on the same turn:
+    1. Domination (highest priority)
+    2. Economic
+    3. Score (only at turn limit)
+    """
+    active_players = [p for p in state.players if p not in state.eliminated_players]
+
+    # Domination: last player with at least one city
+    if "domination" in state.victory_conditions:
+        players_with_cities = {city.owner for city in state.cities.values()}
+        # Filter to active players only
+        players_with_cities = players_with_cities & set(active_players)
+        if len(players_with_cities) == 1 and len(active_players) >= 2:
+            winner = next(iter(players_with_cities))
+            return VictoryResult(winner=winner, victory_type="domination")
+        if len(active_players) == 1:
+            return VictoryResult(winner=active_players[0], victory_type="domination")
+
+    # Economic: stockpile totals >= 1000
+    if "economic" in state.victory_conditions:
+        for player in active_players:
+            resources = state.stockpiles.get(player, ResourceBag())
+            total = resources.food + resources.wood + resources.ore + resources.crystal
+            if total >= 1000:
+                return VictoryResult(winner=player, victory_type="economic")
+
+    # Score at turn limit
+    if "score" in state.victory_conditions and state.turn >= state.max_turns:
+        scores = calculate_scores(state)
+        if scores:
+            winner = max(scores, key=lambda k: scores[k])
+            return VictoryResult(winner=winner, victory_type="score", scores=scores)
+
+    return VictoryResult()
 
 
 def reset_unit_moves(state: GameState) -> None:
@@ -586,28 +956,18 @@ def resolve_turn(
         actions = player_actions.get(player_id, [])
 
         for action in actions:
-            if action.type == "MOVE":
+            if isinstance(action, MoveAction):
                 result = execute_move(state, action)
-            elif action.type == "ATTACK":
+            elif isinstance(action, AttackAction):
                 result = execute_attack(state, action)
-            elif action.type == "FOUND_CITY":
+            elif isinstance(action, FoundCityAction):
                 result = execute_found_city(state, action)
-            elif action.type == "TRAIN_UNIT":
+            elif isinstance(action, TrainUnitAction):
                 result = execute_train_unit(state, action)
-            elif action.type == "BUILD_IMPROVEMENT":
-                # TODO: Implement improvement building
-                result = ActionResult(
-                    success=False,
-                    message="Improvement building not implemented yet",
-                    action=action,
-                )
-            elif action.type == "BUILD_BUILDING":
-                # TODO: Implement building construction
-                result = ActionResult(
-                    success=False,
-                    message="Building construction not implemented yet",
-                    action=action,
-                )
+            elif isinstance(action, BuildImprovementAction):
+                result = execute_build_improvement(state, action)
+            elif isinstance(action, BuildBuildingAction):
+                result = execute_build_building(state, action)
             else:
                 result = ActionResult(
                     success=False,
@@ -619,8 +979,24 @@ def resolve_turn(
 
         results[player_id] = player_results
 
+    # Check for eliminations after actions resolve
+    newly_eliminated = check_elimination(state)
+    for player_id in newly_eliminated:
+        eliminate_player(state, player_id)
+
+    # Expand borders (culture accumulation + border expansion)
+    accumulate_culture(state)
+
     # Collect resources at end of turn
     collect_resources(state)
+
+    # Check for eliminations again (in case actions during this phase caused them)
+    newly_eliminated = check_elimination(state)
+    for player_id in newly_eliminated:
+        eliminate_player(state, player_id)
+
+    # Check victory conditions
+    victory = check_victory(state)
 
     # Store current turn number before incrementing
     current_turn = state.turn
@@ -632,4 +1008,5 @@ def resolve_turn(
         turn=current_turn,
         player_actions=results,
         state_hash=state.hash_state(),
+        victory=victory if victory.victory_type != "none" else None,
     )

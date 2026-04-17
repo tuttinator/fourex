@@ -75,7 +75,7 @@ export interface PromptLog {
 export interface ActionResult {
 	success: boolean;
 	message: string;
-	action: any;
+	action: unknown;
 }
 
 export interface TurnResult {
@@ -84,93 +84,19 @@ export interface TurnResult {
 	state_hash: string;
 }
 
-// WebSocket event types
-export interface TurnStartEvent {
-	type: "turn_start";
-	turn: number;
+// Game summary for listing
+export interface GameSummary {
 	game_id: string;
-}
-
-export interface TurnEndEvent {
-	type: "turn_end";
-	turn: number;
-	game_id: string;
-	result: TurnResult;
-}
-
-export interface DiplomacyEvent {
-	type: "diplomacy";
-	from_player: PlayerId;
-	to_player: PlayerId;
-	new_state: DiplomaticState;
-}
-
-export interface CombatEvent {
-	type: "combat";
-	attacker_id: number;
-	target_id: number;
-	damage: number;
-	result: "hit" | "destroyed" | "counter";
-}
-
-export interface GameInfoEvent {
-	type: "game_info";
-	game_id: string;
-	message: string;
-}
-
-export type GameEvent =
-	| TurnStartEvent
-	| TurnEndEvent
-	| DiplomacyEvent
-	| CombatEvent
-	| GameInfoEvent;
-
-// Game list for lobby
-export interface GameInfo {
-	id: string;
-	turn: number;
+	player_slots: number;
 	players: PlayerId[];
-	status: "active" | "finished";
-	created_at: string;
-	winner?: PlayerId;
-}
-
-// Admin types
-export interface GameListItem {
-	id: string;
 	turn: number;
-	status: "active" | "paused" | "finished";
-	createdAt: string;
-	players: PlayerInfo[];
-}
-
-export interface PlayerInfo {
-	id: string;
-	name: string;
-	status: "active" | "paused" | "disconnected";
-}
-
-export interface SystemMetrics {
-	activeGames: number;
-	activePlayers: number;
-	cpuUsage: number;
-	memoryUsage: number;
-	diskUsage: number;
-	requestsPerMinute: number;
-	avgResponseTime: number;
-	errorRate: number;
-	activeConnections: number;
-}
-
-export interface PlayerStats {
-	id: string;
-	name: string;
-	gamesPlayed: number;
-	winRate: number;
-	avgTurns: number;
-	totalTokens: number;
-	avgLatency: number;
+	max_turns: number;
+	status: "waiting" | "active" | "ended" | "created";
+	winner: string | null;
+	victory_type: string | null;
+	created_at: string;
+	updated_at: string;
+	ended_at: string | null;
 }
 
 // API responses
@@ -185,28 +111,83 @@ export interface CreateGameRequest {
 	seed?: number;
 }
 
-export interface GameListResponse {
-	games: string[];
+export interface CreateLobbyRequest {
+	player_slots: number;
+	map_width?: number;
+	map_height?: number;
+	seed?: number;
 }
 
-// Event log types for UI
-export interface UIGameEvent {
-	id: string;
-	type:
-		| "turn_start"
-		| "turn_end"
-		| "combat"
-		| "diplomacy"
-		| "city_founded"
-		| "unit_trained"
-		| "player_action"
-		| "game_info";
-	timestamp: Date;
-	message: string;
-	severity: "info" | "warning" | "error";
-	playerId?: string;
-	turn?: number;
-	rawEvent?: Record<string, unknown>; // Store the original WebSocket event for debugging
+export interface GameDetailResponse {
+	game_id: string;
+	player_slots: number;
+	players: PlayerId[];
+	creator: string | null;
+	turn: number;
+	max_turns: number;
+	map_width: number;
+	map_height: number;
+	seed: number;
+	status: "waiting" | "active" | "ended" | "created";
+	winner: string | null;
+	victory_type: string | null;
+	created_at: string;
+	updated_at: string;
+	ended_at: string | null;
+}
+
+export interface GamesListResponse {
+	games: GameSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+}
+
+export interface GamesListParams {
+	status?: "waiting" | "active" | "ended" | "created";
+	sort_by?: "created_at" | "turn" | "status";
+	sort_order?: "asc" | "desc";
+	offset?: number;
+	limit?: number;
+}
+
+// Turn history & replay types
+export interface TurnSummary {
+	turn_number: number;
+	state_hash: string;
+	player_count: number;
+	completed_at: string | null;
+}
+
+export interface TurnListResponse {
+	turns: TurnSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+}
+
+export interface TurnDetailResponse {
+	turn_number: number;
+	player_actions: Record<PlayerId, ActionResult[]>;
+	action_results: Record<PlayerId, ActionResult[]>;
+	state_hash: string;
+	completed_at: string | null;
+}
+
+export interface PromptLogEntry {
+	player_id: PlayerId;
+	prompt: string;
+	response: string;
+	tokens_in: number;
+	tokens_out: number;
+	latency_ms: number;
+	llm_provider: string | null;
+	llm_model: string | null;
+}
+
+export interface TurnPromptsResponse {
+	turn_number: number;
+	prompts: PromptLogEntry[];
 }
 
 // Frontend-specific types
@@ -216,12 +197,8 @@ export interface GameStore {
 	latestTurn: number;
 	selectedTurn: number;
 	prompts: Record<number, PromptLog[]>;
-	events: UIGameEvent[];
-	connectionStatus: "connecting" | "open" | "closed" | "error";
 	selectedPlayer: PlayerId | null;
 	fogOfWarEnabled: boolean;
-	diffMode: boolean;
-	autoZoom: boolean;
 	isLoading: boolean;
 	error: string | null;
 }
@@ -244,7 +221,6 @@ export interface MapCanvasProps {
 	gameState: GameState;
 	selectedPlayer?: PlayerId;
 	fogOfWarEnabled?: boolean;
-	diffMode?: boolean;
 	onTileClick?: (tile: Tile) => void;
 	onUnitClick?: (unit: Unit) => void;
 	onCityClick?: (city: City) => void;
@@ -256,37 +232,15 @@ export interface PlayerListProps {
 	players: PlayerId[];
 	gameState: GameState;
 	selectedPlayer?: PlayerId;
-	onPlayerSelect: (player: PlayerId) => void;
+	onPlayerSelect: (player: PlayerId | null) => void;
 	onFogToggle: (enabled: boolean) => void;
 }
 
-export interface TurnTimelineProps {
-	currentTurn: number;
-	maxTurns: number;
-	selectedTurn: number;
-	onSeek: (turn: number) => void;
-	isPlaying?: boolean;
-	onPlayPause?: () => void;
-}
-
 export interface PromptAccordionProps {
-	prompts: PromptLog[];
+	prompts: PromptLogEntry[];
 	players: PlayerId[];
 	selectedTurn: number;
 }
-
-// Utility types
-export type GameAction =
-	| { type: "SET_GAME_ID"; payload: string }
-	| { type: "SET_GAME_STATE"; payload: { turn: number; state: GameState } }
-	| { type: "SET_SELECTED_TURN"; payload: number }
-	| { type: "SET_SELECTED_PLAYER"; payload: PlayerId | null }
-	| { type: "TOGGLE_FOG_OF_WAR" }
-	| { type: "TOGGLE_DIFF_MODE" }
-	| { type: "SET_CONNECTION_STATUS"; payload: GameStore["connectionStatus"] }
-	| { type: "SET_PROMPTS"; payload: { turn: number; prompts: PromptLog[] } }
-	| { type: "SET_LOADING"; payload: boolean }
-	| { type: "SET_ERROR"; payload: string | null };
 
 export const UNIT_COLORS: Record<UnitType, string> = {
 	scout: "#22c55e",

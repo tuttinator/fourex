@@ -3,10 +3,15 @@ const nextConfig = {
 	experimental: {
 		// Enable React 19 features
 		ppr: false,
-		reactCompiler: false,
 	},
+	reactCompiler: false,
 	images: {
-		domains: ["localhost"],
+		remotePatterns: [
+			{
+				protocol: "http",
+				hostname: "localhost",
+			},
+		],
 	},
 };
 

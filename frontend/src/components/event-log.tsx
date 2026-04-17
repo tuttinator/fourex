@@ -1,105 +1,107 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { formatRelativeTime } from "@/lib/utils";
-import { useGameStore } from "@/store/game-store";
-import type { UIGameEvent } from "@/types/game";
+import type { GameState } from "@/types/game";
+import { PLAYER_COLORS } from "@/types/game";
 
-export function EventLog() {
-	const events = useGameStore((state) => state.events);
+interface EventLogProps {
+	gameState?: GameState;
+}
 
-	const getSeverityColor = (severity: UIGameEvent["severity"]) => {
-		switch (severity) {
-			case "info":
-				return "default";
-			case "warning":
-				return "secondary";
-			case "error":
-				return "destructive";
-			default:
-				return "default";
-		}
-	};
+export function EventLog({ gameState }: EventLogProps) {
+	if (!gameState) {
+		return (
+			<Card className="h-full flex flex-col">
+				<CardHeader className="pb-3">
+					<CardTitle className="text-sm">Event Log</CardTitle>
+				</CardHeader>
+				<CardContent className="flex-1">
+					<div className="text-center text-muted-foreground py-8">
+						<p className="text-sm">No events available</p>
+					</div>
+				</CardContent>
+			</Card>
+		);
+	}
 
-	const getTypeIcon = (type: UIGameEvent["type"]) => {
-		switch (type) {
-			case "turn_start":
-				return "▶️";
-			case "turn_end":
-				return "⏹️";
-			case "combat":
-				return "⚔️";
-			case "diplomacy":
-				return "🤝";
-			case "city_founded":
-				return "🏛️";
-			case "unit_trained":
-				return "👥";
-			case "player_action":
-				return "⚡";
-			case "game_info":
-				return "ℹ️";
-			default:
-				return "ℹ️";
-		}
-	};
+	const playerSummaries = gameState.players.map((player, index) => {
+		const units = Object.values(gameState.units).filter(
+			(u) => u.owner === player,
+		);
+		const cities = Object.values(gameState.cities).filter(
+			(c) => c.owner === player,
+		);
+		const resources = gameState.stockpiles[player];
+		const territory = gameState.tiles.filter(
+			(t) => t.owner === player,
+		).length;
+
+		return {
+			player,
+			index,
+			unitCount: units.length,
+			cityCount: cities.length,
+			territory,
+			totalResources: resources
+				? resources.food + resources.wood + resources.ore + resources.crystal
+				: 0,
+		};
+	});
 
 	return (
-		<Card className="h-full flex flex-col">
-			<CardHeader className="pb-3">
-				<CardTitle className="text-sm">Event Log</CardTitle>
-			</CardHeader>
-			<CardContent className="flex-1 p-0">
-				<ScrollArea className="h-full px-4 pb-4">
-					<div className="space-y-3">
-						{events.length === 0 ? (
-							<div className="text-center text-muted-foreground py-8">
-								<p className="text-sm">No events yet...</p>
-								<p className="text-xs mt-2">
-									Events will appear here as the game progresses
-								</p>
-							</div>
-						) : (
-							events.map((event) => (
-								<div
-									key={event.id}
-									className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors"
-								>
-									<span className="text-sm">{getTypeIcon(event.type)}</span>
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center gap-2 mb-1">
-											<Badge
-												variant={getSeverityColor(event.severity)}
-												className="text-xs"
-											>
-												{event.type.replace("_", " ")}
-											</Badge>
-											<span className="text-xs text-muted-foreground">
-												{formatRelativeTime(event.timestamp)}
-											</span>
-											{event.turn !== undefined && (
-												<span className="text-xs text-muted-foreground">
-													T{event.turn}
-												</span>
-											)}
-										</div>
-										<p className="text-sm text-foreground break-words">
-											{event.message}
-										</p>
-										{event.playerId && (
-											<p className="text-xs text-muted-foreground mt-1">
-												Player: {event.playerId}
-											</p>
-										)}
-									</div>
+		<div className="p-4 space-y-4">
+			<Card>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-sm">
+						Turn {gameState.turn} Summary
+					</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-3">
+					{playerSummaries.map(
+						({
+							player,
+							index,
+							unitCount,
+							cityCount,
+							territory,
+							totalResources,
+						}) => (
+							<div key={player} className="space-y-1">
+								<div className="flex items-center gap-2">
+									<div
+										className="w-2.5 h-2.5 rounded-full"
+										style={{
+											backgroundColor:
+												PLAYER_COLORS[index] ?? "#888",
+										}}
+									/>
+									<span className="text-sm font-medium">
+										{player}
+									</span>
 								</div>
-							))
-						)}
-					</div>
-				</ScrollArea>
-			</CardContent>
-		</Card>
+								<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-muted-foreground ml-4">
+									<span>Units: {unitCount}</span>
+									<span>Cities: {cityCount}</span>
+									<span>Territory: {territory}</span>
+									<span>Resources: {totalResources}</span>
+								</div>
+							</div>
+						),
+					)}
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-sm">Turn Actions</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<p className="text-xs text-muted-foreground text-center py-4">
+						Detailed action results will be available with turn
+						replay (Phase 7).
+					</p>
+				</CardContent>
+			</Card>
+		</div>
 	);
 }

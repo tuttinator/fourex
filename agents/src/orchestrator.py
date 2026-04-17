@@ -43,7 +43,7 @@ class GameConfig:
     personalities: dict[str, str]
     max_turns: int = 100
     turn_timeout: int = 30
-    game_backend_url: str = "http://localhost:8000/api/v1"
+    game_backend_url: str = "http://localhost:8010/api/v1"
     llm_backend_url: str = "http://localhost:1234/v1"
     llm_model: str = "qwen/qwen3-32b"
     primary_provider: str = "llm_studio"
@@ -172,7 +172,8 @@ class GameOrchestrator:
             final_state = self.resilient_connection.get_game_state(self.config.game_id)
             game_result = self._analyze_final_state(final_state)
 
-            console.print(f"[green]Game completed after {final_state.turn} turns[/green]")
+            turn_count = final_state.turn if final_state else "unknown"
+            console.print(f"[green]Game completed after {turn_count} turns[/green]")
             self._display_game_summary(game_result)
 
         except KeyboardInterrupt:
@@ -325,7 +326,12 @@ class GameOrchestrator:
 
         for player_id, data in sorted_players:
             resources = data["resources"]
-            resource_str = f"F:{resources.get('food', 0)} W:{resources.get('wood', 0)} O:{resources.get('ore', 0)} C:{resources.get('crystal', 0)}"
+            resource_str = (
+                f"F:{resources.get('food', 0)} "
+                f"W:{resources.get('wood', 0)} "
+                f"O:{resources.get('ore', 0)} "
+                f"C:{resources.get('crystal', 0)}"
+            )
 
             table.add_row(
                 player_id,
@@ -406,7 +412,7 @@ async def main():
 
     except Exception as e:
         console.print(f"[red]Error running game: {e}[/red]")
-        logfire.exception("Game orchestration failed")
+        logfire.error("Game orchestration failed", _exc_info=True)
         return {"error": str(e)}
 
 

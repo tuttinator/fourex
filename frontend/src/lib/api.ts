@@ -1,19 +1,19 @@
 import type {
-	ApiResponse,
 	CreateGameRequest,
-	GameInfo,
-	GameListItem,
-	GameListResponse,
+	CreateLobbyRequest,
+	GameDetailResponse,
+	GamesListParams,
+	GamesListResponse,
 	GameState,
-	PlayerStats,
-	PromptLog,
-	SystemMetrics,
+	TurnDetailResponse,
+	TurnListResponse,
+	TurnPromptsResponse,
 } from "@/types/game";
 
 const API_BASE_URL =
-	process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+	process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010/api/v1";
 
-class ApiError extends Error {
+export class ApiError extends Error {
 	constructor(
 		public status: number,
 		message: string,
@@ -29,11 +29,10 @@ async function fetchApi<T>(
 ): Promise<T> {
 	const url = `${API_BASE_URL}${endpoint}`;
 
-	const defaultHeaders = {
+	const defaultHeaders: Record<string, string> = {
 		"Content-Type": "application/json",
 	};
 
-	// Add auth token if available
 	const token =
 		typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
 
@@ -76,23 +75,62 @@ async function fetchApi<T>(
 }
 
 export const api = {
-	// Game management
-	async listGames(): Promise<string[]> {
-		const response = await fetchApi<GameListResponse>("/games");
-		return response.games;
-	},
+	async listGames(
+		params: GamesListParams = {},
+	): Promise<GamesListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.status) searchParams.set("status", params.status);
+		if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+		if (params.sort_order) searchParams.set("sort_order", params.sort_order);
+		if (params.offset !== undefined)
+			searchParams.set("offset", String(params.offset));
+		if (params.limit !== undefined)
+			searchParams.set("limit", String(params.limit));
 
-	async getGames(): Promise<GameListItem[]> {
-		return fetchApi("/admin/games");
+		const qs = searchParams.toString();
+		return fetchApi<GamesListResponse>(`/games${qs ? `?${qs}` : ""}`);
 	},
 
 	async createGame(
 		gameId: string,
 		request: CreateGameRequest,
-	): Promise<ApiResponse<any>> {
+	): Promise<GameState> {
 		return fetchApi(`/games/${gameId}/start`, {
 			method: "POST",
 			body: JSON.stringify(request),
+		});
+	},
+
+	async createLobby(
+		gameId: string,
+		request: CreateLobbyRequest,
+	): Promise<GameDetailResponse> {
+		const params = new URLSearchParams({ game_id: gameId });
+		return fetchApi(`/games?${params}`, {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+	},
+
+	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}`);
+	},
+
+	async joinGame(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/join`, {
+			method: "POST",
+		});
+	},
+
+	async leaveGame(gameId: string): Promise<GameDetailResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/leave`, {
+			method: "POST",
+		});
+	},
+
+	async startGame(gameId: string): Promise<{ status: string; game_id: string }> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/start`, {
+			method: "POST",
 		});
 	},
 
@@ -100,183 +138,74 @@ export const api = {
 		return fetchApi(`/state?game_id=${gameId}`);
 	},
 
-	// Snapshots and history
-	async getSnapshot(gameId: string, turn: number): Promise<GameState> {
-		return fetchApi(`/snapshots/${gameId}/turn-${turn}`);
+	async getGameStateAsPlayer(gameId: string, playerId: string): Promise<GameState> {
+		return fetchApi(`/state?game_id=${gameId}`, {
+			headers: {
+				Authorization: `Bearer player_${playerId}`,
+			},
+		});
 	},
 
-	async getPrompts(gameId: string, turn: number): Promise<PromptLog[]> {
-		return fetchApi(`/logs/${gameId}/turn-${turn}/prompts`);
-	},
-
-	// Admin functions
-	async getSystemMetrics(): Promise<SystemMetrics> {
-		return fetchApi("/admin/metrics");
-	},
-
-	async getPlayerStats(): Promise<PlayerStats[]> {
-		return fetchApi("/admin/players");
-	},
-
-	async gameAction(
+	async listTurns(
 		gameId: string,
-		action: "pause" | "resume" | "stop",
-	): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/${action}`, {
-			method: "POST",
-		});
+		params: { offset?: number; limit?: number } = {},
+	): Promise<TurnListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.offset !== undefined)
+			searchParams.set("offset", String(params.offset));
+		if (params.limit !== undefined)
+			searchParams.set("limit", String(params.limit));
+		const qs = searchParams.toString();
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns${qs ? `?${qs}` : ""}`,
+		);
 	},
 
-	async playerAction(
+	async getTurnDetail(
 		gameId: string,
-		playerId: string,
-		action: "kick" | "pause" | "resume",
-	): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/players/${playerId}/${action}`, {
-			method: "POST",
-		});
+		turnNumber: number,
+	): Promise<TurnDetailResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}`,
+		);
 	},
 
-	async fastForward(gameId: string, turns: number): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/ffwd`, {
-			method: "POST",
-			body: JSON.stringify({ turns }),
-		});
-	},
-
-	async kickPlayer(
+	async getTurnState(
 		gameId: string,
-		playerId: string,
-	): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/kick`, {
-			method: "POST",
-			body: JSON.stringify({ player_id: playerId }),
-		});
+		turnNumber: number,
+		player?: string,
+	): Promise<GameState> {
+		const params = player ? `?player=${encodeURIComponent(player)}` : "";
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/state${params}`,
+		);
 	},
 
-	async pauseGame(gameId: string): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/pause`, {
-			method: "POST",
-		});
-	},
-
-	async resumeGame(gameId: string): Promise<ApiResponse<any>> {
-		return fetchApi(`/admin/games/${gameId}/resume`, {
-			method: "POST",
-		});
+	async getTurnPrompts(
+		gameId: string,
+		turnNumber: number,
+	): Promise<TurnPromptsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/prompts`,
+		);
 	},
 };
 
-// WebSocket connection utility
-export class GameWebSocket {
-	private ws: WebSocket | null = null;
-	private gameId: string;
-	private callbacks: Map<string, Function[]> = new Map();
-	private reconnectAttempts = 0;
-	private maxReconnectAttempts = 5;
-
-	constructor(gameId: string) {
-		this.gameId = gameId;
-	}
-
-	connect(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const wsUrl = `${API_BASE_URL.replace("http", "ws")}/events?game_id=${this.gameId}`;
-			console.log("Attempting WebSocket connection to:", wsUrl);
-
-			try {
-				this.ws = new WebSocket(wsUrl);
-
-				this.ws.onopen = () => {
-					console.log("WebSocket connected successfully");
-					this.reconnectAttempts = 0;
-					this.emit("connection", "open");
-					resolve();
-				};
-
-				this.ws.onmessage = (event) => {
-					console.log("WebSocket message received:", event.data);
-					try {
-						const data = JSON.parse(event.data);
-						this.emit(data.type, data);
-						this.emit("message", data);
-					} catch (error) {
-						console.error("Failed to parse WebSocket message:", error);
-					}
-				};
-
-				this.ws.onclose = () => {
-					console.log("WebSocket connection closed");
-					this.emit("connection", "closed");
-					this.attemptReconnect();
-				};
-
-				this.ws.onerror = (error) => {
-					console.error("WebSocket error:", error);
-					this.emit("connection", "error");
-					reject(new Error("WebSocket connection failed"));
-				};
-			} catch (error) {
-				reject(error);
-			}
-		});
-	}
-
-	private attemptReconnect() {
-		if (this.reconnectAttempts < this.maxReconnectAttempts) {
-			this.reconnectAttempts++;
-			const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10000);
-
-			setTimeout(() => {
-				this.connect().catch(console.error);
-			}, delay);
-		}
-	}
-
-	on(event: string, callback: Function) {
-		if (!this.callbacks.has(event)) {
-			this.callbacks.set(event, []);
-		}
-		this.callbacks.get(event)!.push(callback);
-	}
-
-	off(event: string, callback: Function) {
-		const callbacks = this.callbacks.get(event);
-		if (callbacks) {
-			const index = callbacks.indexOf(callback);
-			if (index > -1) {
-				callbacks.splice(index, 1);
-			}
-		}
-	}
-
-	private emit(event: string, data: any) {
-		const callbacks = this.callbacks.get(event);
-		if (callbacks) {
-			callbacks.forEach((callback) => callback(data));
-		}
-	}
-
-	disconnect() {
-		if (this.ws) {
-			this.ws.close();
-			this.ws = null;
-		}
-		this.callbacks.clear();
-	}
-
-	get readyState() {
-		return this.ws?.readyState || WebSocket.CLOSED;
-	}
-}
-
 // React Query keys
 export const queryKeys = {
-	games: ["games"] as const,
-	gameState: (gameId: string) => ["game", gameId] as const,
-	snapshot: (gameId: string, turn: number) =>
-		["snapshot", gameId, turn] as const,
-	prompts: (gameId: string, turn: number) => ["prompts", gameId, turn] as const,
+	games: (params?: GamesListParams) =>
+		["games", params ?? {}] as const,
+	gameDetail: (gameId: string) => ["game", gameId, "detail"] as const,
+	gameState: (gameId: string, perspective?: string | null) =>
+		["game", gameId, "state", perspective ?? "god"] as const,
+	turnList: (gameId: string) =>
+		["game", gameId, "turns"] as const,
+	turnDetail: (gameId: string, turnNumber: number) =>
+		["game", gameId, "turn", turnNumber, "detail"] as const,
+	turnState: (gameId: string, turnNumber: number, perspective?: string | null) =>
+		["game", gameId, "turn", turnNumber, "state", perspective ?? "god"] as const,
+	turnPrompts: (gameId: string, turnNumber: number) =>
+		["game", gameId, "turn", turnNumber, "prompts"] as const,
 };
 
 // Utility functions

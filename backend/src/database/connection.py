@@ -4,6 +4,7 @@ Database connection and session management.
 
 import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import (
@@ -16,8 +17,13 @@ from sqlalchemy.pool import NullPool
 
 from .models import Base
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file.
+# Try both CWD/.env and backend/.env to support running from project root
+# (e.g. via the fourex-mcp entry point) or from backend/ directly.
+
+_backend_dir = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_backend_dir / ".env")
+load_dotenv()  # Also load CWD .env (won't overwrite existing vars)
 
 # Database configuration
 DATABASE_URL = os.getenv(

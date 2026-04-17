@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fourex-mcp": {
+      "command": "uv",
+      "args": ["run", "fourex-mcp", "stdio"]
+    }
+  }
+}

@@ -8,6 +8,7 @@ import sys
 
 from rich.console import Console
 from rich.panel import Panel
+from sqlalchemy import text
 
 from .connection import drop_db, get_engine, init_db
 
@@ -49,7 +50,7 @@ async def check_database():
 
         # Try to connect
         async with engine.begin() as conn:
-            result = await conn.execute("SELECT 1")
+            result = await conn.execute(text("SELECT 1"))
             row = result.fetchone()
             if row and row[0] == 1:
                 console.print("[green]✓ Database connection successful[/green]")

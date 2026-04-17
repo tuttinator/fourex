@@ -44,6 +44,9 @@ class BuildingType(str, Enum):
     GRANARY = "granary"
     BARRACKS = "barracks"
     WALLS = "walls"
+    MONUMENT = "monument"
+    LIBRARY = "library"
+    TEMPLE = "temple"
 
 
 class ImprovementType(str, Enum):
@@ -52,6 +55,7 @@ class ImprovementType(str, Enum):
     FARM = "farm"
     MINE = "mine"
     CRYSTAL_EXTRACTOR = "crystal_extractor"
+    LUMBER_MILL = "lumber_mill"
 
 
 class DiplomaticState(str, Enum):
@@ -172,6 +176,43 @@ UNIT_STATS = {
 }
 
 
+class ImprovementStats(BaseModel):
+    """Base stats for tile improvement types."""
+
+    cost: ResourceBag
+    valid_terrain: list[Terrain]
+    required_resource: Resource | None = None
+    effect: str
+
+
+IMPROVEMENT_STATS = {
+    ImprovementType.FARM: ImprovementStats(
+        cost=ResourceBag(wood=20),
+        valid_terrain=[Terrain.PLAINS],
+        required_resource=Resource.FOOD,
+        effect="+2 food bonus (total +3 food on food tile)",
+    ),
+    ImprovementType.MINE: ImprovementStats(
+        cost=ResourceBag(wood=20),
+        valid_terrain=[Terrain.MOUNTAIN],
+        required_resource=Resource.ORE,
+        effect="+2 ore bonus (total +3 ore on ore tile)",
+    ),
+    ImprovementType.LUMBER_MILL: ImprovementStats(
+        cost=ResourceBag(wood=10),
+        valid_terrain=[Terrain.FOREST],
+        required_resource=None,
+        effect="+2 wood bonus (total +3 wood on forest tile)",
+    ),
+    ImprovementType.CRYSTAL_EXTRACTOR: ImprovementStats(
+        cost=ResourceBag(wood=20, ore=10),
+        valid_terrain=[Terrain.PLAINS, Terrain.FOREST, Terrain.MOUNTAIN],
+        required_resource=Resource.CRYSTAL,
+        effect="+1 crystal bonus (total +2 crystal on crystal tile)",
+    ),
+}
+
+
 class BuildingStats(BaseModel):
     """Base stats for building types."""
 
@@ -189,6 +230,17 @@ BUILDING_STATS = {
     ),
     BuildingType.WALLS: BuildingStats(
         cost=ResourceBag(ore=40), hp=15, effect="City gains +5 HP & ranged counter-fire"
+    ),
+    BuildingType.MONUMENT: BuildingStats(
+        cost=ResourceBag(wood=20), hp=5, effect="+1 culture/turn"
+    ),
+    BuildingType.LIBRARY: BuildingStats(
+        cost=ResourceBag(wood=30, ore=10), hp=5, effect="+2 culture/turn"
+    ),
+    BuildingType.TEMPLE: BuildingStats(
+        cost=ResourceBag(wood=30, ore=20, crystal=10),
+        hp=5,
+        effect="+3 culture/turn",
     ),
 }
 
@@ -245,6 +297,8 @@ class City(BaseModel):
     hp: int = 10
     build_queue: BuildJob | None = None
     buildings: set[BuildingType] = Field(default_factory=set)
+    culture: int = 0
+    border_radius: int = 0
 
     def has_walls(self) -> bool:
         """Check if city has defensive walls."""
@@ -257,6 +311,17 @@ class City(BaseModel):
     def unit_cost_multiplier(self) -> float:
         """Get unit training cost multiplier from buildings."""
         return 0.75 if BuildingType.BARRACKS in self.buildings else 1.0
+
+    def culture_per_turn(self) -> int:
+        """Get culture output per turn from base + buildings."""
+        culture = 1  # base
+        if BuildingType.MONUMENT in self.buildings:
+            culture += 1
+        if BuildingType.LIBRARY in self.buildings:
+            culture += 2
+        if BuildingType.TEMPLE in self.buildings:
+            culture += 3
+        return culture
 
 
 class DiplomacyRequest(BaseModel):
@@ -287,6 +352,14 @@ class PromptLog(BaseModel):
     latency_ms: int
 
 
+class VictoryResult(BaseModel):
+    """Result of a victory check."""
+
+    winner: PlayerId | None = None
+    victory_type: str = "none"
+    scores: dict[PlayerId, int] = Field(default_factory=dict)
+
+
 class GameState(BaseModel):
     """Complete game state."""
 
@@ -305,6 +378,10 @@ class GameState(BaseModel):
     next_unit_id: int = 1
     next_city_id: int = 1
     max_turns: int = 100
+    victory_conditions: list[str] = Field(
+        default_factory=lambda: ["domination", "economic", "elimination", "score"]
+    )
+    eliminated_players: list[PlayerId] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -412,3 +489,4 @@ class TurnResult(BaseModel):
     turn: int
     player_actions: dict[PlayerId, list[ActionResult]]
     state_hash: str
+    victory: VictoryResult | None = None

@@ -24,7 +24,7 @@ def test_imports():
         return False
 
 
-def test_game_backend(url="http://localhost:8000"):
+def test_game_backend(url="http://localhost:8010"):
     """Test connection to game backend"""
     try:
         response = requests.get(f"{url}/health", timeout=5)
@@ -172,7 +172,7 @@ def test_agent_mcp_integration():
         from src.agent import FourXAgent
 
         agent = FourXAgent("test_player", "balanced")
-        mcp_available = agent.mcp_client.is_available()
+        mcp_available = agent.mcp_client is not None and agent.mcp_client.is_available()
         console.print(
             f"[green]✓ Agent MCP integration works, MCP available: {mcp_available}[/green]"
         )

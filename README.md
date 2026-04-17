@@ -17,19 +17,22 @@ Run all the dependencies locally
 
 ```bash
 # Install dependencies
-make install
+mise run install
 
-# Setup local Postgres database
-createdb fourex
-psql fourex -c "CREATE USER fourex WITH PASSWORD 'fourex';"
-psql fourex -c "GRANT ALL PRIVILEGES ON DATABASE fourex TO fourex;"
-make db-init
+# Run tests
+mise run test
 
-# Create the backend .env configuration
-cp backend/.env.example backend/.env
+# Start backend dev server (FastAPI on :8010)
+mise run backend
 
-# Start development server
-make run-dev
+# Start frontend dev server (Next.js on :3000)
+mise run frontend
+
+# Run AI agents (quick test game)
+mise run quick
+
+# Run MCP server (stdio mode)
+mise run serve
 
 # In a separate terminal window, start the MCP server
 # (Required for AI agents with advanced analysis)
@@ -40,56 +43,7 @@ make mcp-server
 make test
 
 # Run CLI demo with 4 players for 10 turns
-make run-cli
-
-# Quick AI agent test game
-make agents-quick
-```
-
-## Running Services
-
-The system consists of two main services that work together:
-
-1. **Game Backend** (`make run-dev`) - REST API server on port 8000
-2. **MCP Server** (`make mcp-server`) - Model Context Protocol server for AI analysis
-
-**Important**: These services must be run in separate terminal windows due to asyncio event loop conflicts.
-
-### Option 1: Manual (Recommended for development)
-
-```bash
-# Terminal 1: Start backend
-make run-dev
-
-# Terminal 2: Start MCP server
-make mcp-server
-```
-
-### Option 2: Automated background processes
-
-```bash
-# Start both services in background
-make run-all
-
-# Check service status
-make status
-
-# Stop all services
-make stop-all
-```
-
-### Troubleshooting
-
-If you see "Already running asyncio in this thread" error:
-
-- The MCP server cannot run in the same process as the dev server
-- Open a new terminal window and run `make mcp-server` there
-- Or use `make run-all` to run both services in background
-
-```markdown
-
-# Run interactive agent setup
-make agents-interactive
+mise run run-cli
 ```
 
 ## Game Mechanics
@@ -104,37 +58,89 @@ make agents-interactive
 
 ```bash
 # Create game
-curl -X POST "http://localhost:8000/api/v1/games/test/start" \
+curl -X POST "http://localhost:8010/api/v1/games/test/start" \
   -H "Authorization: Bearer player_alice" \
   -H "Content-Type: application/json" \
   -d '{"players": ["alice", "bob"], "seed": 42}'
 
 # Get game state (with fog-of-war)
-curl "http://localhost:8000/api/v1/state?game_id=test" \
+curl "http://localhost:8010/api/v1/state?game_id=test" \
   -H "Authorization: Bearer player_alice"
 
 # Submit actions
-curl -X POST "http://localhost:8000/api/v1/actions?game_id=test" \
+curl -X POST "http://localhost:8010/api/v1/actions?game_id=test" \
   -H "Authorization: Bearer player_alice" \
   -H "Content-Type: application/json" \
   -d '[{"type": "MOVE", "unit_id": 1, "to": {"x": 5, "y": 6}}]'
+```
+
+## Playing with an AI Agent (Claude Code / Goose)
+
+![Claude Code playing FourEx](docs/claude-code-screenshot.png)
+
+AI agents can play FourEx directly via the MCP server defined in `.mcp.json`. Tools like [Claude Code](https://claude.ai/code) and [Goose](https://block.github.io/goose/) automatically discover this file and connect to the server — no manual configuration needed.
+
+### How it works
+
+The `.mcp.json` file at the project root declares the `fourex-mcp` server:
+
+```json
+{
+  "mcpServers": {
+    "fourex-mcp": {
+      "command": "uv",
+      "args": ["run", "fourex-mcp", "stdio"]
+    }
+  }
+}
+```
+
+When you open this project in Claude Code or Goose, the agent connects to the MCP server over stdio and gains access to game tools — creating games, reading state, submitting actions, and strategic analysis.
+
+### Quick start prompts
+
+Once you've opened the project, try these prompts:
+
+**Claude Code:**
+```
+Create a new 4X game with 2 AI players and play as player 1.
+Focus on economic growth early, then build military.
+```
+
+```
+Join the existing game and tell me what you see.
+What are the nearest resources and where should I expand?
+```
+
+```
+/play-4x
+```
+
+**Goose:**
+```
+Use the fourex-mcp tools to create a 2-player game with seed 42.
+Join as player 1 and play the first 10 turns with a balanced strategy.
+```
+
+```
+Analyse my current game state and suggest the best moves for this turn.
 ```
 
 ## Development
 
 ```bash
 # Format code
-make format
+mise run format
 
 # Run linting
-make lint
+mise run lint
 
 # Run tests with coverage
-make test-cov
+mise run test-cov
 
 # Start with Docker Compose
 docker-compose up -d postgres redis
-make run-dev
+mise run backend
 ```
 
 ## Architecture

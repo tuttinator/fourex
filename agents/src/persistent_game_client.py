@@ -18,7 +18,9 @@ logger = structlog.get_logger()
 class PersistentGameClient(GameClient):
     """Game client with database persistence support."""
 
-    def __init__(self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""):
+    def __init__(
+        self, base_url: str = "http://localhost:8010/api/v1", player_id: str = ""
+    ):
         super().__init__(base_url, player_id)
         self.logger = logger.bind(component="persistent_game_client", player_id=player_id)
 
@@ -244,11 +246,42 @@ class PersistentGameClient(GameClient):
 
         return result
 
+    def write_scratchpad(
+        self, game_id: str, content: str, turn_number: int | None = None
+    ) -> bool:
+        """Write agent scratchpad entry for the current or specified turn."""
+        try:
+            payload: dict[str, Any] = {"content": content}
+            if turn_number is not None:
+                payload["turn_number"] = turn_number
+
+            response = self.session.post(
+                f"{self.base_url}/scratchpad?game_id={game_id}",
+                json=payload,
+            )
+
+            if response.status_code == 200:
+                self.logger.info("Scratchpad saved", game_id=game_id)
+                return True
+            else:
+                self.logger.error(
+                    "Failed to save scratchpad",
+                    status_code=response.status_code,
+                    response=response.text,
+                )
+                return False
+
+        except Exception as e:
+            self.logger.error("Error saving scratchpad", error=str(e))
+            return False
+
 
 class ResilientGameConnection:
     """Manages resilient connections to persistent games."""
 
-    def __init__(self, base_url: str = "http://localhost:8000/api/v1", player_id: str = ""):
+    def __init__(
+        self, base_url: str = "http://localhost:8010/api/v1", player_id: str = ""
+    ):
         self.client = PersistentGameClient(base_url, player_id)
         self.player_id = player_id
         self.logger = logger.bind(component="resilient_game_connection", player_id=player_id)
@@ -306,5 +339,14 @@ class ResilientGameConnection:
             return self.client.submit_actions(game_id, self.player_id, actions)
         except Exception as e:
             self.logger.error("Error submitting actions", error=str(e))
-            # Could add retry logic here
+            return False
+
+    def write_scratchpad(
+        self, game_id: str, content: str, turn_number: int | None = None
+    ) -> bool:
+        """Write scratchpad entry with resilience."""
+        try:
+            return self.client.write_scratchpad(game_id, content, turn_number)
+        except Exception as e:
+            self.logger.error("Error writing scratchpad", error=str(e))
             return False

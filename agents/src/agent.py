@@ -189,7 +189,7 @@ class GameClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000/api/v1",
+        base_url: str = "http://localhost:8010/api/v1",
         player_id: str | None = None,
     ):
         self.base_url = base_url
@@ -226,11 +226,19 @@ class GameClient:
                 id=tile_data["id"],
                 loc=Coord(tile_data["loc"]["x"], tile_data["loc"]["y"]),
                 terrain=Terrain(tile_data["terrain"]),
-                resource=(Resource(tile_data["resource"]) if tile_data.get("resource") else None),
+                resource=(
+                    Resource(tile_data["resource"])
+                    if tile_data.get("resource")
+                    else None
+                ),
                 owner=tile_data.get("owner"),
                 city_id=tile_data.get("city_id"),
                 unit_id=tile_data.get("unit_id"),
-                improvement=(ImprovementType(tile_data["improvement"]) if tile_data.get("improvement") else None),
+                improvement=(
+                    ImprovementType(tile_data["improvement"])
+                    if tile_data.get("improvement")
+                    else None
+                ),
             )
             tiles.append(tile)
 
@@ -624,12 +632,12 @@ Map Size: {game_state.map_width}x{game_state.map_height}
 Visible Area: {len(visible_tiles)} tiles (sight range: {sight_range})
 Other Players: {[p for p in game_state.players if p != player_id]}
 
-Visible Enemy Units: {len(visible_enemy_units)} ({
-            ", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])
-        })
-Visible Enemy Cities: {len(visible_enemy_cities)} ({
-            ", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])
-        })
+Visible Enemy Units: {len(visible_enemy_units)} (
+{", ".join([f"{u.type.value}@({u.loc.x},{u.loc.y})" for u in visible_enemy_units])}
+)
+Visible Enemy Cities: {len(visible_enemy_cities)} (
+{", ".join([f"City@({c.loc.x},{c.loc.y})" for c in visible_enemy_cities])}
+)
 
 Key Terrain Features (visible):
 - Plains: {len([t for t in visible_tiles if t.terrain == Terrain.PLAINS])}
@@ -765,7 +773,7 @@ class FourXAgent:
         personality: str = "balanced",
         game_client: GameClient | None = None,
         llm_client: EnhancedLLMClient | None = None,
-        game_backend_url: str = "http://localhost:8000/api/v1",
+        game_backend_url: str = "http://localhost:8010/api/v1",
         primary_provider: str = "llm_studio",
         fallback_providers: list[str] | None = None,
         use_persistent_client: bool = True,
@@ -774,6 +782,9 @@ class FourXAgent:
 
         self.player_id = player_id
         self.personality = personality
+
+        self.game_client: GameClient
+        self.resilient_connection: ResilientGameConnection | None
 
         # Use resilient connection if requested, otherwise fall back to basic client
         if use_persistent_client and game_client is None:
@@ -788,10 +799,9 @@ class FourXAgent:
             fallback_providers=fallback_providers or ["openai"],
         )
 
-        # Initialize FastMCP client for advanced game analysis
-        from .fastmcp_client import FastMCPGameClient
-
-        self.mcp_client = FastMCPGameClient(player_id, game_backend_url)
+        # Legacy FastMCP client removed — agents will migrate to MCP-only
+        # operation in Phase 6. For now, MCP analysis is disabled.
+        self.mcp_client = None
 
         self.turn_history: list[TurnPlan] = []
         self.logger = logger.bind(component="agent", player_id=player_id)
@@ -866,6 +876,14 @@ class FourXAgent:
                     if game_state.stockpiles.get(self.player_id)
                     else {}
                 ),
+                "my_cities": len(
+                    [c for c in game_state.cities.values() if c.owner == self.player_id]
+                ),
+                "my_resources": (
+                    game_state.stockpiles.get(self.player_id).__dict__
+                    if game_state.stockpiles.get(self.player_id)
+                    else {}
+                ),
             }
 
             # Generate turn plan with MCP analysis
@@ -873,9 +891,13 @@ class FourXAgent:
 
             # Run MCP analysis first if available
             mcp_analysis = None
-            if self.mcp_client.is_available():
-                console.print(f"[cyan]Running MCP analysis for {self.player_id}...[/cyan]")
-                mcp_analysis = await self.mcp_client.comprehensive_analysis(game_id, game_state)
+            if self.mcp_client is not None and self.mcp_client.is_available():
+                console.print(
+                    f"[cyan]Running MCP analysis for {self.player_id}...[/cyan]"
+                )
+                mcp_analysis = await self.mcp_client.comprehensive_analysis(
+                    game_id, game_state
+                )
                 self.logger.info(
                     "MCP analysis completed",
                     military_available="military" in mcp_analysis,
@@ -950,6 +972,25 @@ class FourXAgent:
                 console.print("[green]Actions submitted successfully[/green]")
                 self.turn_history.append(plan)
 
+                # Persist scratchpad to database for observability
+                scratchpad_text = (
+                    f"Turn {game_state.turn} — {self.personality}\n"
+                    f"Analysis: {plan.strategic_analysis}\n"
+                    f"Priorities: {', '.join(plan.priorities)}\n"
+                    f"Actions: {'; '.join(a.type.value + ': ' + a.reasoning for a in plan.actions)}"
+                )
+                # Truncate to 4000 char cap
+                scratchpad_text = scratchpad_text[:4000]
+
+                if self.resilient_connection:
+                    self.resilient_connection.write_scratchpad(
+                        game_id, scratchpad_text, game_state.turn
+                    )
+                elif hasattr(self.game_client, "write_scratchpad"):
+                    self.game_client.write_scratchpad(
+                        game_id, scratchpad_text, game_state.turn
+                    )
+
                 self.logger.info(
                     "Turn completed successfully",
                     turn=game_state.turn,
@@ -1004,7 +1045,7 @@ class FourXAgent:
                 error=error_message,
             )
 
-            logfire.exception("Agent turn failed")
+            logfire.error("Agent turn failed", _exc_info=True)
 
             # Log the failed turn
             from .enhanced_logging import enhanced_logger
@@ -1020,7 +1061,9 @@ class FourXAgent:
                 llm_response=llm_response,
                 strategic_analysis=plan.strategic_analysis if plan else "",
                 priorities=plan.priorities if plan else [],
-                actions=([action.model_dump() for action in plan.actions] if plan else []),
+                actions=(
+                    [action.model_dump() for action in plan.actions] if plan else []
+                ),
                 submitted_actions=api_actions,
                 game_state_summary=game_state_summary,
                 error_message=error_message,
@@ -1043,7 +1086,9 @@ class FourXAgent:
         )
         console.print(panel)
 
-    def _convert_actions_to_api(self, actions: list[GameAction], game_state: GameState = None) -> list[dict[str, Any]]:
+    def _convert_actions_to_api(
+        self, actions: list[GameAction], game_state: GameState | None = None
+    ) -> list[dict[str, Any]]:
         """Convert structured actions to API format with automatic unit ID resolution"""
         api_actions = []
 
@@ -1067,12 +1112,8 @@ class FourXAgent:
                         # Use first available unit
                         unit_id = my_units[0].id
 
-                    # Handle missing target_location
                     if action.target_location is None:
-                        # Skip this action if no valid target
-                        self.logger.warning("Skipping MOVE action with no target location")
                         continue
-
                     api_action = {
                         "type": "MOVE",
                         "unit_id": unit_id,
@@ -1106,7 +1147,11 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_IMPROVEMENT",
                         "worker_id": worker_id,
-                        "improvement": (action.improvement_type.value if action.improvement_type is not None else None),
+                        "improvement": (
+                            action.improvement_type.value
+                            if action.improvement_type is not None
+                            else None
+                        ),
                     }
 
                 elif action.type == ActionType.FOUND_CITY:
@@ -1130,7 +1175,11 @@ class FourXAgent:
                     api_action = {
                         "type": "TRAIN_UNIT",
                         "city_id": city_id,
-                        "unit_type": (action.unit_type.value if action.unit_type is not None else None),
+                        "unit_type": (
+                            action.unit_type.value
+                            if action.unit_type is not None
+                            else None
+                        ),
                     }
 
                 elif action.type == ActionType.BUILD_BUILDING:
@@ -1142,8 +1191,15 @@ class FourXAgent:
                     api_action = {
                         "type": "BUILD_BUILDING",
                         "city_id": city_id,
-                        "building_type": (action.building_type.value if action.building_type is not None else None),
+                        "building_type": (
+                            action.building_type.value
+                            if action.building_type is not None
+                            else None
+                        ),
                     }
+
+                elif action.type == ActionType.PASS:
+                    continue
 
                 else:
                     # Skip unknown action types (including PASS, DIPLOMACY, RESEARCH)

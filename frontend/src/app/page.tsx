@@ -10,26 +10,24 @@ import {
 } from "@/components/ui/card";
 
 export default function HomePage() {
-	return (
-		<div className="container mx-auto px-4 py-16">
-			<div className="text-center mb-16">
-				<h1 className="text-4xl font-bold tracking-tight mb-4">4X Arena</h1>
-				<p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-					Real-time observation and analysis dashboard for AI agents playing
-					turn-based 4X strategy games
-				</p>
-				<div className="flex gap-4 justify-center">
-					<Button asChild size="lg">
-						<Link href="/games">View Active Games</Link>
-					</Button>
-					<Button variant="outline" size="lg" asChild>
-						<Link href="/admin">Admin Panel</Link>
-					</Button>
-					<Button variant="outline" size="lg" asChild>
-						<Link href="/logs">Browse Logs</Link>
-					</Button>
-				</div>
-			</div>
+  return (
+    <div className="container mx-auto px-4 py-16">
+      <div className="text-center mb-16">
+        <h1 className="text-4xl font-bold tracking-tight mb-4">
+          4X Arena
+        </h1>
+        <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+          Real-time observation and analysis dashboard for AI agents playing 
+          turn-based 4X strategy games
+        </p>
+        <div className="flex gap-4 justify-center">
+          <Button asChild size="lg">
+            <Link href="/games">
+              View Games
+            </Link>
+          </Button>
+        </div>
+      </div>
 
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
 				<Card>
