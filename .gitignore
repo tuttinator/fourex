@@ -63,7 +63,7 @@ yarn-error.log*
 *.sublime-project
 *.sublime-workspace
 
-.claude/
+.claude/settings.local.json
 ralph/
 frontend/tsconfig.tsbuildinfo
 .coverage
