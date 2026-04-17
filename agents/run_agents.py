@@ -1,373 +1,198 @@
 #!/usr/bin/env python3
 """
-Script to run AI agents playing the 4X game.
-Usage: python run_agents.py [options]
+CLI entry point for running profile-driven MCP agents.
+
+This is a thin shim on top of ``backend.src.agents.orchestrator``. The
+full agent runtime lives in the backend package; this file only handles
+argument parsing and console output. Everything else — game creation,
+turn execution, action submission, memory — flows through the MCP
+server in-process.
 """
 
+from __future__ import annotations
+
 import argparse
-import json
-import os
+import asyncio
+import sys
 import time
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
-from src.orchestrator import GameConfig, GameOrchestrator
-from src.personalities import get_personality_description, list_personalities
+from rich.table import Table
+
+# Make the repo root importable (the ``backend.src`` package lives there).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from backend.src.agents import (  # noqa: E402 — after path setup
+    InProcessMCPClient,
+    list_profiles,
+    run_orchestrated_game,
+)
+from backend.src.mcp_server.server import create_mcp_server  # noqa: E402
 
 console = Console()
 
 
-def create_game_config(
-    game_id: str | None = None,
-    players: list[str] | None = None,
-    personalities: dict[str, str] | None = None,
-    max_turns: int = 100,
-    game_backend: str = "http://localhost:8010/api/v1",
-    llm_backend: str = "http://localhost:1234/v1",
-    llm_model: str = "qwen/qwen3-32b",
-) -> GameConfig:
-    """Create a game configuration with defaults"""
-
-    if game_id is None:
-        game_id = f"game_{int(time.time())}"
-
-    if players is None:
-        players = ["Alice", "Bob", "Charlie"]
-
-    if personalities is None:
-        personalities = {
-            "Alice": "aggressive",
-            "Bob": "defensive",
-            "Charlie": "economic",
-        }
-
-    return GameConfig(
-        game_id=game_id,
-        players=players,
-        personalities=personalities,
-        max_turns=max_turns,
-        game_backend_url=game_backend,
-        llm_backend_url=llm_backend,
-        llm_model=llm_model,
-    )
+_PRESETS: dict[str, dict[str, object]] = {
+    "quick_test": {
+        "players": ["Alice", "Bob"],
+        "personalities": {"Alice": "aggressive", "Bob": "economic"},
+        "max_turns": 30,
+    },
+    "classic_3p": {
+        "players": ["Warrior", "Builder", "Trader"],
+        "personalities": {
+            "Warrior": "aggressive",
+            "Builder": "balanced",
+            "Trader": "economic",
+        },
+        "max_turns": 75,
+    },
+    "personality_showcase": {
+        "players": ["Conqueror", "Economist", "Explorer", "Adaptive"],
+        "personalities": {
+            "Conqueror": "aggressive",
+            "Economist": "economic",
+            "Explorer": "explorer",
+            "Adaptive": "balanced",
+        },
+        "max_turns": 100,
+    },
+}
 
 
-def interactive_setup() -> GameConfig:
-    """Interactive setup for game configuration"""
-    console.print("[bold blue]4X AI Agent Game Setup[/bold blue]")
-    console.print()
+async def _run(
+    players: list[str],
+    personalities: dict[str, str],
+    max_turns: int,
+    max_turn_cap: int | None,
+) -> None:
+    mcp = create_mcp_server()
+    client = InProcessMCPClient(mcp)
 
-    # Game ID
-    game_id = Prompt.ask("Game ID", default=f"game_{int(time.time())}")
-
-    # Max turns
-    max_turns = int(Prompt.ask("Maximum turns", default="100"))
-
-    # Players
-    console.print("\n[bold]Player Setup[/bold]")
-    num_players = int(
-        Prompt.ask(
-            "Number of players",
-            default="3",
-            choices=["2", "3", "4", "5", "6", "7", "8"],
-        )
-    )
-
-    players = []
-    personalities = {}
-
-    # Show available personalities
-    console.print("\n[bold]Available Personalities:[/bold]")
-    available_personalities = list_personalities()
-    for i, personality in enumerate(available_personalities):
-        description = get_personality_description(personality)
-        console.print(f"  {i + 1}. [cyan]{personality}[/cyan]: {description}")
-
-    for i in range(num_players):
-        console.print(f"\n[bold]Player {i + 1}:[/bold]")
-        player_name = Prompt.ask(f"Player {i + 1} name", default=f"Player{i + 1}")
-
-        # Personality selection
-        while True:
-            personality = Prompt.ask(
-                f"Personality for {player_name}",
-                default="balanced",
-                choices=available_personalities,
-            )
-
-            if personality in available_personalities:
-                break
-            console.print(
-                f"[red]Invalid personality. Choose from: {', '.join(available_personalities)}[/red]"
-            )
-
-        players.append(player_name)
-        personalities[player_name] = personality
-
-    # Backend configuration
-    console.print("\n[bold]Backend Configuration[/bold]")
-    game_backend = Prompt.ask(
-        "Game backend URL", default="http://localhost:8010/api/v1"
-    )
-    llm_backend = Prompt.ask("LLM backend URL", default="http://localhost:1234/v1")
-    llm_model = Prompt.ask("LLM model", default="qwen/qwen3-32b")
-
-    return GameConfig(
-        game_id=game_id,
-        players=players,
-        personalities=personalities,
-        max_turns=max_turns,
-        game_backend_url=game_backend,
-        llm_backend_url=llm_backend,
-        llm_model=llm_model,
-    )
-
-
-def load_config_from_file(filename: str) -> GameConfig:
-    """Load game configuration from JSON file"""
-    with open(filename) as f:
-        data = json.load(f)
-
-    return GameConfig(**data)
-
-
-def save_config_to_file(config: GameConfig, filename: str):
-    """Save game configuration to JSON file"""
-    data = {
-        "game_id": config.game_id,
-        "players": config.players,
-        "personalities": config.personalities,
-        "max_turns": config.max_turns,
-        "game_backend_url": config.game_backend_url,
-        "llm_backend_url": config.llm_backend_url,
-        "llm_model": config.llm_model,
-    }
-
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
-
-    console.print(f"[green]Configuration saved to {filename}[/green]")
-
-
-def preset_configurations() -> dict[str, GameConfig]:
-    """Predefined game configurations"""
-    return {
-        "quick_test": create_game_config(
-            game_id="quick_test",
-            players=["Alice", "Bob"],
-            personalities={"Alice": "aggressive", "Bob": "defensive"},
-            max_turns=30,
-        ),
-        "classic_3p": create_game_config(
-            game_id="classic_3p",
-            players=["Warrior", "Builder", "Trader"],
-            personalities={
-                "Warrior": "aggressive",
-                "Builder": "defensive",
-                "Trader": "economic",
-            },
-            max_turns=75,
-        ),
-        "personality_showcase": create_game_config(
-            game_id="personality_showcase",
-            players=["Conqueror", "Diplomat", "Explorer", "Economist"],
-            personalities={
-                "Conqueror": "aggressive",
-                "Diplomat": "diplomatic",
-                "Explorer": "explorer",
-                "Economist": "economic",
-            },
-            max_turns=100,
-        ),
-        "advanced_strategies": create_game_config(
-            game_id="advanced_strategies",
-            players=["TechCorp", "Opportunist", "Balanced", "Explorer"],
-            personalities={
-                "TechCorp": "tech_focused",
-                "Opportunist": "opportunist",
-                "Balanced": "balanced",
-                "Explorer": "explorer",
-            },
-            max_turns=120,
-        ),
-    }
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Run AI agents playing 4X strategy game"
-    )
-    parser.add_argument("--config", "-c", help="Load configuration from JSON file")
-    parser.add_argument(
-        "--preset",
-        "-p",
-        help="Use preset configuration",
-        choices=[
-            "quick_test",
-            "classic_3p",
-            "personality_showcase",
-            "advanced_strategies",
-        ],
-    )
-    parser.add_argument(
-        "--interactive", "-i", action="store_true", help="Interactive setup"
-    )
-    parser.add_argument("--game-id", help="Game ID")
-    parser.add_argument("--players", nargs="+", help="Player names")
-    parser.add_argument("--personalities", nargs="+", help="Player personalities")
-    parser.add_argument("--max-turns", type=int, default=100, help="Maximum turns")
-    parser.add_argument(
-        "--game-backend",
-        default="http://localhost:8010/api/v1",
-        help="Game backend URL",
-    )
-    parser.add_argument(
-        "--llm-backend", default="http://localhost:1234/v1", help="LLM backend URL"
-    )
-    parser.add_argument("--llm-model", default="qwen/qwen3-32b", help="LLM model")
-    parser.add_argument("--save-config", help="Save configuration to file")
-    parser.add_argument(
-        "--list-personalities", action="store_true", help="List available personalities"
-    )
-    parser.add_argument(
-        "--list-presets", action="store_true", help="List available presets"
-    )
-    parser.add_argument(
-        "--auto-confirm",
-        action="store_true",
-        help="Auto-confirm game start (skip prompt)",
-    )
-
-    args = parser.parse_args()
-
-    # List personalities
-    if args.list_personalities:
-        console.print("[bold]Available Personalities:[/bold]")
-        for personality in list_personalities():
-            description = get_personality_description(personality)
-            console.print(f"  • [cyan]{personality}[/cyan]: {description}")
-        return
-
-    # List presets
-    if args.list_presets:
-        console.print("[bold]Available Presets:[/bold]")
-        presets = preset_configurations()
-        for name, config in presets.items():
-            console.print(
-                f"  • [cyan]{name}[/cyan]: {len(config.players)} players, {config.max_turns} turns"
-            )
-            for player, personality in config.personalities.items():
-                console.print(f"    - {player}: {personality}")
-        return
-
-    # Load or create configuration
-    if args.config:
-        config = load_config_from_file(args.config)
-    elif args.preset:
-        presets = preset_configurations()
-        if args.preset not in presets:
-            console.print(f"[red]Unknown preset: {args.preset}[/red]")
-            return
-        config = presets[args.preset]
-    elif args.interactive:
-        config = interactive_setup()
-    else:
-        # Create from command line args
-        players = args.players or ["Alice", "Bob", "Charlie"]
-        personalities = {}
-
-        if args.personalities:
-            if len(args.personalities) != len(players):
-                console.print(
-                    f"[red]Number of personalities ({len(args.personalities)}) "
-                    f"must match number of players ({len(players)})[/red]"
-                )
-                return
-            for player, personality in zip(players, args.personalities):
-                personalities[player] = personality
-        else:
-            default_personalities = [
-                "aggressive",
-                "defensive",
-                "economic",
-                "balanced",
-                "explorer",
-                "diplomatic",
-                "tech_focused",
-                "opportunist",
-            ]
-            for i, player in enumerate(players):
-                personalities[player] = default_personalities[
-                    i % len(default_personalities)
-                ]
-
-        config = create_game_config(
-            game_id=args.game_id,
-            players=players,
-            personalities=personalities,
-            max_turns=args.max_turns,
-            game_backend=args.game_backend,
-            llm_backend=args.llm_backend,
-            llm_model=args.llm_model,
-        )
-
-    # Save configuration if requested
-    if args.save_config:
-        save_config_to_file(config, args.save_config)
-
-    # Display configuration
     console.print(
         Panel(
-            f"""
-[bold]Game Configuration:[/bold]
-Game ID: {config.game_id}
-Players: {", ".join(config.players)}
-Max Turns: {config.max_turns}
-Game Backend: {config.game_backend_url}
-LLM Backend: {config.llm_backend_url}
-LLM Model: {config.llm_model}
-
-[bold]Player Personalities:[/bold]
-{chr(10).join([f"• {player}: {personality}" for player, personality in config.personalities.items()])}
-""",
-            title="4X AI Game",
+            "\n".join(
+                [
+                    f"Players: {', '.join(players)}",
+                    f"Profiles: {personalities}",
+                    f"Max turns: {max_turns}",
+                    f"Turn cap: {max_turn_cap if max_turn_cap else 'none'}",
+                ]
+            ),
+            title="MCP agent game",
             border_style="blue",
         )
     )
 
-    # Confirm before starting
-    if not args.auto_confirm and not Confirm.ask("Start the game?", default=True):
-        console.print("[yellow]Game cancelled.[/yellow]")
+    started = time.time()
+    result = await run_orchestrated_game(
+        client,
+        players,
+        personalities=personalities,
+        max_turns=max_turns,
+        max_turn_cap=max_turn_cap,
+    )
+    duration = time.time() - started
+
+    table = Table(title=f"Final scores — game {result.game_id}")
+    table.add_column("Player", style="cyan")
+    table.add_column("Profile", style="magenta")
+    table.add_column("Score", justify="right", style="green")
+    for player in players:
+        table.add_row(
+            player,
+            personalities.get(player, "balanced"),
+            str(result.scores.get(player, 0)),
+        )
+    console.print(table)
+
+    console.print(
+        "\n".join(
+            [
+                f"Turns played: {result.final_turn}",
+                f"Status: {result.status}",
+                f"Winner: {result.winner or 'none'} ({result.victory_type or '-'})",
+                f"Elapsed: {duration:.1f}s",
+            ]
+        )
+    )
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run profile-driven MCP agents in an in-process 4X game."
+    )
+    parser.add_argument(
+        "--preset",
+        choices=sorted(_PRESETS.keys()),
+        help="Use a preset player/profile combination.",
+    )
+    parser.add_argument(
+        "--players",
+        nargs="+",
+        help="Player names (2–8).",
+    )
+    parser.add_argument(
+        "--personalities",
+        nargs="+",
+        help="Profile per player, matched by position.",
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=50,
+        help="Game max_turns (score victory trigger).",
+    )
+    parser.add_argument(
+        "--turn-cap",
+        type=int,
+        default=None,
+        help="Cap orchestrator iterations (independent of game max_turns).",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List available profile names and exit.",
+    )
+    parser.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help="Accepted for backwards compatibility; this runner is non-interactive.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+
+    if args.list_profiles:
+        for name in list_profiles():
+            console.print(f"• {name}")
         return
 
-    # Run the game
-    try:
-        import asyncio
+    if args.preset:
+        preset = _PRESETS[args.preset]
+        players = list(preset["players"])  # type: ignore[arg-type]
+        personalities = dict(preset["personalities"])  # type: ignore[arg-type]
+        max_turns = int(preset.get("max_turns", args.max_turns))  # type: ignore[arg-type]
+    else:
+        players = args.players or ["Alice", "Bob"]
+        if args.personalities:
+            if len(args.personalities) != len(players):
+                console.print(
+                    "[red]Number of --personalities must match --players[/red]"
+                )
+                sys.exit(2)
+            personalities = dict(zip(players, args.personalities))
+        else:
+            personalities = {p: "balanced" for p in players}
+        max_turns = args.max_turns
 
-        async def run_async_game():
-            orchestrator = GameOrchestrator(config)
-            results = await orchestrator.run_game()
-
-            # Save game log
-            log_filename = f"logs/game_log_{config.game_id}_{int(time.time())}.json"
-            os.makedirs("logs", exist_ok=True)
-            orchestrator.save_game_log(log_filename)
-
-            console.print("\n[green]Game completed successfully![/green]")
-            console.print(f"[blue]Game log saved to: {log_filename}[/blue]")
-
-            return results
-
-        return asyncio.run(run_async_game())
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Game interrupted by user.[/yellow]")
-    except Exception as e:
-        console.print(f"\n[red]Error running game: {e}[/red]")
-        import traceback
-
-        traceback.print_exc()
+    asyncio.run(_run(players, personalities, max_turns, args.turn_cap))
 
 
 if __name__ == "__main__":

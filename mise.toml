@@ -26,19 +26,8 @@ uv run ruff check --fix backend/src agents/src tests
 """
 
 [tasks.test]
-description = "Run root-level integration tests with a temporary local backend"
-run = """
-DEBUG=false uv run --directory backend uvicorn src.main:app --host 127.0.0.1 --port 8010 > /tmp/fourex-test-server.log 2>&1 &
-server_pid=$!
-trap 'kill $server_pid' EXIT
-for _ in $(seq 1 20); do
-  if curl -sf http://127.0.0.1:8010/health > /dev/null; then
-    break
-  fi
-  sleep 1
-done
-PYTHONPATH=. uv run pytest tests/
-"""
+description = "Run backend test suite (MCP-only, no live server required)"
+run = "DEBUG=false PYTHONPATH=. uv run pytest backend/tests/"
 
 [tasks.test-cov]
 description = "Run tests with coverage"
@@ -97,27 +86,15 @@ run = "DEBUG=false PYTHONPATH=. uv run pytest backend/tests/"
 # Agent tasks
 [tasks.quick]
 description = "Run a quick test game with agents"
-run = "cd agents && uv run python run_agents.py --preset quick_test --auto-confirm"
-
-[tasks.agents-test]
-description = "Test agent functionality"
-run = "cd agents && uv run python test_agents.py"
+run = "uv run python agents/run_agents.py --preset quick_test"
 
 [tasks.classic]
 description = "Run classic 3-player game"
-run = "cd agents && uv run python run_agents.py --preset classic_3p"
+run = "uv run python agents/run_agents.py --preset classic_3p"
 
 [tasks.showcase]
 description = "Run personality showcase (4 players)"
-run = "cd agents && uv run python run_agents.py --preset personality_showcase"
-
-[tasks.advanced]
-description = "Run advanced strategies game"
-run = "cd agents && uv run python run_agents.py --preset advanced_strategies"
-
-[tasks.interactive]
-description = "Run interactive game setup"
-run = "cd agents && uv run python run_agents.py --interactive"
+run = "uv run python agents/run_agents.py --preset personality_showcase"
 
 [tasks.agents-format]
 description = "Format agent code"
