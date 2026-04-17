@@ -96,6 +96,10 @@ run = "uv run python agents/run_agents.py --preset classic_3p"
 description = "Run personality showcase (4 players)"
 run = "uv run python agents/run_agents.py --preset personality_showcase"
 
+[tasks.self-play]
+description = "Run a self-play game with invariant checks (Phase 7 smoke test)"
+run = "uv run python agents/run_selfplay.py --players alice bob --profiles aggressive economic --seed 42 --turn-cap 20"
+
 [tasks.agents-format]
 description = "Format agent code"
 run = "cd agents && uv run black src/ *.py"

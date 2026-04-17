@@ -21,6 +21,13 @@ from .profiles import (
     get_profile,
     list_profiles,
 )
+from .selfplay import (
+    SelfPlayResult,
+    TurnActionLog,
+    check_state_invariants,
+    format_failure_report,
+    run_self_play,
+)
 
 __all__ = [
     "AGGRESSIVE",
@@ -36,12 +43,17 @@ __all__ = [
     "MCPGameOrchestrator",
     "MemoryKind",
     "OrchestratedGame",
+    "SelfPlayResult",
     "StreamableHTTPMCPClient",
+    "TurnActionLog",
     "TurnTrace",
+    "check_state_invariants",
     "create_game",
+    "format_failure_report",
     "get_profile",
     "list_profiles",
     "plan_actions",
     "run_agent_turn",
     "run_orchestrated_game",
+    "run_self_play",
 ]
