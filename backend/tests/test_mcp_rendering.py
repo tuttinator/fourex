@@ -42,22 +42,12 @@ async def db_session():
     async with async_session_factory() as session:
         yield session
         await session.rollback()
-        await session.execute(
-            delete(AgentMemory).where(AgentMemory.game_id.like("game_%"))
-        )
-        await session.execute(
-            delete(TurnAction).where(TurnAction.game_id.like("game_%"))
-        )
-        await session.execute(
-            delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%"))
-        )
+        await session.execute(delete(AgentMemory).where(AgentMemory.game_id.like("game_%")))
+        await session.execute(delete(TurnAction).where(TurnAction.game_id.like("game_%")))
+        await session.execute(delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%")))
         await session.execute(delete(GameTurn).where(GameTurn.game_id.like("game_%")))
-        await session.execute(
-            delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%"))
-        )
-        await session.execute(
-            delete(GameSnapshot).where(GameSnapshot.game_id.like("game_%"))
-        )
+        await session.execute(delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%")))
+        await session.execute(delete(GameSnapshot).where(GameSnapshot.game_id.like("game_%")))
         await session.execute(delete(Game).where(Game.id.like("game_%")))
         await session.commit()
 
@@ -243,9 +233,7 @@ class TestRenderAsciiPure:
         # by checking visible_coords
         lines = output.split("\n")
         # Map lines match pattern "  N|..." where N is a row number
-        map_lines = [
-            line for line in lines if "|" in line and line.strip()[0].isdigit()
-        ]
+        map_lines = [line for line in lines if "|" in line and line.strip()[0].isdigit()]
         # Verify structure: each map line has row label + characters
         assert len(map_lines) == 5
 
