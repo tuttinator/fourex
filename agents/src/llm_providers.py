@@ -17,7 +17,12 @@ import structlog
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 # Load environment variables
 load_dotenv()
