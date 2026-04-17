@@ -371,6 +371,100 @@ async def test_calculate_distances_summary(db_session, mcp):
 
 
 # ---------------------------------------------------------------------------
+# get_valid_moves
+# ---------------------------------------------------------------------------
+
+
+async def _get_my_unit_id(mcp: Any, api_key: str) -> int:
+    state = await call(mcp, "get_game_state", {"api_key": api_key})
+    player = state["player"]
+    for unit_id_str, unit in state["state"]["units"].items():
+        if unit["owner"] == player:
+            return int(unit_id_str)
+    raise AssertionError("no unit found for player")
+
+
+@pytest.mark.asyncio
+async def test_get_valid_moves_returns_metadata(db_session, mcp):
+    """get_valid_moves returns unit metadata alongside valid_tiles."""
+    game_data = await create_two_player_game(mcp)
+    api_key = game_data["api_keys"]["alice"]
+    unit_id = await _get_my_unit_id(mcp, api_key)
+
+    result = await call(
+        mcp, "get_valid_moves", {"api_key": api_key, "unit_id": unit_id}
+    )
+
+    assert "error" not in result
+    assert result["player"] == "alice"
+    assert result["unit_id"] == unit_id
+    assert result["unit_type"] == "worker"
+    assert "current_position" in result
+    assert "moves_left" in result
+    assert "valid_tiles" in result
+    assert isinstance(result["valid_tiles"], list)
+
+
+@pytest.mark.asyncio
+async def test_get_valid_moves_tiles_within_range(db_session, mcp):
+    """Every returned tile is within the unit's movement range and passable."""
+    game_data = await create_two_player_game(mcp)
+    api_key = game_data["api_keys"]["alice"]
+    unit_id = await _get_my_unit_id(mcp, api_key)
+
+    result = await call(
+        mcp, "get_valid_moves", {"api_key": api_key, "unit_id": unit_id}
+    )
+
+    moves_left = result["moves_left"]
+    for tile in result["valid_tiles"]:
+        assert 1 <= tile["distance"] <= moves_left
+        assert tile["terrain"] not in ("water", "mountain")
+        assert "x" in tile and "y" in tile
+        assert "has_resource" in tile
+        assert "has_improvement" in tile
+
+
+@pytest.mark.asyncio
+async def test_get_valid_moves_enemy_unit_rejected(db_session, mcp):
+    """Requesting valid moves for an enemy unit returns an error."""
+    game_data = await create_two_player_game(mcp)
+    alice_key = game_data["api_keys"]["alice"]
+    bob_key = game_data["api_keys"]["bob"]
+
+    # Bob's unit ID
+    bob_unit_id = await _get_my_unit_id(mcp, bob_key)
+
+    result = await call(
+        mcp, "get_valid_moves", {"api_key": alice_key, "unit_id": bob_unit_id}
+    )
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_get_valid_moves_invalid_unit_id(db_session, mcp):
+    """Non-existent unit id returns an error."""
+    game_data = await create_two_player_game(mcp)
+    api_key = game_data["api_keys"]["alice"]
+
+    result = await call(
+        mcp, "get_valid_moves", {"api_key": api_key, "unit_id": 99999}
+    )
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_get_valid_moves_invalid_key(db_session, mcp):
+    """Bad API key returns an error."""
+    result = await call(
+        mcp, "get_valid_moves", {"api_key": "fx_bad", "unit_id": 1}
+    )
+    assert "error" in result
+
+
+# ---------------------------------------------------------------------------
 # Cross-tool integration
 # ---------------------------------------------------------------------------
 

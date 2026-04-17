@@ -926,6 +926,57 @@ def check_victory(state: GameState) -> VictoryResult:
     return VictoryResult()
 
 
+def get_valid_moves(
+    state: GameState,
+    unit_id: int,
+    visible_coords: set[Coord] | None = None,
+) -> list[dict]:
+    """Compute all tiles a unit can legally move to this turn.
+
+    A tile is a valid destination if:
+    - Manhattan distance from the unit <= ``unit.moves_left``
+    - The tile exists and terrain is passable (not water/mountain)
+    - The tile is not occupied by another unit
+    - The tile is in ``visible_coords`` (when supplied — for fog-of-war)
+
+    ``visible_coords`` of ``None`` disables the visibility filter (used by
+    tests and any server-side caller that holds raw state).
+
+    Each result tile includes ``x``, ``y``, ``terrain``, ``has_resource``,
+    ``resource_type``, ``has_improvement``, ``owner``, and ``distance``.
+    """
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.moves_left <= 0:
+        return []
+
+    results: list[dict] = []
+    for tile in state.tiles:
+        distance = unit.loc.distance_to(tile.loc)
+        if distance == 0 or distance > unit.moves_left:
+            continue
+        if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
+            continue
+        if tile.unit_id is not None and tile.unit_id != unit.id:
+            continue
+        if visible_coords is not None and tile.loc not in visible_coords:
+            continue
+        results.append(
+            {
+                "x": tile.loc.x,
+                "y": tile.loc.y,
+                "terrain": tile.terrain.value,
+                "has_resource": tile.resource is not None,
+                "resource_type": tile.resource.value if tile.resource else None,
+                "has_improvement": tile.improvement is not None,
+                "owner": tile.owner,
+                "distance": distance,
+            }
+        )
+
+    results.sort(key=lambda r: (r["distance"], r["x"], r["y"]))
+    return results
+
+
 def reset_unit_moves(state: GameState) -> None:
     """Reset movement points for all units at turn start."""
     for unit in state.units.values():

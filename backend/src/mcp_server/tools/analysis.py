@@ -16,6 +16,7 @@ from ...auth import AuthError, authenticate
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
 from ...game.models import GameState, Resource, Terrain, UnitType
+from ...game.rules import get_valid_moves as compute_valid_moves
 from ...game.rules import redact_state
 
 
@@ -455,6 +456,61 @@ def register(mcp: FastMCP) -> None:
                 ),
             },
             "strategic_advice": strategic_advice,
+        }
+
+    @mcp.tool(
+        name="get_valid_moves",
+        description=(
+            "List every tile a specific unit can legally move to this turn. "
+            "Filtered by movement range, passable terrain, unoccupied tiles, "
+            "and your fog-of-war vision. Use this to avoid wasting a turn on "
+            "a rejected MOVE action."
+        ),
+        annotations=ToolAnnotations(
+            title="Get Valid Moves",
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["analysis", "utility"]},
+    )
+    async def get_valid_moves(
+        api_key: str,
+        unit_id: int,
+    ) -> dict[str, Any]:
+        """Return legal move destinations for one of your units.
+
+        Args:
+            api_key: Your player API key.
+            unit_id: The ID of a unit you own and can see.
+
+        Returns:
+            Unit metadata (``unit_id``, ``unit_type``, ``current_position``,
+            ``moves_left``) and a ``valid_tiles`` list. Each tile entry has
+            ``x``, ``y``, ``terrain``, ``has_resource``, ``resource_type``,
+            ``has_improvement``, ``owner``, and ``distance``.
+        """
+        result = await _get_redacted_state(api_key)
+        if isinstance(result, dict):
+            return result
+        state, game_id, player_id = result
+
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return {"error": f"Unit {unit_id} is not visible or does not exist."}
+        if unit.owner != player_id:
+            return {"error": f"Unit {unit_id} is not owned by {player_id}."}
+
+        visible_coords = {tile.loc for tile in state.tiles}
+        valid_tiles = compute_valid_moves(state, unit_id, visible_coords)
+
+        return {
+            "game_id": game_id,
+            "player": player_id,
+            "unit_id": unit.id,
+            "unit_type": unit.type.value,
+            "current_position": {"x": unit.loc.x, "y": unit.loc.y},
+            "moves_left": unit.moves_left,
+            "valid_tiles": valid_tiles,
         }
 
     @mcp.tool(
