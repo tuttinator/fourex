@@ -217,7 +217,7 @@ class PromptLog(Base):
 
 
 class AgentMemory(Base):
-    """Per-player scratchpad persisted for a specific turn."""
+    """Per-player scratchpad and structured memory persisted for a specific turn."""
 
     __tablename__ = "agent_memory"
 
@@ -228,6 +228,7 @@ class AgentMemory(Base):
     player_id: Mapped[str] = mapped_column(String(255), nullable=False)
     turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
     scratchpad_text: Mapped[str] = mapped_column(String(4000), nullable=False)
+    structured_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), nullable=False
     )

@@ -294,6 +294,55 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
+    async def merge_agent_memory_structured(
+        self,
+        game_id: str,
+        player_id: str,
+        turn_number: int,
+        patch: dict[str, Any],
+    ) -> AgentMemory:
+        """Merge top-level keys from patch into structured_data for the given turn.
+
+        Creates a new row with an empty scratchpad if no row exists for the turn.
+        Top-level keys in `patch` replace matching keys in `structured_data`.
+        """
+        existing = await self.get_agent_memory(game_id, player_id, turn_number)
+
+        if existing is None:
+            memory = AgentMemory(
+                game_id=game_id,
+                player_id=player_id,
+                turn_number=turn_number,
+                scratchpad_text="",
+                structured_data=dict(patch),
+            )
+            self.session.add(memory)
+            await self.session.flush()
+            return memory
+
+        merged = dict(existing.structured_data or {})
+        merged.update(patch)
+        existing.structured_data = merged
+        existing.updated_at = self._utcnow()
+        await self.session.flush()
+        return existing
+
+    async def get_player_agent_memories(
+        self, game_id: str, player_id: str
+    ) -> list[AgentMemory]:
+        """Return all agent_memory rows for a player in a game, ordered by turn ascending."""
+        result = await self.session.execute(
+            select(AgentMemory)
+            .where(
+                and_(
+                    AgentMemory.game_id == game_id,
+                    AgentMemory.player_id == player_id,
+                )
+            )
+            .order_by(AgentMemory.turn_number)
+        )
+        return list(result.scalars().all())
+
     async def upsert_turn_snapshot(
         self, game_id: str, player_id: str, turn_number: int, state_json: dict[str, Any]
     ) -> TurnSnapshot:

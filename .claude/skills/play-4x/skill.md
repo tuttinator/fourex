@@ -30,8 +30,11 @@ The server exposes tools via the `fourex-mcp` entry point. If MCP tools are not 
 - `is_my_turn` — Check turn status and submission state (requires api_key).
 
 ### Memory
-- `write_scratchpad` — Write notes to your private per-turn scratchpad.
-- `read_scratchpad` — Read your scratchpad for the current or a past turn.
+- `write_scratchpad` / `read_scratchpad` — Free-form per-turn scratchpad (legacy).
+- `write_strategic_goals` / `read_strategic_goals` — Persist a list of strategic goals. Reads return the most recent non-empty list.
+- `write_opponent_model` / `read_opponent_models` — Persist per-opponent observations (stance, unit count, threat). Reads return the latest model per opponent across turns.
+- `write_turn_notes` / `read_turn_notes` — Per-turn freeform notes with configurable lookback on reads.
+- All memory is scoped to a single game.
 
 ### Analysis
 - `analyze_territory` — Territory control and expansion opportunities.
