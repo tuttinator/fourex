@@ -43,6 +43,8 @@ dependencies = [
     "alembic>=1.13.0",
     "modal>=0.62.0",
     "fastmcp>=2.10.6",
+    # Map rendering (SVG -> PNG)
+    "cairosvg>=2.7.0",
 ]
 
 [dependency-groups]
