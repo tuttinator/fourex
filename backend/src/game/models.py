@@ -352,6 +352,14 @@ class PromptLog(BaseModel):
     latency_ms: int
 
 
+class VictoryResult(BaseModel):
+    """Result of a victory check."""
+
+    winner: PlayerId | None = None
+    victory_type: str = "none"
+    scores: dict[PlayerId, int] = Field(default_factory=dict)
+
+
 class GameState(BaseModel):
     """Complete game state."""
 
@@ -370,6 +378,10 @@ class GameState(BaseModel):
     next_unit_id: int = 1
     next_city_id: int = 1
     max_turns: int = 100
+    victory_conditions: list[str] = Field(
+        default_factory=lambda: ["domination", "economic", "elimination", "score"]
+    )
+    eliminated_players: list[PlayerId] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -477,3 +489,4 @@ class TurnResult(BaseModel):
     turn: int
     player_actions: dict[PlayerId, list[ActionResult]]
     state_hash: str
+    victory: VictoryResult | None = None

@@ -30,6 +30,7 @@ from .models import (
     TurnResult,
     Unit,
     UnitType,
+    VictoryResult,
 )
 
 
@@ -796,6 +797,135 @@ def collect_resources(state: GameState) -> None:
             state.stockpiles[tile.owner] = current_resources + tile_yield
 
 
+def eliminate_player(state: GameState, player_id: PlayerId) -> None:
+    """Eliminate a player: remove cities, clear tile ownership, destroy improvements.
+
+    The player remains in state.players for history but is added to eliminated_players.
+    """
+    if player_id in state.eliminated_players:
+        return
+
+    state.eliminated_players.append(player_id)
+
+    # Remove all cities owned by the player
+    city_ids_to_remove = [
+        cid for cid, city in state.cities.items() if city.owner == player_id
+    ]
+    for cid in city_ids_to_remove:
+        city = state.cities[cid]
+        city_tile = state.get_tile(city.loc)
+        if city_tile:
+            city_tile.city_id = None
+        del state.cities[cid]
+
+    # Remove all units owned by the player
+    unit_ids_to_remove = [
+        uid for uid, unit in state.units.items() if unit.owner == player_id
+    ]
+    for uid in unit_ids_to_remove:
+        unit = state.units[uid]
+        tile = state.get_tile(unit.loc)
+        if tile:
+            tile.unit_id = None
+        del state.units[uid]
+
+    # Clear tile ownership and destroy improvements
+    for tile in state.tiles:
+        if tile.owner == player_id:
+            tile.owner = None
+            tile.city_id = None
+            tile.improvement = None
+
+
+def calculate_scores(state: GameState) -> dict[PlayerId, int]:
+    """Calculate scores for all active players.
+
+    Weights: cities (50), territory tiles (2), units (10), resources (1 per 10).
+    """
+    scores: dict[PlayerId, int] = {}
+    active_players = [p for p in state.players if p not in state.eliminated_players]
+    for player in active_players:
+        score = 0
+        # Cities: 50 points each
+        score += sum(50 for city in state.cities.values() if city.owner == player)
+        # Territory: 2 points per owned tile
+        score += sum(2 for tile in state.tiles if tile.owner == player)
+        # Units: 10 points each
+        score += sum(10 for unit in state.units.values() if unit.owner == player)
+        # Resources: 1 point per 10 resources
+        resources = state.stockpiles.get(player, ResourceBag())
+        total_resources = (
+            resources.food + resources.wood + resources.ore + resources.crystal
+        )
+        score += total_resources // 10
+        scores[player] = score
+    return scores
+
+
+def check_elimination(state: GameState) -> list[PlayerId]:
+    """Check for players that should be eliminated this turn.
+
+    A player is eliminated when:
+    - They lose their last city (if they ever had one)
+    - They lose their last unit without ever having founded a city
+    """
+    if "elimination" not in state.victory_conditions:
+        return []
+
+    newly_eliminated: list[PlayerId] = []
+    for player in state.players:
+        if player in state.eliminated_players:
+            continue
+
+        has_city = any(city.owner == player for city in state.cities.values())
+        has_unit = any(unit.owner == player for unit in state.units.values())
+
+        if not has_city and not has_unit:
+            # Player has nothing — eliminate
+            newly_eliminated.append(player)
+
+    return newly_eliminated
+
+
+def check_victory(state: GameState) -> VictoryResult:
+    """Check all enabled victory conditions. Returns VictoryResult.
+
+    Priority order when multiple conditions trigger on the same turn:
+    1. Domination (highest priority)
+    2. Economic
+    3. Score (only at turn limit)
+    """
+    active_players = [p for p in state.players if p not in state.eliminated_players]
+
+    # Domination: last player with at least one city
+    if "domination" in state.victory_conditions:
+        players_with_cities = {city.owner for city in state.cities.values()}
+        # Filter to active players only
+        players_with_cities = players_with_cities & set(active_players)
+        if len(players_with_cities) == 1 and len(active_players) >= 2:
+            winner = next(iter(players_with_cities))
+            return VictoryResult(winner=winner, victory_type="domination")
+        if len(active_players) == 1:
+            return VictoryResult(winner=active_players[0], victory_type="domination")
+
+    # Economic: stockpile totals >= 1000
+    if "economic" in state.victory_conditions:
+        for player in active_players:
+            resources = state.stockpiles.get(player, ResourceBag())
+            total = resources.food + resources.wood + resources.ore + resources.crystal
+            if total >= 1000:
+                return VictoryResult(winner=player, victory_type="economic")
+
+    # Score at turn limit
+    if "score" in state.victory_conditions and state.turn >= state.max_turns:
+        scores = calculate_scores(state)
+        if scores:
+            winner = max(scores, key=lambda k: scores[k])
+            return VictoryResult(winner=winner, victory_type="score", scores=scores)
+
+    return VictoryResult()
+
+
 def reset_unit_moves(state: GameState) -> None:
     """Reset movement points for all units at turn start."""
     for unit in state.units.values():
@@ -849,11 +979,24 @@ def resolve_turn(
 
         results[player_id] = player_results
 
+    # Check for eliminations after actions resolve
+    newly_eliminated = check_elimination(state)
+    for player_id in newly_eliminated:
+        eliminate_player(state, player_id)
+
     # Expand borders (culture accumulation + border expansion)
     accumulate_culture(state)
 
     # Collect resources at end of turn
     collect_resources(state)
+
+    # Check for eliminations again (in case actions during this phase caused them)
+    newly_eliminated = check_elimination(state)
+    for player_id in newly_eliminated:
+        eliminate_player(state, player_id)
+
+    # Check victory conditions
+    victory = check_victory(state)
 
     # Store current turn number before incrementing
     current_turn = state.turn
@@ -865,4 +1008,5 @@ def resolve_turn(
         turn=current_turn,
         player_actions=results,
         state_hash=state.hash_state(),
+        victory=victory if victory.victory_type != "none" else None,
     )

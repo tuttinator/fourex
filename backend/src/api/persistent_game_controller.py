@@ -514,54 +514,21 @@ class PersistentGameController:
         print(f"DEBUG: Turn processing complete for turn {state.turn}")
 
     async def _check_victory(self, game_id: str) -> None:
-        """Check if the game has ended and determine winner."""
+        """Check if the game has ended by delegating to rules.check_victory()."""
+        from ..game.rules import check_victory
+
         state = await self.get_game_state(game_id)
         if not state:
             return
 
-        winner = None
-        victory_type = "none"
+        result = check_victory(state)
 
-        # Domination victory - only one player has cities
-        players_with_cities = set()
-        for city in state.cities.values():
-            players_with_cities.add(city.owner)
-
-        if len(players_with_cities) <= 1 and state.cities:
-            # Game ends by domination
-            winner = list(players_with_cities)[0] if players_with_cities else None
-            victory_type = "domination"
-            print(f"Game {game_id} ended by domination, winner: {winner}")
-
-        elif state.turn >= state.max_turns:
-            # Game ends by turn limit - calculate scores
-            scores = {}
-            for player in state.players:
-                score = 0
-                # Cities worth 5 points each
-                score += sum(
-                    5 for city in state.cities.values() if city.owner == player
-                )
-                # Units worth 1 point each
-                score += sum(1 for unit in state.units.values() if unit.owner == player)
-                # Resources worth 1 point per 50
-                resources = state.stockpiles.get(
-                    player, state.stockpiles[list(state.stockpiles.keys())[0]]
-                )
-                score += (
-                    resources.food + resources.wood + resources.ore + resources.crystal
-                ) // 50
-                scores[player] = score
-
-            winner = max(scores, key=lambda k: scores[k]) if scores else None
-            victory_type = "score"
+        if result.victory_type != "none" and result.winner is not None:
             print(
-                f"Game {game_id} ended by turn limit, winner: {winner} with score {scores.get(winner, 0)}"
+                f"Game {game_id} ended by {result.victory_type}, "
+                f"winner: {result.winner}"
             )
-
-        # If game ended, update database
-        if winner is not None or victory_type != "none":
-            await self.repo.end_game(game_id, winner, victory_type)
+            await self.repo.end_game(game_id, result.winner, result.victory_type)
 
             # Create final snapshot
             await self.repo.create_game_snapshot(

@@ -12,7 +12,7 @@ from ...auth import create_player_key
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
 from ...game.models import Coord, GameState, ResourceBag, Unit, UnitType
-from ...game.rules import generate_map
+from ...game.rules import calculate_scores, generate_map
 
 
 def register(mcp: FastMCP) -> None:
@@ -38,6 +38,7 @@ def register(mcp: FastMCP) -> None:
         max_turns: int = 100,
         map_width: int = 20,
         map_height: int = 20,
+        victory_conditions: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new game with the given player names.
 
@@ -47,6 +48,8 @@ def register(mcp: FastMCP) -> None:
             max_turns: Maximum number of turns before score victory.
             map_width: Map width in tiles.
             map_height: Map height in tiles.
+            victory_conditions: Enabled victory conditions. Defaults to all four:
+                ["domination", "economic", "elimination", "score"].
 
         Returns:
             game_id and a mapping of player name → API key.
@@ -56,6 +59,16 @@ def register(mcp: FastMCP) -> None:
 
         if len(players) != len(set(players)):
             return {"error": "Player names must be unique."}
+
+        valid_conditions = {"domination", "economic", "elimination", "score"}
+        if victory_conditions is not None:
+            invalid = set(victory_conditions) - valid_conditions
+            if invalid:
+                return {
+                    "error": f"Invalid victory conditions: {invalid}. Valid: {valid_conditions}"
+                }
+        else:
+            victory_conditions = list(valid_conditions)
 
         async with async_session_factory() as session:
             repo = GameRepository(session)
@@ -81,6 +94,7 @@ def register(mcp: FastMCP) -> None:
                 max_turns=max_turns,
                 map_width=map_width,
                 map_height=map_height,
+                victory_conditions=victory_conditions,
             )
 
             # Initialise stockpiles
@@ -160,6 +174,7 @@ def register(mcp: FastMCP) -> None:
             "seed": seed,
             "max_turns": max_turns,
             "map_size": {"width": map_width, "height": map_height},
+            "victory_conditions": victory_conditions,
         }
 
     @mcp.tool(
@@ -297,7 +312,7 @@ def register(mcp: FastMCP) -> None:
             if game is None:
                 return {"error": f"Game {game_id} not found."}
 
-        return {
+        info: dict[str, Any] = {
             "game_id": game.id,
             "players": game.players,
             "turn": game.turn,
@@ -307,3 +322,15 @@ def register(mcp: FastMCP) -> None:
             "victory_type": game.victory_type,
             "created_at": game.created_at.isoformat() if game.created_at else None,
         }
+
+        # Include victory conditions and elimination status from game state
+        if game.state:
+            try:
+                state = GameState.model_validate(game.state)
+                info["victory_conditions"] = state.victory_conditions
+                info["eliminated_players"] = state.eliminated_players
+                info["scores"] = calculate_scores(state)
+            except Exception:
+                pass
+
+        return info
