@@ -4,18 +4,18 @@ Database management CLI for 4X game backend.
 """
 
 import asyncio
-import sys
 import os
+import sys
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from src.database.connection import init_db, drop_db, get_engine
+from src.database.connection import drop_db, get_database_session, get_engine, init_db
 from src.database.repository import GameRepository
-from src.database.connection import get_database_session
 
 console = Console()
 
@@ -54,7 +54,7 @@ async def check_connection():
     try:
         engine = await get_engine()
         console.print("[bold blue]Checking database connection...[/bold blue]")
-        
+
         async with engine.begin() as conn:
             result = await conn.execute("SELECT 1")
             row = result.fetchone()
@@ -62,7 +62,7 @@ async def check_connection():
                 console.print("[green]✓ Database connection successful[/green]")
             else:
                 console.print("[red]✗ Database connection test failed[/red]")
-                
+
     except Exception as e:
         console.print(f"[red]✗ Database connection failed: {e}[/red]")
         raise
@@ -74,32 +74,28 @@ async def list_games():
         async for session in get_database_session():
             repo = GameRepository(session)
             games = await repo.list_games(limit=100)
-            
+
             if not games:
                 console.print("[yellow]No games found in database[/yellow]")
                 return
-            
+
             table = Table(title="Games in Database")
             table.add_column("Game ID", style="cyan")
             table.add_column("Players", style="green")
             table.add_column("Turn", style="yellow")
             table.add_column("Status", style="magenta")
             table.add_column("Created", style="blue")
-            
+
             for game in games:
                 players_str = ", ".join(game.players)
                 created_str = game.created_at.strftime("%Y-%m-%d %H:%M")
                 table.add_row(
-                    game.id,
-                    players_str,
-                    str(game.turn),
-                    game.status,
-                    created_str
+                    game.id, players_str, str(game.turn), game.status, created_str
                 )
-            
+
             console.print(table)
             break
-            
+
     except Exception as e:
         console.print(f"[red]✗ Failed to list games: {e}[/red]")
         raise
@@ -111,11 +107,11 @@ async def game_info(game_id: str):
         async for session in get_database_session():
             repo = GameRepository(session)
             game = await repo.get_game(game_id)
-            
+
             if not game:
                 console.print(f"[red]Game '{game_id}' not found[/red]")
                 return
-            
+
             # Game info panel
             info_text = f"""
 [bold]Game ID:[/bold] {game.id}
@@ -127,23 +123,31 @@ async def game_info(game_id: str):
 [bold]Created:[/bold] {game.created_at.strftime("%Y-%m-%d %H:%M:%S")}
 [bold]Updated:[/bold] {game.updated_at.strftime("%Y-%m-%d %H:%M:%S")}
 """
-            
+
             if game.winner:
-                info_text += f"\n[bold]Winner:[/bold] {game.winner} ({game.victory_type})"
+                info_text += (
+                    f"\n[bold]Winner:[/bold] {game.winner} ({game.victory_type})"
+                )
             if game.ended_at:
                 info_text += f"\n[bold]Ended:[/bold] {game.ended_at.strftime("%Y-%m-%d %H:%M:%S")}"
-            
-            console.print(Panel(info_text, title=f"Game: {game_id}", border_style="blue"))
-            
+
+            console.print(
+                Panel(info_text, title=f"Game: {game_id}", border_style="blue")
+            )
+
             # Turn history
             turns = await repo.get_turn_history(game_id)
             if turns:
-                console.print(f"\n[bold]Turn History:[/bold] {len(turns)} turns processed")
+                console.print(
+                    f"\n[bold]Turn History:[/bold] {len(turns)} turns processed"
+                )
                 for i, turn in enumerate(turns[-5:]):  # Show last 5 turns
-                    console.print(f"  Turn {turn.turn_number}: {turn.state_hash[:8]}... ({len(turn.player_actions)} players)")
-            
+                    console.print(
+                        f"  Turn {turn.turn_number}: {turn.state_hash[:8]}... ({len(turn.player_actions)} players)"
+                    )
+
             break
-            
+
     except Exception as e:
         console.print(f"[red]✗ Failed to get game info: {e}[/red]")
         raise
@@ -152,8 +156,9 @@ async def game_info(game_id: str):
 async def main():
     """Main CLI function."""
     if len(sys.argv) < 2:
-        console.print(Panel(
-            """
+        console.print(
+            Panel(
+                """
 [bold]Database Management Commands:[/bold]
 
 • python manage_db.py create       - Create database tables
@@ -167,13 +172,14 @@ async def main():
 • DATABASE_URL - PostgreSQL connection string
 • SQL_DEBUG - Enable SQL query logging (true/false)
             """,
-            title="4X Game Database Management",
-            border_style="blue"
-        ))
+                title="4X Game Database Management",
+                border_style="blue",
+            )
+        )
         return
-    
+
     command = sys.argv[1].lower()
-    
+
     try:
         if command == "create":
             await create_tables()
@@ -187,16 +193,20 @@ async def main():
             await list_games()
         elif command == "game-info":
             if len(sys.argv) < 3:
-                console.print("[red]Please provide game ID: python manage_db.py game-info <game_id>[/red]")
+                console.print(
+                    "[red]Please provide game ID: python manage_db.py game-info <game_id>[/red]"
+                )
                 sys.exit(1)
             await game_info(sys.argv[2])
         else:
             console.print(f"[red]Unknown command: {command}[/red]")
-            console.print("Available commands: create, drop, reset, check, list-games, game-info")
+            console.print(
+                "Available commands: create, drop, reset, check, list-games, game-info"
+            )
             sys.exit(1)
-            
+
         console.print("[bold green]Operation completed successfully![/bold green]")
-        
+
     except Exception as e:
         console.print(f"[bold red]Operation failed: {e}[/bold red]")
         sys.exit(1)

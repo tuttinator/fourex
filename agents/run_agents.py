@@ -280,7 +280,8 @@ def main():
         if args.personalities:
             if len(args.personalities) != len(players):
                 console.print(
-                    f"[red]Number of personalities ({len(args.personalities)}) must match number of players ({len(players)})[/red]"
+                    f"[red]Number of personalities ({len(args.personalities)}) "
+                    f"must match number of players ({len(players)})[/red]"
                 )
                 return
             for player, personality in zip(players, args.personalities):
@@ -353,7 +354,7 @@ LLM Model: {config.llm_model}
             os.makedirs("logs", exist_ok=True)
             orchestrator.save_game_log(log_filename)
 
-            console.print(f"\n[green]Game completed successfully![/green]")
+            console.print("\n[green]Game completed successfully![/green]")
             console.print(f"[blue]Game log saved to: {log_filename}[/blue]")
 
             return results
