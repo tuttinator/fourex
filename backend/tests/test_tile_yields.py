@@ -5,8 +5,8 @@ Cities collect resources from all tiles within their cultural borders.
 Base yields come from terrain/resource type; improvements boost yields.
 """
 
-import pytest
 from backend.src.game.models import (
+    BuildingType,
     City,
     Coord,
     GameState,
@@ -15,7 +15,6 @@ from backend.src.game.models import (
     ResourceBag,
     Terrain,
     Tile,
-    BuildingType,
 )
 from backend.src.game.rules import (
     _calculate_tile_yield,
@@ -209,9 +208,7 @@ class TestCollectResources:
         """Food resource tile within borders yields +1 food on top of base city food."""
         state = _make_state()
         city = _add_city(state, "p1", 5, 5)
-        _set_tile(
-            state, 5, 6, resource=Resource.FOOD, owner="p1", city_id=city.id
-        )
+        _set_tile(state, 5, 6, resource=Resource.FOOD, owner="p1", city_id=city.id)
 
         collect_resources(state)
         # 1 (base city) + 1 (food tile) = 2
@@ -220,9 +217,7 @@ class TestCollectResources:
     def test_owned_ore_tile_yields(self):
         state = _make_state()
         city = _add_city(state, "p1", 5, 5)
-        _set_tile(
-            state, 5, 6, resource=Resource.ORE, owner="p1", city_id=city.id
-        )
+        _set_tile(state, 5, 6, resource=Resource.ORE, owner="p1", city_id=city.id)
 
         collect_resources(state)
         assert state.stockpiles["p1"].ore == 1
@@ -230,9 +225,7 @@ class TestCollectResources:
     def test_owned_crystal_tile_yields(self):
         state = _make_state()
         city = _add_city(state, "p1", 5, 5)
-        _set_tile(
-            state, 5, 6, resource=Resource.CRYSTAL, owner="p1", city_id=city.id
-        )
+        _set_tile(state, 5, 6, resource=Resource.CRYSTAL, owner="p1", city_id=city.id)
 
         collect_resources(state)
         assert state.stockpiles["p1"].crystal == 1
@@ -348,12 +341,8 @@ class TestCollectResources:
         city1 = _add_city(state, "p1", 3, 3)
         city2 = _add_city(state, "p2", 7, 7)
 
-        _set_tile(
-            state, 3, 4, resource=Resource.FOOD, owner="p1", city_id=city1.id
-        )
-        _set_tile(
-            state, 7, 8, resource=Resource.ORE, owner="p2", city_id=city2.id
-        )
+        _set_tile(state, 3, 4, resource=Resource.FOOD, owner="p1", city_id=city1.id)
+        _set_tile(state, 7, 8, resource=Resource.ORE, owner="p2", city_id=city2.id)
 
         collect_resources(state)
 
@@ -377,15 +366,9 @@ class TestCollectResources:
         state = _make_state()
         city = _add_city(state, "p1", 5, 5)
 
-        _set_tile(
-            state, 5, 6, resource=Resource.FOOD, owner="p1", city_id=city.id
-        )
-        _set_tile(
-            state, 5, 4, resource=Resource.FOOD, owner="p1", city_id=city.id
-        )
-        _set_tile(
-            state, 6, 5, resource=Resource.ORE, owner="p1", city_id=city.id
-        )
+        _set_tile(state, 5, 6, resource=Resource.FOOD, owner="p1", city_id=city.id)
+        _set_tile(state, 5, 4, resource=Resource.FOOD, owner="p1", city_id=city.id)
+        _set_tile(state, 6, 5, resource=Resource.ORE, owner="p1", city_id=city.id)
 
         collect_resources(state)
         assert state.stockpiles["p1"].food == 3  # 1 base + 2 food tiles

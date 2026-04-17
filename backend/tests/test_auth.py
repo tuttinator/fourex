@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 import pytest_asyncio

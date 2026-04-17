@@ -2,36 +2,34 @@
 Tests for game rules and turn resolution.
 """
 
-import pytest
 from backend.src.game.models import (
-    GameState,
-    Coord,
-    Tile,
-    Unit,
-    City,
-    UnitType,
-    Terrain,
-    Resource,
-    ResourceBag,
-    MoveAction,
     AttackAction,
-    FoundCityAction,
-    TrainUnitAction,
+    City,
+    Coord,
     DiplomaticState,
+    FoundCityAction,
+    GameState,
+    MoveAction,
+    ResourceBag,
+    Terrain,
+    Tile,
+    TrainUnitAction,
+    Unit,
+    UnitType,
 )
 from backend.src.game.rules import (
+    collect_resources,
+    execute_attack,
+    execute_found_city,
+    execute_move,
+    execute_train_unit,
     generate_map,
     get_neighbors,
     get_visible_tiles,
-    redact_state,
     is_valid_move,
-    execute_move,
-    execute_attack,
-    execute_found_city,
-    execute_train_unit,
-    resolve_turn,
-    collect_resources,
+    redact_state,
     reset_unit_moves,
+    resolve_turn,
 )
 
 

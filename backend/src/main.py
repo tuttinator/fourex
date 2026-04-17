@@ -11,6 +11,11 @@ from .api.rest import router as rest_router
 from .api.websocket import router as websocket_router
 from .config import settings
 from .database.connection import close_db, init_db
+from .mcp_server.server import create_mcp_server
+
+# Create MCP server and its HTTP app early so the lifespan can start its session manager.
+_mcp = create_mcp_server()
+_mcp_http = _mcp.streamable_http_app()
 
 
 @asynccontextmanager
@@ -24,7 +29,11 @@ async def lifespan(app: FastAPI):
         print(f"Database initialization failed: {e}")
         raise
 
-    yield
+    # Start the MCP session manager (manages async task groups for MCP sessions).
+    # Must run inside the lifespan because mounted sub-apps don't get their own.
+    assert _mcp._session_manager is not None
+    async with _mcp._session_manager.run():
+        yield
 
     # Shutdown: Close database connections
     try:
@@ -74,6 +83,12 @@ app.add_middleware(
 # Include routers
 app.include_router(rest_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
+
+
+# Mount MCP streamable-http server — shares DB, CORS, and autoreload.
+# streamable_http_path="/" in create_mcp_server(), so mounting at /mcp
+# gives a clean /mcp external endpoint.
+app.mount("/mcp", _mcp_http)
 
 
 @app.get("/", tags=["health"])

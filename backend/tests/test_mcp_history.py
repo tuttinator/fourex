@@ -39,9 +39,7 @@ async def db_session():
         await session.execute(
             delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%"))
         )
-        await session.execute(
-            delete(GameTurn).where(GameTurn.game_id.like("game_%"))
-        )
+        await session.execute(delete(GameTurn).where(GameTurn.game_id.like("game_%")))
         await session.execute(
             delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%"))
         )

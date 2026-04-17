@@ -135,9 +135,7 @@ async def test_join_game_duplicate_player(db_session, mcp):
     game_data = await call(mcp, "create_game", {"players": ["alice", "bob"]})
     game_id = game_data["game_id"]
 
-    data = await call(
-        mcp, "join_game", {"game_id": game_id, "player_name": "alice"}
-    )
+    data = await call(mcp, "join_game", {"game_id": game_id, "player_name": "alice"})
     assert "error" in data
 
 

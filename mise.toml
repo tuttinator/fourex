@@ -145,7 +145,7 @@ description = "Run MCP server in stdio mode"
 run = "uv run fourex-mcp stdio"
 
 [tasks.serve-http]
-description = "Run MCP server in streamable-http mode (port 8020)"
+description = "Run MCP server in standalone streamable-http mode (port 8020)"
 run = "uv run fourex-mcp-http"
 
 [tasks.inspect]
@@ -153,5 +153,5 @@ description = "Launch MCP Inspector against stdio server"
 run = "npx @modelcontextprotocol/inspector uv run fourex-mcp stdio"
 
 [tasks.inspect-http]
-description = "Launch MCP Inspector against HTTP server"
-run = "npx @modelcontextprotocol/inspector http://localhost:8020/mcp"
+description = "Launch MCP Inspector against embedded MCP server (backend :8010)"
+run = "npx @modelcontextprotocol/inspector http://localhost:8010/mcp"

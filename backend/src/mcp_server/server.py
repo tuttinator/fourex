@@ -7,12 +7,9 @@ transport includes CORS middleware and a /healthz endpoint.
 
 import argparse
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
-from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -31,6 +28,8 @@ def create_mcp_server() -> FastMCP:
             "Start by creating or joining a game to get an API key. "
             "Use that key in all subsequent tool calls."
         ),
+        # Internal path set to "/" so mounting at "/mcp" gives a clean "/mcp" external path
+        streamable_http_path="/",
     )
 
     # Register tool modules
@@ -44,45 +43,42 @@ def create_mcp_server() -> FastMCP:
 
 
 def create_http_app(mcp: FastMCP) -> Starlette:
-    """Wrap the MCP server in a Starlette app with CORS and /healthz."""
+    """Build the MCP streamable-http app with CORS and /healthz.
 
-    @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        await init_db()
-        yield
-        await close_db()
+    We inject extra routes and middleware into the MCP app itself rather
+    than wrapping it in another Starlette app — the MCP app's lifespan
+    manages internal task groups that break if a wrapper intercepts them.
+    """
 
     async def healthz(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "server": "4x-mcp"})
 
-    # Get the base MCP streamable-http app
-    mcp_app = mcp.streamable_http_app()
+    # Get the base MCP streamable-http app (has its own lifespan)
+    app = mcp.streamable_http_app()
 
-    # Build a wrapper Starlette app with healthz + CORS
-    app = Starlette(
-        routes=[
-            Route("/healthz", healthz, methods=["GET"]),
-        ],
-        middleware=[
-            Middleware(
-                CORSMiddleware,
-                allow_origins=["*"],
-                allow_methods=["*"],
-                allow_headers=["*"],
-            ),
-        ],
-        lifespan=lifespan,
+    # Inject /healthz route
+    app.routes.insert(0, Route("/healthz", healthz, methods=["GET"]))
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
-
-    # Mount the MCP app at /mcp
-    app.mount("/mcp", mcp_app)
 
     return app
 
 
 async def run_stdio(mcp: FastMCP) -> None:
     """Run the MCP server over stdio."""
-    await init_db()
+    try:
+        await init_db()
+    except Exception:
+        # DB may be unavailable at startup — tools will fail individually
+        # when they try to open a session, but the server stays alive so
+        # the MCP client can still discover tools.
+        pass
     try:
         await mcp.run_stdio_async()
     finally:
@@ -119,6 +115,7 @@ def main() -> None:
     else:
         import uvicorn
 
+        asyncio.run(init_db())
         app = create_http_app(mcp)
         uvicorn.run(app, host=args.host, port=args.port)
 
@@ -126,6 +123,9 @@ def main() -> None:
 def main_http() -> None:
     """CLI entry point for the MCP server in HTTP mode (used by fourex-mcp-http)."""
     import uvicorn
+
+    # Init DB before server starts (MCP app lifespan doesn't handle it)
+    asyncio.run(init_db())
 
     mcp = create_mcp_server()
     app = create_http_app(mcp)

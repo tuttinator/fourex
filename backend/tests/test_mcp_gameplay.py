@@ -36,9 +36,7 @@ async def db_session():
         await session.execute(
             delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%"))
         )
-        await session.execute(
-            delete(GameTurn).where(GameTurn.game_id.like("game_%"))
-        )
+        await session.execute(delete(GameTurn).where(GameTurn.game_id.like("game_%")))
         await session.execute(
             delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%"))
         )
@@ -155,14 +153,10 @@ async def test_submit_actions_both_players_resolves_turn(db_session, mcp):
     bob_key = game_data["api_keys"]["bob"]
 
     # Both submit empty actions
-    result_a = await call(
-        mcp, "submit_actions", {"api_key": alice_key, "actions": []}
-    )
+    result_a = await call(mcp, "submit_actions", {"api_key": alice_key, "actions": []})
     assert result_a["turn_resolved"] is False
 
-    result_b = await call(
-        mcp, "submit_actions", {"api_key": bob_key, "actions": []}
-    )
+    result_b = await call(mcp, "submit_actions", {"api_key": bob_key, "actions": []})
     assert result_b["turn_resolved"] is True
     assert result_b["new_turn"] == 1
 
@@ -185,9 +179,7 @@ async def test_submit_actions_activates_game(db_session, mcp):
 
 @pytest.mark.asyncio
 async def test_submit_actions_invalid_key(db_session, mcp):
-    data = await call(
-        mcp, "submit_actions", {"api_key": "fx_nope", "actions": []}
-    )
+    data = await call(mcp, "submit_actions", {"api_key": "fx_nope", "actions": []})
     assert "error" in data
 
 
@@ -204,9 +196,7 @@ async def test_submit_actions_ended_game(db_session, mcp):
         await repo.end_game(game_data["game_id"])
         await session.commit()
 
-    result = await call(
-        mcp, "submit_actions", {"api_key": alice_key, "actions": []}
-    )
+    result = await call(mcp, "submit_actions", {"api_key": alice_key, "actions": []})
     assert "error" in result
 
 
@@ -238,7 +228,6 @@ async def test_submit_move_action(db_session, mcp):
     ux, uy = unit_data["loc"]["x"], unit_data["loc"]["y"]
 
     # Try adjacent tiles until we find a valid one
-    from backend.src.game.models import Coord, GameState, Terrain
 
     full_state_data = state["state"]
     tiles_by_loc = {(t["loc"]["x"], t["loc"]["y"]): t for t in full_state_data["tiles"]}
@@ -247,7 +236,11 @@ async def test_submit_move_action(db_session, mcp):
     for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
         nx, ny = (ux + dx) % 20, (uy + dy) % 20
         tile = tiles_by_loc.get((nx, ny))
-        if tile and tile["terrain"] in ("plains", "forest") and tile.get("unit_id") is None:
+        if (
+            tile
+            and tile["terrain"] in ("plains", "forest")
+            and tile.get("unit_id") is None
+        ):
             target = {"x": nx, "y": ny}
             break
 
@@ -273,9 +266,7 @@ async def test_validate_empty_actions(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     alice_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "validate_actions", {"api_key": alice_key, "actions": []}
-    )
+    result = await call(mcp, "validate_actions", {"api_key": alice_key, "actions": []})
 
     assert result["all_valid"] is True
     assert result["results"] == []

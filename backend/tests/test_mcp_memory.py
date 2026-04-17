@@ -39,9 +39,7 @@ async def db_session():
         await session.execute(
             delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%"))
         )
-        await session.execute(
-            delete(GameTurn).where(GameTurn.game_id.like("game_%"))
-        )
+        await session.execute(delete(GameTurn).where(GameTurn.game_id.like("game_%")))
         await session.execute(
             delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%"))
         )
@@ -98,12 +96,8 @@ async def test_write_scratchpad_overwrites_same_turn(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    await call(
-        mcp, "write_scratchpad", {"api_key": api_key, "text": "First draft."}
-    )
-    await call(
-        mcp, "write_scratchpad", {"api_key": api_key, "text": "Revised plan."}
-    )
+    await call(mcp, "write_scratchpad", {"api_key": api_key, "text": "First draft."})
+    await call(mcp, "write_scratchpad", {"api_key": api_key, "text": "Revised plan."})
 
     # Read back — should be the second write
     result = await call(mcp, "read_scratchpad", {"api_key": api_key})
@@ -131,9 +125,7 @@ async def test_write_scratchpad_exactly_at_cap(db_session, mcp):
     api_key = game_data["api_keys"]["alice"]
 
     text = "x" * 4000
-    result = await call(
-        mcp, "write_scratchpad", {"api_key": api_key, "text": text}
-    )
+    result = await call(mcp, "write_scratchpad", {"api_key": api_key, "text": text})
 
     assert "error" not in result
     assert result["characters"] == 4000
@@ -141,9 +133,7 @@ async def test_write_scratchpad_exactly_at_cap(db_session, mcp):
 
 @pytest.mark.asyncio
 async def test_write_scratchpad_invalid_key(db_session, mcp):
-    result = await call(
-        mcp, "write_scratchpad", {"api_key": "fx_bad", "text": "test"}
-    )
+    result = await call(mcp, "write_scratchpad", {"api_key": "fx_bad", "text": "test"})
     assert "error" in result
 
 
@@ -176,9 +166,7 @@ async def test_read_scratchpad_current_turn(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    await call(
-        mcp, "write_scratchpad", {"api_key": api_key, "text": "My notes."}
-    )
+    await call(mcp, "write_scratchpad", {"api_key": api_key, "text": "My notes."})
 
     result = await call(mcp, "read_scratchpad", {"api_key": api_key})
 
@@ -205,9 +193,7 @@ async def test_read_scratchpad_past_turn(db_session, mcp):
     bob_key = game_data["api_keys"]["bob"]
 
     # Write on turn 0
-    await call(
-        mcp, "write_scratchpad", {"api_key": alice_key, "text": "Turn 0 notes."}
-    )
+    await call(mcp, "write_scratchpad", {"api_key": alice_key, "text": "Turn 0 notes."})
 
     # Advance to turn 1
     await call(mcp, "submit_actions", {"api_key": alice_key, "actions": []})
@@ -227,9 +213,7 @@ async def test_read_scratchpad_future_turn(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "read_scratchpad", {"api_key": api_key, "turn_number": 99}
-    )
+    result = await call(mcp, "read_scratchpad", {"api_key": api_key, "turn_number": 99})
 
     assert "error" in result
 
@@ -239,9 +223,7 @@ async def test_read_scratchpad_negative_turn(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "read_scratchpad", {"api_key": api_key, "turn_number": -1}
-    )
+    result = await call(mcp, "read_scratchpad", {"api_key": api_key, "turn_number": -1})
 
     assert "error" in result
 

@@ -40,9 +40,7 @@ async def db_session():
         await session.execute(
             delete(TurnSnapshot).where(TurnSnapshot.game_id.like("game_%"))
         )
-        await session.execute(
-            delete(GameTurn).where(GameTurn.game_id.like("game_%"))
-        )
+        await session.execute(delete(GameTurn).where(GameTurn.game_id.like("game_%")))
         await session.execute(
             delete(PlayerApiKey).where(PlayerApiKey.game_id.like("game_%"))
         )
@@ -166,9 +164,7 @@ async def test_evaluate_military_returns_strength(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "evaluate_military_position", {"api_key": api_key}
-    )
+    result = await call(mcp, "evaluate_military_position", {"api_key": api_key})
 
     assert "error" not in result
     assert result["player"] == "alice"
@@ -185,9 +181,7 @@ async def test_evaluate_military_returns_breakdown(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "evaluate_military_position", {"api_key": api_key}
-    )
+    result = await call(mcp, "evaluate_military_position", {"api_key": api_key})
 
     assert "unit_breakdown" in result
     assert "my_units" in result["unit_breakdown"]
@@ -200,9 +194,7 @@ async def test_evaluate_military_returns_assessment(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "evaluate_military_position", {"api_key": api_key}
-    )
+    result = await call(mcp, "evaluate_military_position", {"api_key": api_key})
 
     assert "strategic_assessment" in result
     assert isinstance(result["strategic_assessment"], str)
@@ -212,9 +204,7 @@ async def test_evaluate_military_returns_assessment(db_session, mcp):
 
 @pytest.mark.asyncio
 async def test_evaluate_military_invalid_key(db_session, mcp):
-    result = await call(
-        mcp, "evaluate_military_position", {"api_key": "fx_bad"}
-    )
+    result = await call(mcp, "evaluate_military_position", {"api_key": "fx_bad"})
     assert "error" in result
 
 
@@ -229,9 +219,7 @@ async def test_find_resources_returns_opportunities(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "find_resource_opportunities", {"api_key": api_key}
-    )
+    result = await call(mcp, "find_resource_opportunities", {"api_key": api_key})
 
     assert "error" not in result
     assert result["player"] == "alice"
@@ -246,9 +234,7 @@ async def test_find_resources_returns_summary(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "find_resource_opportunities", {"api_key": api_key}
-    )
+    result = await call(mcp, "find_resource_opportunities", {"api_key": api_key})
 
     assert "resource_summary" in result
     for key in ("food", "wood", "ore", "crystal"):
@@ -279,9 +265,7 @@ async def test_find_resources_priority_scoring(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "find_resource_opportunities", {"api_key": api_key}
-    )
+    result = await call(mcp, "find_resource_opportunities", {"api_key": api_key})
 
     opps = result["opportunities"]
     if len(opps) >= 2:
@@ -295,9 +279,7 @@ async def test_find_resources_strategic_advice(db_session, mcp):
     game_data = await create_two_player_game(mcp)
     api_key = game_data["api_keys"]["alice"]
 
-    result = await call(
-        mcp, "find_resource_opportunities", {"api_key": api_key}
-    )
+    result = await call(mcp, "find_resource_opportunities", {"api_key": api_key})
 
     assert "strategic_advice" in result
     assert isinstance(result["strategic_advice"], str)
@@ -305,9 +287,7 @@ async def test_find_resources_strategic_advice(db_session, mcp):
 
 @pytest.mark.asyncio
 async def test_find_resources_invalid_key(db_session, mcp):
-    result = await call(
-        mcp, "find_resource_opportunities", {"api_key": "fx_bad"}
-    )
+    result = await call(mcp, "find_resource_opportunities", {"api_key": "fx_bad"})
     assert "error" in result
 
 
@@ -402,12 +382,8 @@ async def test_analysis_tools_fog_of_war(db_session, mcp):
     alice_key = game_data["api_keys"]["alice"]
     bob_key = game_data["api_keys"]["bob"]
 
-    alice_territory = await call(
-        mcp, "analyze_territory", {"api_key": alice_key}
-    )
-    bob_territory = await call(
-        mcp, "analyze_territory", {"api_key": bob_key}
-    )
+    alice_territory = await call(mcp, "analyze_territory", {"api_key": alice_key})
+    bob_territory = await call(mcp, "analyze_territory", {"api_key": bob_key})
 
     assert alice_territory["player"] == "alice"
     assert bob_territory["player"] == "bob"

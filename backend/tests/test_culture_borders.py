@@ -2,9 +2,7 @@
 Tests for Phase 1: Culture model and border expansion.
 """
 
-import pytest
 from backend.src.game.models import (
-    BUILDING_STATS,
     BuildBuildingAction,
     BuildingType,
     City,
@@ -17,7 +15,6 @@ from backend.src.game.models import (
     UnitType,
 )
 from backend.src.game.rules import (
-    CULTURE_THRESHOLDS,
     accumulate_culture,
     execute_build_building,
     resolve_turn,
@@ -477,9 +474,7 @@ class TestBuildBuildingInResolveTurn:
         tile.owner = "p1"
 
         actions = {
-            "p1": [
-                BuildBuildingAction(city_id=1, building_type=BuildingType.MONUMENT)
-            ]
+            "p1": [BuildBuildingAction(city_id=1, building_type=BuildingType.MONUMENT)]
         }
         result = resolve_turn(state, actions)
 

@@ -61,6 +61,7 @@ export function PixiMap({
   const isPanningRef = useRef(false)
   const lastPointerRef = useRef({ x: 0, y: 0 })
   const [hover, setHover] = useState<HoverData | null>(null)
+  const [pixiReady, setPixiReady] = useState(0)
 
   // Initialise Pixi application
   useEffect(() => {
@@ -68,21 +69,44 @@ export function PixiMap({
     if (!container) return
 
     const app = new Application()
-    appRef.current = app
+    let disposed = false
+    let initialized = false
+    let appDestroyed = false
 
-    let destroyed = false
+    const destroyApp = () => {
+      if (!initialized || appDestroyed) return
+
+      appDestroyed = true
+      app.destroy(true, { children: true })
+
+      if (appRef.current === app) {
+        appRef.current = null
+      }
+      if (worldRef.current?.parent === app.stage) {
+        worldRef.current = null
+      }
+    }
 
     const init = async () => {
-      await app.init({
-        background: 0x1a1a2e,
-        resizeTo: container,
-        antialias: true,
-        resolution: window.devicePixelRatio || 1,
-        autoDensity: true,
-      })
+      try {
+        await app.init({
+          background: 0x1a1a2e,
+          resizeTo: container,
+          antialias: true,
+          resolution: window.devicePixelRatio || 1,
+          autoDensity: true,
+        })
+      } catch (error) {
+        if (!disposed) {
+          console.error('Failed to initialize Pixi map', error)
+        }
+        return
+      }
 
-      if (destroyed) {
-        app.destroy(true)
+      initialized = true
+
+      if (disposed) {
+        destroyApp()
         return
       }
 
@@ -92,18 +116,16 @@ export function PixiMap({
       world.eventMode = 'static'
       world.interactiveChildren = true
       app.stage.addChild(world)
+      appRef.current = app
       worldRef.current = world
+      setPixiReady((version) => version + 1)
     }
 
     init()
 
     return () => {
-      destroyed = true
-      if (appRef.current) {
-        appRef.current.destroy(true, { children: true })
-        appRef.current = null
-        worldRef.current = null
-      }
+      disposed = true
+      destroyApp()
     }
   }, [])
 
@@ -350,7 +372,7 @@ export function PixiMap({
     })
 
     world.addChild(interactiveLayer)
-  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick])
+  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {
