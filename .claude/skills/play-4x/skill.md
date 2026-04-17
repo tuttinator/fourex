@@ -11,6 +11,7 @@ You are a thin wrapper around the fourex MCP server. Your job is to help the use
 ## Setup
 
 The MCP server must be running. Tell the user to start it if needed:
+
 - **stdio mode**: `mise run serve`
 - **HTTP mode**: `mise run serve-http` (port 8020)
 
@@ -19,17 +20,20 @@ The server exposes tools via the `fourex-mcp` entry point. If MCP tools are not 
 ## Available MCP Tools
 
 ### Lifecycle
+
 - `create_game` — Create a new game with player names, seed, map size, max turns. Returns game_id and API keys.
 - `join_game` — Join an existing game. Returns an API key.
 - `get_game_info` — Get game metadata (players, turn, status). No auth required.
 
 ### Gameplay
+
 - `get_game_state` — Get fog-of-war-redacted game state (requires api_key).
 - `submit_actions` — Submit actions for the current turn (requires api_key).
 - `validate_actions` — Dry-run validation of proposed actions (requires api_key).
 - `is_my_turn` — Check turn status and submission state (requires api_key).
 
 ### Memory
+
 - `write_scratchpad` / `read_scratchpad` — Free-form per-turn scratchpad (legacy).
 - `write_strategic_goals` / `read_strategic_goals` — Persist a list of strategic goals. Reads return the most recent non-empty list.
 - `write_opponent_model` / `read_opponent_models` — Persist per-opponent observations (stance, unit count, threat). Reads return the latest model per opponent across turns.
@@ -37,17 +41,20 @@ The server exposes tools via the `fourex-mcp` entry point. If MCP tools are not 
 - All memory is scoped to a single game.
 
 ### Analysis
+
 - `analyze_territory` — Territory control and expansion opportunities.
 - `evaluate_military_position` — Military strength and threat assessment.
 - `find_resource_opportunities` — Available resource sites ranked by priority.
 - `calculate_distances` — Manhattan distances between coordinates.
 
 ### Rendering
+
 - `render_map_ascii` — ASCII text map with fog of war, legend, and resource summary.
 - `render_map_svg` — SVG map with coloured terrain, unit/city markers, and fog masking.
 - `render_map_image` — Base64-encoded PNG of the map (requires cairosvg).
 
 ### History
+
 - `get_turn_history` — Your past action submissions.
 - `get_turn_snapshot` — Fog-of-war state snapshot for a past turn.
 
@@ -82,3 +89,14 @@ When submitting actions, each action is a dict with a `type` field:
 ## Spectate Mode
 
 If the user says "spectate", use `get_game_info` (no auth needed) to show game progress. Use `get_turn_history` and `get_turn_snapshot` with a player's api_key to review past turns.
+
+## Agent Profiles
+
+Reference `AgentProfile`s live in `backend/src/agents/profiles.py`. Each profile expresses behaviour mechanically — through `tool_priorities`, `memory_priorities`, `action_biases`, and `thresholds` — rather than via a prompt alone. Available profiles:
+
+- `aggressive` — leads with `evaluate_military_position`, biases `ATTACK`/`TRAIN_UNIT`, gated by a military-strength ratio threshold.
+- `economic` — leads with `find_resource_opportunities`, biases `BUILD_IMPROVEMENT`/`BUILD_BUILDING`.
+- `explorer` — leads with `analyze_territory`, biases `MOVE`/`FOUND_CITY`, capped by a target city count.
+- `balanced` — adaptive weights across the four reference tools.
+
+Observe one profile-driven turn via `backend.src.agents.profile_runner.run_profile_turn(client, api_key, profile, player_id=…)`. The returned `ProfileRunResult` captures the tool call sequence, memory reads and writes, and the ranked action proposals — useful for comparing how two profiles react to the same state.

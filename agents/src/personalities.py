@@ -1,9 +1,24 @@
 """
 Agent personality definitions for the 4X game.
-Each personality has different strategic priorities and decision-making patterns.
+
+Deprecated in Phase 5 of the autonomous-agents overhaul. The structured
+replacement lives in ``backend/src/agents/profiles.py`` — an
+``AgentProfile`` expresses tool priorities, memory priorities, action
+biases, and numeric thresholds mechanically, rather than by reworded
+system prompts. This module remains as a shim until the Phase 6 agent
+rewrite migrates all call sites to ``AgentProfile``.
 """
 
+import warnings
 from dataclasses import dataclass
+
+warnings.warn(
+    "agents.src.personalities is deprecated; use "
+    "backend.src.agents.profiles (AgentProfile) instead. "
+    "This module will be removed in Phase 6.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 @dataclass
