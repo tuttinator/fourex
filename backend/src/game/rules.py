@@ -932,6 +932,31 @@ def reset_unit_moves(state: GameState) -> None:
         unit.moves_left = unit.stats.moves
 
 
+def heal_units(state: GameState) -> None:
+    """Heal units that are stationary in friendly territory.
+
+    A unit heals +1 HP if:
+    - It did not move this turn (moves_left equals its base moves)
+    - It is on a tile owned by its player (friendly territory)
+    - It is not a Scout (scouts are disposable reconnaissance units)
+
+    Healing is capped at the unit's max HP (from UNIT_STATS).
+    No resources are consumed.
+    """
+    for unit in state.units.values():
+        if unit.type == UnitType.SCOUT:
+            continue
+        if unit.moves_left != unit.stats.moves:
+            # Unit used movement this turn
+            continue
+        tile = state.get_tile(unit.loc)
+        if tile is None or tile.owner != unit.owner:
+            continue
+        max_hp = unit.stats.hp
+        if unit.hp < max_hp:
+            unit.hp = min(unit.hp + 1, max_hp)
+
+
 def resolve_turn(
     state: GameState, player_actions: dict[PlayerId, list[Action]]
 ) -> TurnResult:
@@ -986,6 +1011,9 @@ def resolve_turn(
 
     # Expand borders (culture accumulation + border expansion)
     accumulate_culture(state)
+
+    # Heal stationary units in friendly territory
+    heal_units(state)
 
     # Collect resources at end of turn
     collect_resources(state)
