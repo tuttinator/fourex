@@ -610,12 +610,8 @@ def execute_build_improvement(
     # Deduct resources
     state.stockpiles[worker.owner] = player_resources - improvement_stats.cost
 
-    # Place improvement on tile
+    # Place improvement. Worker is not consumed — only FOUND_CITY consumes workers.
     tile.improvement = action.improvement
-
-    # Consume worker (same pattern as found_city)
-    tile.unit_id = None
-    del state.units[worker.id]
 
     return ActionResult(
         success=True,

@@ -1,6 +1,6 @@
 """
 Tests for execute_build_improvement(): validates ownership, terrain,
-resources; places improvement; consumes worker.
+resources; places improvement; worker survives and retains moves.
 
 Covers: valid builds for each improvement type, wrong terrain, wrong
 resource, insufficient resources, duplicate improvement, non-worker unit,
@@ -13,6 +13,7 @@ from backend.src.game.models import (
     Coord,
     GameState,
     ImprovementType,
+    MoveAction,
     Resource,
     ResourceBag,
     Terrain,
@@ -87,8 +88,9 @@ class TestBuildFarm:
         assert result.success
         tile = state.get_tile(Coord(x=3, y=3))
         assert tile.improvement == ImprovementType.FARM
-        assert worker.id not in state.units  # worker consumed
-        assert tile.unit_id is None
+        assert worker.id in state.units  # worker survives
+        assert tile.unit_id == worker.id
+        assert worker.moves_left == 2  # moves retained
         cost = IMPROVEMENT_STATS[ImprovementType.FARM].cost
         assert state.stockpiles["p1"].wood == 100 - cost.wood
 
@@ -141,7 +143,7 @@ class TestBuildMine:
         assert result.success
         tile = state.get_tile(Coord(x=4, y=4))
         assert tile.improvement == ImprovementType.MINE
-        assert worker.id not in state.units
+        assert worker.id in state.units
 
     def test_mine_wrong_terrain(self):
         state = _make_state()
@@ -192,7 +194,7 @@ class TestBuildLumberMill:
         assert result.success
         tile = state.get_tile(Coord(x=5, y=5))
         assert tile.improvement == ImprovementType.LUMBER_MILL
-        assert worker.id not in state.units
+        assert worker.id in state.units
 
     def test_lumber_mill_on_forest_with_wood_resource(self):
         """Lumber mill should work on forest with wood resource too."""
@@ -402,6 +404,70 @@ class TestResolveTurnIntegration:
         assert turn_result.player_actions["p1"][0].success
         tile = state.get_tile(Coord(x=3, y=3))
         assert tile.improvement == ImprovementType.FARM
+
+    def test_worker_survives_and_can_move_same_turn(self):
+        """Worker builds a farm, then moves to an adjacent tile in the same turn."""
+        state = _make_state()
+        state.players = ["p1"]
+        state.stockpiles["p1"] = ResourceBag(wood=100)
+        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        worker = _add_worker(state, "p1", 3, 3)
+
+        actions = {
+            "p1": [
+                BuildImprovementAction(
+                    worker_id=worker.id, improvement=ImprovementType.FARM
+                ),
+                MoveAction(unit_id=worker.id, to=Coord(x=4, y=3)),
+            ]
+        }
+        turn_result = resolve_turn(state, actions)
+
+        outcomes = turn_result.player_actions["p1"]
+        assert outcomes[0].success
+        assert outcomes[1].success
+        assert worker.id in state.units
+        assert state.units[worker.id].loc == Coord(x=4, y=3)
+        assert state.get_tile(Coord(x=3, y=3)).improvement == ImprovementType.FARM
+        assert state.get_tile(Coord(x=3, y=3)).unit_id is None
+        assert state.get_tile(Coord(x=4, y=3)).unit_id == worker.id
+
+    def test_worker_builds_multiple_improvements_across_turns(self):
+        """A single worker builds a farm on turn 1, moves, then builds a lumber mill on turn 2."""
+        state = _make_state()
+        state.players = ["p1"]
+        state.stockpiles["p1"] = ResourceBag(wood=100)
+        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 4, 3, Terrain.FOREST)
+        worker = _add_worker(state, "p1", 3, 3)
+
+        turn1 = resolve_turn(
+            state,
+            {
+                "p1": [
+                    BuildImprovementAction(
+                        worker_id=worker.id, improvement=ImprovementType.FARM
+                    ),
+                    MoveAction(unit_id=worker.id, to=Coord(x=4, y=3)),
+                ]
+            },
+        )
+        assert all(r.success for r in turn1.player_actions["p1"])
+
+        turn2 = resolve_turn(
+            state,
+            {
+                "p1": [
+                    BuildImprovementAction(
+                        worker_id=worker.id, improvement=ImprovementType.LUMBER_MILL
+                    ),
+                ]
+            },
+        )
+        assert turn2.player_actions["p1"][0].success
+        assert worker.id in state.units
+        assert state.get_tile(Coord(x=3, y=3)).improvement == ImprovementType.FARM
+        assert state.get_tile(Coord(x=4, y=3)).improvement == ImprovementType.LUMBER_MILL
 
     def test_resolve_turn_rejects_invalid_improvement(self):
         state = _make_state()
