@@ -982,6 +982,124 @@ def get_valid_moves(
     return results
 
 
+STARTING_STOCKPILE = ResourceBag(food=50, wood=20, ore=10)
+STARTING_WORKER_HP = 100
+_PASSABLE_TERRAIN = (Terrain.PLAINS, Terrain.FOREST)
+
+
+def _find_scout_placement(state: GameState, worker_loc: Coord) -> Coord | None:
+    """Find a passable tile for scout placement, preferring cardinal neighbours.
+
+    Tries cardinal directions (N, E, S, W) first. If all four are impassable
+    or occupied, falls back to a wider ring-by-ring search out to radius 4.
+    Returns None if nothing suitable is found.
+    """
+    # Cardinals in N, E, S, W order.
+    cardinals = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+    for dx, dy in cardinals:
+        coord = Coord(
+            x=(worker_loc.x + dx) % state.map_width,
+            y=(worker_loc.y + dy) % state.map_height,
+        )
+        tile = state.get_tile(coord)
+        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+            return coord
+
+    for radius in range(2, 5):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                if abs(dx) + abs(dy) != radius:
+                    continue
+                coord = Coord(
+                    x=(worker_loc.x + dx) % state.map_width,
+                    y=(worker_loc.y + dy) % state.map_height,
+                )
+                tile = state.get_tile(coord)
+                if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+                    return coord
+
+    return None
+
+
+def place_starting_units(
+    state: GameState,
+    player_id: PlayerId,
+    rng: random.Random,
+    min_distance: int = 5,
+) -> None:
+    """Place a starting worker and scout for ``player_id``.
+
+    The worker is placed on a plains/forest tile inside a margin-trimmed inner
+    region, at least ``min_distance`` away from any existing unit. If no such
+    spot is found after 100 attempts, falls back to the first suitable tile.
+    The scout is placed on an adjacent passable tile via ``_find_scout_placement``.
+
+    Both units are registered on ``state.units`` and on their tile's ``unit_id``,
+    and ``state.next_unit_id`` is advanced.
+    """
+    map_w = state.map_width
+    map_h = state.map_height
+    margin = min(2, map_w // 5, map_h // 5)
+
+    worker_loc: Coord | None = None
+    for _ in range(100):
+        x = rng.randint(margin, map_w - margin - 1)
+        y = rng.randint(margin, map_h - margin - 1)
+        coord = Coord(x=x, y=y)
+        tile = state.get_tile(coord)
+        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+            too_close = any(
+                coord.distance_to(u.loc) < min_distance for u in state.units.values()
+            )
+            if not too_close:
+                worker_loc = coord
+                break
+
+    if worker_loc is None:
+        for tile in state.tiles:
+            if tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+                worker_loc = tile.loc
+                break
+
+    if worker_loc is None:
+        raise ValueError(f"No suitable starting tile found for {player_id}")
+
+    worker_id = state.next_unit_id
+    worker = Unit(
+        id=worker_id,
+        owner=player_id,
+        type=UnitType.WORKER,
+        hp=STARTING_WORKER_HP,
+        moves_left=UNIT_STATS[UnitType.WORKER].moves,
+        loc=worker_loc,
+    )
+    state.units[worker_id] = worker
+    worker_tile = state.get_tile(worker_loc)
+    if worker_tile is not None:
+        worker_tile.unit_id = worker_id
+    state.next_unit_id = worker_id + 1
+
+    scout_loc = _find_scout_placement(state, worker_loc)
+    if scout_loc is None:
+        return
+
+    scout_stats = UNIT_STATS[UnitType.SCOUT]
+    scout_id = state.next_unit_id
+    scout = Unit(
+        id=scout_id,
+        owner=player_id,
+        type=UnitType.SCOUT,
+        hp=scout_stats.hp,
+        moves_left=scout_stats.moves,
+        loc=scout_loc,
+    )
+    state.units[scout_id] = scout
+    scout_tile = state.get_tile(scout_loc)
+    if scout_tile is not None:
+        scout_tile.unit_id = scout_id
+    state.next_unit_id = scout_id + 1
+
+
 def reset_unit_moves(state: GameState) -> None:
     """Reset movement points for all units at turn start."""
     for unit in state.units.values():

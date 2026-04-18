@@ -11,8 +11,13 @@ from mcp.types import ToolAnnotations
 from ...auth import create_player_key
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
-from ...game.models import Coord, GameState, ResourceBag, Unit, UnitType
-from ...game.rules import calculate_scores, generate_map
+from ...game.models import GameState
+from ...game.rules import (
+    STARTING_STOCKPILE,
+    calculate_scores,
+    generate_map,
+    place_starting_units,
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -99,48 +104,12 @@ def register(mcp: FastMCP) -> None:
 
             # Initialise stockpiles
             for player in players:
-                state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
+                state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
 
-            # Place starting workers
+            # Place starting worker + scout per player
             rng = random.Random(seed)
-            unit_id = 1
             for player in players:
-                placed = False
-                for _ in range(100):
-                    x = rng.randint(2, map_width - 3)
-                    y = rng.randint(2, map_height - 3)
-                    coord = Coord(x=x, y=y)
-                    tile = next((t for t in tiles if t.loc == coord), None)
-                    if tile and tile.terrain in ("plains", "forest"):
-                        too_close = any(
-                            coord.distance_to(u.loc) < 5 for u in state.units.values()
-                        )
-                        if not too_close:
-                            state.units[unit_id] = Unit(
-                                id=unit_id,
-                                owner=player,
-                                type=UnitType.WORKER,
-                                hp=100,
-                                moves_left=2,
-                                loc=coord,
-                            )
-                            unit_id += 1
-                            placed = True
-                            break
-                if not placed:
-                    # Fallback: any suitable tile
-                    for tile in tiles:
-                        if tile.terrain in ("plains", "forest"):
-                            state.units[unit_id] = Unit(
-                                id=unit_id,
-                                owner=player,
-                                type=UnitType.WORKER,
-                                hp=100,
-                                moves_left=2,
-                                loc=tile.loc,
-                            )
-                            unit_id += 1
-                            break
+                place_starting_units(state, player, rng)
 
             # Persist game
             await repo.create_game(
@@ -229,44 +198,17 @@ def register(mcp: FastMCP) -> None:
             # Update game state to include the new player
             state = GameState.model_validate(game.state)
             state.players.append(player_name)
-            state.stockpiles[player_name] = ResourceBag(food=50, wood=20, ore=10)
+            state.stockpiles[player_name] = STARTING_STOCKPILE.model_copy()
 
-            # Place a starting worker for the new player
+            # Ensure next_unit_id doesn't collide with existing units
+            if state.units:
+                state.next_unit_id = max(
+                    state.next_unit_id, max(state.units.keys()) + 1
+                )
+
+            # Place a starting worker + scout for the new player
             rng = random.Random(game.seed + len(updated_players))
-            unit_id = max(state.units.keys(), default=0) + 1
-            placed = False
-            for _ in range(100):
-                x = rng.randint(2, state.map_width - 3)
-                y = rng.randint(2, state.map_height - 3)
-                coord = Coord(x=x, y=y)
-                tile = next((t for t in state.tiles if t.loc == coord), None)
-                if tile and tile.terrain in ("plains", "forest"):
-                    too_close = any(
-                        coord.distance_to(u.loc) < 5 for u in state.units.values()
-                    )
-                    if not too_close:
-                        state.units[unit_id] = Unit(
-                            id=unit_id,
-                            owner=player_name,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=coord,
-                        )
-                        placed = True
-                        break
-            if not placed:
-                for tile in state.tiles:
-                    if tile.terrain in ("plains", "forest"):
-                        state.units[unit_id] = Unit(
-                            id=unit_id,
-                            owner=player_name,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=tile.loc,
-                        )
-                        break
+            place_starting_units(state, player_name, rng)
 
             await repo.update_game_state(game_id, state)
 

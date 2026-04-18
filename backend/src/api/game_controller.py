@@ -7,16 +7,17 @@ from collections import defaultdict
 
 from ..game.models import (
     Action,
-    Coord,
     GameState,
     PlayerId,
     PromptLog,
-    ResourceBag,
     TurnResult,
-    Unit,
-    UnitType,
 )
-from ..game.rules import generate_map, resolve_turn
+from ..game.rules import (
+    STARTING_STOCKPILE,
+    generate_map,
+    place_starting_units,
+    resolve_turn,
+)
 
 
 class GameController:
@@ -52,62 +53,12 @@ class GameController:
 
         # Initialize player stockpiles
         for player in players:
-            state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
+            state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
 
-        # Add starting worker for each player
+        # Place starting worker + scout per player
         rng = random.Random(seed)
-        unit_id = 1
-
-        for i, player in enumerate(players):
-            # Find a good starting position (plains or forest, away from other players)
-            attempts = 0
-            while attempts < 100:  # Prevent infinite loop
-                x = rng.randint(2, 17)  # Keep away from edges
-                y = rng.randint(2, 17)
-                coord = Coord(x=x, y=y)
-
-                # Find the tile at this coordinate
-                tile = next((t for t in tiles if t.loc == coord), None)
-                if tile and tile.terrain in ["plains", "forest"]:
-                    # Check if it's far enough from other players
-                    too_close = False
-                    for existing_unit in state.units.values():
-                        if coord.distance_to(existing_unit.loc) < 5:
-                            too_close = True
-                            break
-
-                    if not too_close:
-                        # Create starting worker
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=coord,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        break
-
-                attempts += 1
-
-            # Fallback: if we couldn't find a good position, just place it somewhere
-            if player not in [u.owner for u in state.units.values()]:
-                # Find any plains/forest tile
-                for tile in tiles:
-                    if tile.terrain in ["plains", "forest"]:
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=tile.loc,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        break
+        for player in players:
+            place_starting_units(state, player, rng)
 
         self.games[game_id] = state
         self.pending_actions[game_id] = {}

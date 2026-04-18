@@ -20,7 +20,7 @@ from .models import (
     TrainUnitAction,
     UnitType,
 )
-from .rules import generate_map, resolve_turn
+from .rules import STARTING_STOCKPILE, generate_map, place_starting_units, resolve_turn
 
 
 def create_test_game(players: list[PlayerId], seed: int) -> GameState:
@@ -39,38 +39,19 @@ def create_test_game(players: list[PlayerId], seed: int) -> GameState:
 
     # Initialize player stockpiles with starting resources
     for player in players:
-        state.stockpiles[player] = ResourceBag(food=100, wood=50, ore=30, crystal=5)
+        state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
 
-    # Place starting units for each player
+    # Place starting worker + scout for each player
     rng = random.Random(seed + 1000)
-    for i, player in enumerate(players):
-        # Find a suitable starting location
-        attempts = 0
-        while attempts < 100:
-            x = rng.randint(2, 17)
-            y = rng.randint(2, 17)
-            loc = Coord(x=x, y=y)
-            tile = state.get_tile(loc)
-
-            if tile and tile.terrain.value in ["plains", "forest"] and not tile.unit_id:
-                # Place a worker
-                from .models import Unit
-
-                worker = Unit(
-                    id=state.next_unit_id,
-                    owner=player,
-                    type=UnitType.WORKER,
-                    hp=2,
-                    moves_left=2,
-                    loc=loc,
-                )
-                state.units[worker.id] = worker
-                state.next_unit_id += 1
-                tile.unit_id = worker.id
-
-                console.print(f"Placed starting worker for {player} at ({x}, {y})")
-                break
-            attempts += 1
+    for player in players:
+        before = set(state.units.keys())
+        place_starting_units(state, player, rng)
+        for unit_id in sorted(set(state.units.keys()) - before):
+            unit = state.units[unit_id]
+            console.print(
+                f"Placed starting {unit.type.value} for {player} "
+                f"at ({unit.loc.x}, {unit.loc.y})"
+            )
 
     return state
 

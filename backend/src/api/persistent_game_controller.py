@@ -11,15 +11,17 @@ from ..database.models import Game as DBGame
 from ..database.repository import GameRepository
 from ..game.models import (
     Action,
-    Coord,
     GameState,
     PlayerId,
     PromptLog,
-    ResourceBag,
-    Unit,
-    UnitType,
 )
-from ..game.rules import generate_map, redact_state, resolve_turn
+from ..game.rules import (
+    STARTING_STOCKPILE,
+    generate_map,
+    place_starting_units,
+    redact_state,
+    resolve_turn,
+)
 from .websocket import broadcast_player_action, broadcast_turn_end, broadcast_turn_start
 
 
@@ -155,7 +157,7 @@ class PersistentGameController:
 
         # Initialize player stockpiles
         for player in players:
-            state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
+            state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
 
         # Place starting units
         self._place_starting_units(state, players, db_game.seed)
@@ -177,56 +179,10 @@ class PersistentGameController:
     def _place_starting_units(
         state: GameState, players: list[PlayerId], seed: int
     ) -> None:
-        """Place one starting WORKER per player on suitable terrain."""
+        """Place a starting worker + scout per player on suitable terrain."""
         rng = random.Random(seed)
-        tiles = state.tiles
-        map_w = state.map_width
-        map_h = state.map_height
-        margin = min(2, map_w // 5, map_h // 5)
-        unit_id = state.next_unit_id
-
         for player in players:
-            placed = False
-            for _ in range(100):
-                x = rng.randint(margin, map_w - margin - 1)
-                y = rng.randint(margin, map_h - margin - 1)
-                coord = Coord(x=x, y=y)
-
-                tile = next((t for t in tiles if t.loc == coord), None)
-                if tile and tile.terrain in ["plains", "forest"]:
-                    too_close = any(
-                        coord.distance_to(u.loc) < 5 for u in state.units.values()
-                    )
-                    if not too_close:
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=coord,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        placed = True
-                        break
-
-            if not placed:
-                for tile in tiles:
-                    if tile.terrain in ["plains", "forest"]:
-                        worker = Unit(
-                            id=unit_id,
-                            owner=player,
-                            type=UnitType.WORKER,
-                            hp=100,
-                            moves_left=2,
-                            loc=tile.loc,
-                        )
-                        state.units[unit_id] = worker
-                        unit_id += 1
-                        break
-
-        state.next_unit_id = unit_id
+            place_starting_units(state, player, rng)
 
     async def create_game(
         self, game_id: str, players: list[PlayerId], seed: int = 42
@@ -252,7 +208,7 @@ class PersistentGameController:
 
         # Initialize player stockpiles
         for player in players:
-            state.stockpiles[player] = ResourceBag(food=50, wood=20, ore=10)
+            state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
 
         # Place starting units
         self._place_starting_units(state, players, seed)

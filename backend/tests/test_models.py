@@ -135,7 +135,7 @@ class TestUnit:
             id=2,
             owner="player1",
             type=UnitType.WORKER,
-            hp=2,
+            hp=100,
             moves_left=2,
             loc=Coord(x=5, y=5),
         )

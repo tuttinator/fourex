@@ -142,7 +142,7 @@ def test_invariants_unit_on_mountain_detected():
         id=7,
         owner="p1",
         type=UnitType.WORKER,
-        hp=2,
+        hp=100,
         moves_left=2,
         loc=Coord(x=1, y=1),
     )

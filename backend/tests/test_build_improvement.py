@@ -47,7 +47,7 @@ def _add_worker(state: GameState, owner: str, x: int, y: int) -> Unit:
         id=state.next_unit_id,
         owner=owner,
         type=UnitType.WORKER,
-        hp=2,
+        hp=100,
         moves_left=2,
         loc=Coord(x=x, y=y),
     )
