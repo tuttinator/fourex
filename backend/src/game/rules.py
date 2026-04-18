@@ -25,6 +25,7 @@ from .models import (
     DiplomaticEventType,
     DiplomaticState,
     FoundCityAction,
+    FreeTextClause,
     GameState,
     ImprovementType,
     Message,
@@ -32,8 +33,10 @@ from .models import (
     PeaceClause,
     PlayerId,
     ProposeTreatyAction,
+    RecurringTributeClause,
     Resource,
     ResourceBag,
+    ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
     Terrain,
@@ -461,12 +464,15 @@ def _treaty_involves(treaty: Treaty, player: PlayerId) -> bool:
 def _treaty_has_active_obligation(treaty: Treaty) -> bool:
     """Return True if cancellation of ``treaty`` should count as a violation.
 
-    Phase 3 obligation types: unexpired ``PeaceClause``. A pure free-text
-    treaty has no mechanical obligations and can be cancelled cleanly.
-    Later phases will add tribute, vision, open-borders, and alliance.
+    Durational obligations: unexpired ``PeaceClause`` or
+    ``RecurringTributeClause``. Free-text clauses are purely informational,
+    and one-off ``ResourceSwapClause`` is fully discharged at ratification —
+    neither counts as an ongoing obligation.
     """
     for clause in treaty.clauses:
         if isinstance(clause, PeaceClause) and clause.turns_remaining > 0:
+            return True
+        if isinstance(clause, RecurringTributeClause) and clause.turns_remaining > 0:
             return True
     return False
 
@@ -509,6 +515,91 @@ def _cancel_treaties_between(
     state.active_treaties = remaining
 
 
+def _bag_has_negative(bag: ResourceBag) -> bool:
+    """Return True if any resource field is below zero."""
+    return bag.food < 0 or bag.wood < 0 or bag.ore < 0 or bag.crystal < 0
+
+
+def _bag_is_zero(bag: ResourceBag) -> bool:
+    """Return True if every resource field is exactly zero."""
+    return bag.food == 0 and bag.wood == 0 and bag.ore == 0 and bag.crystal == 0
+
+
+def _validate_resource_clauses(
+    clauses: list, proposer: PlayerId, recipient: PlayerId
+) -> str | None:
+    """Shape-validate Phase 4 clauses. Returns an error string or None.
+
+    Pydantic already enforces duration bounds; this covers the semantic
+    rules (no negatives, at least one resource on each clause, tribute payer
+    is one of the two parties).
+    """
+    for clause in clauses:
+        if isinstance(clause, ResourceSwapClause):
+            if _bag_has_negative(clause.proposer_gives) or _bag_has_negative(
+                clause.recipient_gives
+            ):
+                return "Resource swap amounts cannot be negative."
+            if _bag_is_zero(clause.proposer_gives) and _bag_is_zero(
+                clause.recipient_gives
+            ):
+                return "Resource swap must transfer at least one resource."
+        elif isinstance(clause, RecurringTributeClause):
+            if clause.payer not in (proposer, recipient):
+                return f"Tribute payer {clause.payer} must be one of the two parties."
+            if _bag_has_negative(clause.amount):
+                return "Recurring tribute amount cannot be negative."
+            if _bag_is_zero(clause.amount):
+                return "Recurring tribute amount must be positive."
+    return None
+
+
+def _aggregate_swap_totals(clauses: list) -> tuple[ResourceBag, ResourceBag]:
+    """Sum all ResourceSwapClause sides into (proposer_total, recipient_total).
+
+    Multi-clause proposals are ratified atomically, so the cumulative totals
+    are what must be fundable — not any single clause in isolation.
+    """
+    proposer_total = ResourceBag()
+    recipient_total = ResourceBag()
+    for clause in clauses:
+        if isinstance(clause, ResourceSwapClause):
+            proposer_total = proposer_total + clause.proposer_gives
+            recipient_total = recipient_total + clause.recipient_gives
+    return proposer_total, recipient_total
+
+
+def _precheck_ally_funding(
+    state: GameState,
+    clauses: list,
+    proposer: PlayerId,
+    recipient: PlayerId,
+) -> str | None:
+    """If proposer and recipient are allies, pre-check swap + tribute funding.
+
+    Hybrid policy: allies see each other's treasuries, so unfundable deals are
+    rejected up-front. Non-allies can still bluff — unfundable proposals pass
+    here and fail at acceptance (swap) or tribute step (recurring).
+    """
+    if state.get_diplomatic_state(proposer, recipient) != DiplomaticState.ALLIANCE:
+        return None
+    proposer_bag = state.stockpiles.get(proposer, ResourceBag())
+    recipient_bag = state.stockpiles.get(recipient, ResourceBag())
+
+    p_total, r_total = _aggregate_swap_totals(clauses)
+    if not proposer_bag.can_afford(p_total):
+        return f"Proposer {proposer} cannot afford their swap side."
+    if not recipient_bag.can_afford(r_total):
+        return f"Recipient {recipient} cannot afford their swap side."
+
+    for clause in clauses:
+        if isinstance(clause, RecurringTributeClause):
+            payer_bag = proposer_bag if clause.payer == proposer else recipient_bag
+            if not payer_bag.can_afford(clause.amount):
+                return f"Payer {clause.payer} cannot afford tribute amount."
+    return None
+
+
 def execute_propose_treaty(
     state: GameState, proposer: PlayerId, action: ProposeTreatyAction
 ) -> ActionResult:
@@ -519,6 +610,11 @@ def execute_propose_treaty(
     - Proposal must have at least one clause.
     - Peace clauses must have positive duration; free-text must be non-empty
       (Pydantic-enforced).
+    - Swap/tribute clauses must have non-negative amounts, at least one
+      resource, and tribute payer must be a party.
+    - If proposer and recipient are allies, swap + tribute clauses are
+      pre-checked for fundability (hybrid policy: allies see treasuries,
+      non-allies may bluff).
     """
     recipient = action.recipient
     if recipient == proposer:
@@ -546,13 +642,37 @@ def execute_propose_treaty(
             action=action,
         )
 
-    # Normalise: for peace clauses, ensure turns_remaining matches duration_turns
-    # at proposal time so the recipient sees exactly the offered duration.
+    shape_error = _validate_resource_clauses(action.clauses, proposer, recipient)
+    if shape_error is not None:
+        return ActionResult(success=False, message=shape_error, action=action)
+
+    ally_funding_error = _precheck_ally_funding(
+        state, action.clauses, proposer, recipient
+    )
+    if ally_funding_error is not None:
+        return ActionResult(
+            success=False,
+            message=ally_funding_error,
+            action=action,
+        )
+
+    # Normalise: for durational clauses, ensure turns_remaining matches
+    # duration_turns at proposal time so the recipient sees exactly the
+    # offered span rather than any client-supplied transient value.
     normalised_clauses: list = []
     for clause in action.clauses:
         if isinstance(clause, PeaceClause):
             normalised_clauses.append(
                 PeaceClause(
+                    duration_turns=clause.duration_turns,
+                    turns_remaining=clause.duration_turns,
+                )
+            )
+        elif isinstance(clause, RecurringTributeClause):
+            normalised_clauses.append(
+                RecurringTributeClause(
+                    payer=clause.payer,
+                    amount=clause.amount,
                     duration_turns=clause.duration_turns,
                     turns_remaining=clause.duration_turns,
                 )
@@ -592,17 +712,29 @@ def execute_propose_treaty(
 def _apply_ratified_clauses(state: GameState, treaty: Treaty) -> None:
     """Apply the immediate effects of each clause in a newly-ratified treaty.
 
-    Phase 3:
     - ``PeaceClause``: if the pair is currently at WAR, flip to PEACE. The
       per-clause ``turns_remaining`` tracks the active duration.
+    - ``ResourceSwapClause``: both parties transfer their side simultaneously.
+      Fundability has already been verified by the caller.
+    - ``RecurringTributeClause``: no immediate effect — the first payment is
+      made at end-of-turn in ``resolve_diplomacy_phase``.
     - ``FreeTextClause``: no mechanical effect.
     """
-    a, b = treaty.parties
+    proposer, recipient = treaty.parties
     for clause in treaty.clauses:
         if isinstance(clause, PeaceClause):
-            current = state.get_diplomatic_state(a, b)
+            current = state.get_diplomatic_state(proposer, recipient)
             if current == DiplomaticState.WAR:
-                set_relation(state, a, b, DiplomaticState.PEACE)
+                set_relation(state, proposer, recipient, DiplomaticState.PEACE)
+        elif isinstance(clause, ResourceSwapClause):
+            proposer_bag = state.stockpiles.get(proposer, ResourceBag())
+            recipient_bag = state.stockpiles.get(recipient, ResourceBag())
+            state.stockpiles[proposer] = (
+                proposer_bag - clause.proposer_gives + clause.recipient_gives
+            )
+            state.stockpiles[recipient] = (
+                recipient_bag - clause.recipient_gives + clause.proposer_gives
+            )
 
 
 def execute_respond_to_treaty(
@@ -644,6 +776,31 @@ def execute_respond_to_treaty(
         return ActionResult(
             success=True,
             message=f"Proposal {proposal.id} declined.",
+            action=action,
+        )
+
+    # Atomic fundability re-check for any resource-swap clauses. Evaluated
+    # on the cumulative total per side, not per clause — the ratification is
+    # simultaneous, so partial success isn't a thing.
+    proposer_total, recipient_total = _aggregate_swap_totals(proposal.clauses)
+    proposer_bag = state.stockpiles.get(proposal.proposer, ResourceBag())
+    recipient_bag = state.stockpiles.get(proposal.recipient, ResourceBag())
+    if not proposer_bag.can_afford(proposer_total) or not recipient_bag.can_afford(
+        recipient_total
+    ):
+        # Discard the proposal with a public failure event; no treaty, no
+        # partial transfers, nobody charged. Proposal is already removed from
+        # pending_proposals above.
+        emit_diplomatic_event(
+            state,
+            DiplomaticEventType.PROPOSAL_FAILED_UNFUNDABLE,
+            actor=actor,
+            counterparty=proposal.proposer,
+            payload={"proposal_id": str(proposal.id)},
+        )
+        return ActionResult(
+            success=True,
+            message=(f"Proposal {proposal.id} failed: resource swap unfundable."),
             action=action,
         )
 
@@ -767,29 +924,100 @@ def execute_cancel_treaty(
 
 
 def resolve_diplomacy_phase(state: GameState) -> None:
-    """Decrement clause durations, expire fully-expired treaties, and expire
-    pending proposals past their deadline.
+    """Process tribute payments, decrement durations, expire finished treaties,
+    and expire pending proposals past their deadline.
 
     Runs once per turn after action execution. Iteration order is fixed
-    (by treaty/proposal id) so replays are bit-identical.
-    """
-    # Decrement peace-clause durations and collect fully-expired treaties.
-    treaties_to_remove: list[int] = []
-    for treaty in sorted(state.active_treaties, key=lambda t: t.id):
-        any_active = False
-        for clause in treaty.clauses:
-            if isinstance(clause, PeaceClause):
-                if clause.turns_remaining > 0:
-                    clause.turns_remaining -= 1
-                if clause.turns_remaining > 0:
-                    any_active = True
-            # Free-text clauses never expire mechanically — they don't count
-            # as active obligations and don't keep the treaty alive either.
-        if not any_active and all(isinstance(c, PeaceClause) for c in treaty.clauses):
-            # All peace clauses fully expired: treaty has run its course.
-            treaties_to_remove.append(treaty.id)
+    (sorted by treaty id / proposal id) so replays are bit-identical.
 
-    for treaty_id in treaties_to_remove:
+    Auto-expiry rule: a treaty expires at end-of-turn when it has no active
+    durational clauses (peace or tribute) AND no free-text clauses. Free-text
+    clauses keep the treaty alive indefinitely (cancellable only manually);
+    a swap-only treaty therefore expires immediately after its ratification
+    turn — the swap is a one-off with no ongoing obligation.
+    """
+    cancelled_treaty_ids: set[int] = set()
+    expired_treaty_ids: list[int] = []
+
+    for treaty in sorted(state.active_treaties, key=lambda t: t.id):
+        # (1) Recurring tribute payments. Iterate clauses in index order for
+        # determinism. If any tribute payment is unaffordable, emit
+        # TRIBUTE_FAILED + TREATY_VIOLATED and cancel — no partial payment for
+        # the failing clause; any already-successful payments earlier in this
+        # loop stand.
+        tribute_failed = False
+        failed_clause: RecurringTributeClause | None = None
+        for clause in treaty.clauses:
+            if not isinstance(clause, RecurringTributeClause):
+                continue
+            if clause.turns_remaining <= 0:
+                continue
+            payer = clause.payer
+            payee = (
+                treaty.parties[1] if payer == treaty.parties[0] else treaty.parties[0]
+            )
+            payer_bag = state.stockpiles.get(payer, ResourceBag())
+            if not payer_bag.can_afford(clause.amount):
+                tribute_failed = True
+                failed_clause = clause
+                break
+            state.stockpiles[payer] = payer_bag - clause.amount
+            state.stockpiles[payee] = (
+                state.stockpiles.get(payee, ResourceBag()) + clause.amount
+            )
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.TRIBUTE_PAID,
+                actor=payer,
+                counterparty=payee,
+                payload={
+                    "treaty_id": str(treaty.id),
+                    "food": str(clause.amount.food),
+                    "wood": str(clause.amount.wood),
+                    "ore": str(clause.amount.ore),
+                    "crystal": str(clause.amount.crystal),
+                },
+            )
+            clause.turns_remaining -= 1
+
+        if tribute_failed and failed_clause is not None:
+            payer = failed_clause.payer
+            payee = (
+                treaty.parties[1] if payer == treaty.parties[0] else treaty.parties[0]
+            )
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.TRIBUTE_FAILED,
+                actor=payer,
+                counterparty=payee,
+                payload={"treaty_id": str(treaty.id)},
+            )
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.TREATY_VIOLATED,
+                actor=payer,
+                counterparty=payee,
+                payload={"treaty_id": str(treaty.id), "cause": "tribute_failed"},
+            )
+            cancelled_treaty_ids.add(treaty.id)
+            continue
+
+        # (2) Decrement peace-clause durations.
+        for clause in treaty.clauses:
+            if isinstance(clause, PeaceClause) and clause.turns_remaining > 0:
+                clause.turns_remaining -= 1
+
+        # (3) Auto-expiry check.
+        any_active_durational = any(
+            (isinstance(c, PeaceClause) and c.turns_remaining > 0)
+            or (isinstance(c, RecurringTributeClause) and c.turns_remaining > 0)
+            for c in treaty.clauses
+        )
+        any_free_text = any(isinstance(c, FreeTextClause) for c in treaty.clauses)
+        if not any_active_durational and not any_free_text:
+            expired_treaty_ids.append(treaty.id)
+
+    for treaty_id in expired_treaty_ids:
         treaty = next(t for t in state.active_treaties if t.id == treaty_id)
         emit_diplomatic_event(
             state,
@@ -799,7 +1027,9 @@ def resolve_diplomacy_phase(state: GameState) -> None:
             payload={"treaty_id": str(treaty.id)},
         )
     state.active_treaties = [
-        t for t in state.active_treaties if t.id not in treaties_to_remove
+        t
+        for t in state.active_treaties
+        if t.id not in cancelled_treaty_ids and t.id not in expired_treaty_ids
     ]
 
     # Expire pending proposals whose deadline has been reached.

@@ -422,8 +422,40 @@ class FreeTextClause(BaseModel):
     text: str = Field(min_length=1, max_length=FREE_TEXT_CLAUSE_MAX_LENGTH)
 
 
+class ResourceSwapClause(BaseModel):
+    """One-off simultaneous resource exchange ratified atomically.
+
+    At acceptance time, the proposer transfers ``proposer_gives`` to the
+    recipient and the recipient transfers ``recipient_gives`` to the proposer
+    in a single atomic step. If either party cannot fund their side, the
+    proposal fails (``PROPOSAL_FAILED_UNFUNDABLE``) and nobody is charged.
+    ``Treaty.parties[0]`` is the proposer and ``parties[1]`` the recipient —
+    this ordering is load-bearing for interpreting the two sides.
+    """
+
+    clause_type: Literal["resource_swap"] = "resource_swap"
+    proposer_gives: ResourceBag = Field(default_factory=ResourceBag)
+    recipient_gives: ResourceBag = Field(default_factory=ResourceBag)
+
+
+class RecurringTributeClause(BaseModel):
+    """Per-turn transfer from ``payer`` to the other party for a fixed span.
+
+    ``turns_remaining`` decrements each diplomacy phase after a successful
+    payment. If the payer cannot fund a payment, ``TRIBUTE_FAILED`` +
+    ``TREATY_VIOLATED`` are emitted, the treaty is cancelled, and no partial
+    payment is made.
+    """
+
+    clause_type: Literal["recurring_tribute"] = "recurring_tribute"
+    payer: PlayerId
+    amount: ResourceBag
+    duration_turns: int = Field(gt=0, le=PEACE_CLAUSE_MAX_DURATION)
+    turns_remaining: int = Field(ge=0)
+
+
 TreatyClause = Annotated[
-    PeaceClause | FreeTextClause,
+    PeaceClause | FreeTextClause | ResourceSwapClause | RecurringTributeClause,
     Field(discriminator="clause_type"),
 ]
 

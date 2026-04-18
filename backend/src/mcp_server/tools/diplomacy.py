@@ -28,6 +28,9 @@ from ...game.models import (
     GameState,
     PeaceClause,
     ProposeTreatyAction,
+    RecurringTributeClause,
+    ResourceBag,
+    ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
     WithdrawTreatyAction,
@@ -278,12 +281,16 @@ def register(mcp: FastMCP) -> None:
         name="propose_treaty",
         description=(
             "Queue a PROPOSE_TREATY action bundling one or more clauses. "
-            "Phase 3 supports two clause types: peace (with duration_turns, "
-            f"1..{PEACE_CLAUSE_MAX_DURATION}) and free_text "
-            f"(text up to {FREE_TEXT_CLAUSE_MAX_LENGTH} chars). Proposals "
-            f"auto-expire after {TREATY_PROPOSAL_EXPIRY_TURNS} turns if "
-            "unanswered. Include the returned action in your next "
-            "submit_actions call."
+            "Supported clause types: peace (duration_turns, "
+            f"1..{PEACE_CLAUSE_MAX_DURATION}); free_text (text up to "
+            f"{FREE_TEXT_CLAUSE_MAX_LENGTH} chars); resource_swap "
+            "(proposer_gives + recipient_gives resource bags, swapped "
+            "atomically at ratification); recurring_tribute (payer, amount, "
+            "duration_turns — per-turn transfer from payer to the other "
+            "party). Between allies, swap/tribute clauses are pre-validated "
+            "for fundability at proposal time. Proposals auto-expire after "
+            f"{TREATY_PROPOSAL_EXPIRY_TURNS} turns if unanswered. Include the "
+            "returned action in your next submit_actions call."
         ),
         annotations=ToolAnnotations(
             title="Propose Treaty",
@@ -303,8 +310,16 @@ def register(mcp: FastMCP) -> None:
             api_key: Your player API key.
             recipient: Discovered player to propose to.
             clauses: A non-empty list of clause dicts. Each must include a
-                ``clause_type`` field: ``peace`` (with ``duration_turns``
-                int), or ``free_text`` (with ``text`` string).
+                ``clause_type`` field:
+
+                - ``peace`` with ``duration_turns`` (int)
+                - ``free_text`` with ``text`` (string)
+                - ``resource_swap`` with ``proposer_gives`` and
+                  ``recipient_gives`` resource-bag dicts (keys: ``food``,
+                  ``wood``, ``ore``, ``crystal``; missing fields default to 0)
+                - ``recurring_tribute`` with ``payer`` (player id, must be
+                  one of the two parties), ``amount`` resource-bag, and
+                  ``duration_turns`` (int)
 
         Returns:
             The action dict to submit.
@@ -320,21 +335,57 @@ def register(mcp: FastMCP) -> None:
             if game is None:
                 return {"error": f"Game {auth.game_id} not found."}
 
+        def _bag(raw: Any) -> ResourceBag:
+            data = raw or {}
+            if not isinstance(data, dict):
+                raise ValueError("resource amount must be an object")
+            return ResourceBag(
+                food=int(data.get("food", 0) or 0),
+                wood=int(data.get("wood", 0) or 0),
+                ore=int(data.get("ore", 0) or 0),
+                crystal=int(data.get("crystal", 0) or 0),
+            )
+
         parsed_clauses: list = []
         for raw in clauses:
             ctype = raw.get("clause_type")
-            if ctype == "peace":
-                duration = int(raw.get("duration_turns", 0))
-                parsed_clauses.append(
-                    PeaceClause(
-                        duration_turns=duration,
-                        turns_remaining=duration,
+            try:
+                if ctype == "peace":
+                    duration = int(raw.get("duration_turns", 0))
+                    parsed_clauses.append(
+                        PeaceClause(
+                            duration_turns=duration,
+                            turns_remaining=duration,
+                        )
                     )
-                )
-            elif ctype == "free_text":
-                parsed_clauses.append(FreeTextClause(text=str(raw.get("text", ""))))
-            else:
-                return {"error": f"Unknown clause_type: {ctype}"}
+                elif ctype == "free_text":
+                    parsed_clauses.append(FreeTextClause(text=str(raw.get("text", ""))))
+                elif ctype == "resource_swap":
+                    parsed_clauses.append(
+                        ResourceSwapClause(
+                            proposer_gives=_bag(raw.get("proposer_gives")),
+                            recipient_gives=_bag(raw.get("recipient_gives")),
+                        )
+                    )
+                elif ctype == "recurring_tribute":
+                    payer = raw.get("payer")
+                    if not isinstance(payer, str) or not payer:
+                        return {
+                            "error": "recurring_tribute clause requires payer string"
+                        }
+                    duration = int(raw.get("duration_turns", 0))
+                    parsed_clauses.append(
+                        RecurringTributeClause(
+                            payer=payer,
+                            amount=_bag(raw.get("amount")),
+                            duration_turns=duration,
+                            turns_remaining=duration,
+                        )
+                    )
+                else:
+                    return {"error": f"Unknown clause_type: {ctype}"}
+            except (TypeError, ValueError) as exc:
+                return {"error": f"Invalid {ctype} clause: {exc}"}
 
         action = ProposeTreatyAction(recipient=recipient, clauses=parsed_clauses)
         return {

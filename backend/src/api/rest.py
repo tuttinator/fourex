@@ -26,6 +26,9 @@ from ..game.models import (
     PlayerId,
     PromptLog,
     ProposeTreatyAction,
+    RecurringTributeClause,
+    ResourceBag,
+    ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
     WithdrawTreatyAction,
@@ -753,14 +756,18 @@ class DiplomacyMessageResponse(BaseModel):
 class TreatyClauseResponse(BaseModel):
     """A clause on a pending or active treaty.
 
-    Serialised as a discriminated object; exactly one of the two clause-type
-    fields is populated per entry.
+    Serialised as a discriminated object; only the fields relevant to
+    ``clause_type`` are populated per entry.
     """
 
-    clause_type: Literal["peace", "free_text"]
+    clause_type: Literal["peace", "free_text", "resource_swap", "recurring_tribute"]
     duration_turns: int | None = None
     turns_remaining: int | None = None
     text: str | None = None
+    proposer_gives: ResourceBag | None = None
+    recipient_gives: ResourceBag | None = None
+    payer: PlayerId | None = None
+    amount: ResourceBag | None = None
 
 
 class TreatyProposalResponse(BaseModel):
@@ -889,7 +896,9 @@ async def get_diplomacy(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _serialise_clause(clause: PeaceClause | FreeTextClause) -> TreatyClauseResponse:
+def _serialise_clause(
+    clause: PeaceClause | FreeTextClause | ResourceSwapClause | RecurringTributeClause,
+) -> TreatyClauseResponse:
     """Convert a typed clause into the wire-format response."""
     if isinstance(clause, PeaceClause):
         return TreatyClauseResponse(
@@ -897,17 +906,56 @@ def _serialise_clause(clause: PeaceClause | FreeTextClause) -> TreatyClauseRespo
             duration_turns=clause.duration_turns,
             turns_remaining=clause.turns_remaining,
         )
-    return TreatyClauseResponse(clause_type="free_text", text=clause.text)
+    if isinstance(clause, FreeTextClause):
+        return TreatyClauseResponse(clause_type="free_text", text=clause.text)
+    if isinstance(clause, ResourceSwapClause):
+        return TreatyClauseResponse(
+            clause_type="resource_swap",
+            proposer_gives=clause.proposer_gives,
+            recipient_gives=clause.recipient_gives,
+        )
+    return TreatyClauseResponse(
+        clause_type="recurring_tribute",
+        payer=clause.payer,
+        amount=clause.amount,
+        duration_turns=clause.duration_turns,
+        turns_remaining=clause.turns_remaining,
+    )
+
+
+def _parse_resource_bag(raw: Any, clause_label: str) -> ResourceBag:
+    """Parse a resource-bag dict tolerantly. Missing fields default to 0."""
+    if raw is None:
+        return ResourceBag()
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{clause_label} resource amount must be an object",
+        )
+    try:
+        return ResourceBag(
+            food=int(raw.get("food", 0) or 0),
+            wood=int(raw.get("wood", 0) or 0),
+            ore=int(raw.get("ore", 0) or 0),
+            crystal=int(raw.get("crystal", 0) or 0),
+        )
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{clause_label} resource values must be integers",
+        )
 
 
 def _parse_clauses_from_request(
     clauses: list[dict[str, Any]],
-) -> list[PeaceClause | FreeTextClause]:
+) -> list[PeaceClause | FreeTextClause | ResourceSwapClause | RecurringTributeClause]:
     """Parse incoming clause dicts into typed ``TreatyClause`` instances.
 
     Raises ``HTTPException(400)`` on unknown clause type or invalid fields.
+    Semantic rules (non-negative amounts, tribute payer is a party, ally
+    funding pre-check) are enforced later by ``execute_propose_treaty``.
     """
-    parsed: list[PeaceClause | FreeTextClause] = []
+    parsed: list = []
     for raw in clauses:
         ctype = raw.get("clause_type")
         if ctype == "peace":
@@ -941,6 +989,49 @@ def _parse_clauses_from_request(
                     ),
                 )
             parsed.append(FreeTextClause(text=text))
+        elif ctype == "resource_swap":
+            parsed.append(
+                ResourceSwapClause(
+                    proposer_gives=_parse_resource_bag(
+                        raw.get("proposer_gives"), "resource_swap proposer_gives"
+                    ),
+                    recipient_gives=_parse_resource_bag(
+                        raw.get("recipient_gives"), "resource_swap recipient_gives"
+                    ),
+                )
+            )
+        elif ctype == "recurring_tribute":
+            payer = raw.get("payer")
+            if not isinstance(payer, str) or not payer:
+                raise HTTPException(
+                    status_code=400,
+                    detail="recurring_tribute clause requires non-empty payer",
+                )
+            try:
+                duration = int(raw.get("duration_turns", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="recurring_tribute duration_turns must be an integer",
+                )
+            if duration <= 0 or duration > PEACE_CLAUSE_MAX_DURATION:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"recurring_tribute duration must be "
+                        f"1..{PEACE_CLAUSE_MAX_DURATION}"
+                    ),
+                )
+            parsed.append(
+                RecurringTributeClause(
+                    payer=payer,
+                    amount=_parse_resource_bag(
+                        raw.get("amount"), "recurring_tribute amount"
+                    ),
+                    duration_turns=duration,
+                    turns_remaining=duration,
+                )
+            )
         else:
             raise HTTPException(status_code=400, detail=f"unknown clause_type: {ctype}")
     return parsed

@@ -292,13 +292,21 @@ export interface DiplomacyMessage {
 	turn_sent: number;
 }
 
-export type TreatyClauseType = "peace" | "free_text";
+export type TreatyClauseType =
+	| "peace"
+	| "free_text"
+	| "resource_swap"
+	| "recurring_tribute";
 
 export interface TreatyClause {
 	clause_type: TreatyClauseType;
 	duration_turns?: number;
 	turns_remaining?: number;
 	text?: string;
+	proposer_gives?: ResourceBag;
+	recipient_gives?: ResourceBag;
+	payer?: PlayerId;
+	amount?: ResourceBag;
 }
 
 export interface TreatyProposalRecord {

@@ -33,6 +33,7 @@ import type {
   DiplomacyRelation,
   DiplomacyStateResponse,
   PlayerId,
+  ResourceBag,
   TreatyClause,
   TreatyProposalRecord,
   TreatyRecord,
@@ -170,12 +171,101 @@ function eventStyle(event: DiplomacyEvent): {
   }
 }
 
+function bagToString(bag: ResourceBag | undefined): string {
+  if (!bag) return '0'
+  const parts: string[] = []
+  if (bag.food) parts.push(`${bag.food} food`)
+  if (bag.wood) parts.push(`${bag.wood} wood`)
+  if (bag.ore) parts.push(`${bag.ore} ore`)
+  if (bag.crystal) parts.push(`${bag.crystal} crystal`)
+  return parts.length === 0 ? '0' : parts.join(', ')
+}
+
+function bagIsZero(bag: ResourceBag | undefined): boolean {
+  if (!bag) return true
+  return !bag.food && !bag.wood && !bag.ore && !bag.crystal
+}
+
+function bagIsValid(bag: ResourceBag | undefined): boolean {
+  if (!bag) return true
+  return (
+    Number.isFinite(bag.food) &&
+    Number.isFinite(bag.wood) &&
+    Number.isFinite(bag.ore) &&
+    Number.isFinite(bag.crystal) &&
+    bag.food >= 0 &&
+    bag.wood >= 0 &&
+    bag.ore >= 0 &&
+    bag.crystal >= 0
+  )
+}
+
+function emptyBag(): ResourceBag {
+  return { food: 0, wood: 0, ore: 0, crystal: 0 }
+}
+
+const BAG_KEYS: (keyof ResourceBag)[] = ['food', 'wood', 'ore', 'crystal']
+
+function BagInputs({
+  label,
+  bag,
+  onChange,
+  testIdPrefix,
+}: {
+  label: string
+  bag: ResourceBag
+  onChange: (bag: ResourceBag) => void
+  testIdPrefix: string
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="grid grid-cols-4 gap-1">
+        {BAG_KEYS.map((key) => (
+          <label
+            key={key}
+            className="flex flex-col text-[10px] text-muted-foreground"
+          >
+            <span className="capitalize">{key}</span>
+            <input
+              type="number"
+              min={0}
+              value={bag[key]}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                onChange({
+                  ...bag,
+                  [key]: Number.isFinite(v) && v >= 0 ? v : 0,
+                })
+              }}
+              className="border rounded-md bg-background px-1 py-0.5 text-xs"
+              data-testid={`${testIdPrefix}-${key}`}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function clauseSummary(clause: TreatyClause): string {
   if (clause.clause_type === 'peace') {
     const remaining = clause.turns_remaining ?? clause.duration_turns
     return `Peace (${remaining ?? '?'} turns remaining)`
   }
-  return `Free text: ${clause.text ?? ''}`
+  if (clause.clause_type === 'free_text') {
+    return `Free text: ${clause.text ?? ''}`
+  }
+  if (clause.clause_type === 'resource_swap') {
+    return `Swap: proposer gives ${bagToString(
+      clause.proposer_gives,
+    )} / recipient gives ${bagToString(clause.recipient_gives)}`
+  }
+  // recurring_tribute
+  const remaining = clause.turns_remaining ?? clause.duration_turns
+  return `Tribute: ${clause.payer ?? '?'} pays ${bagToString(
+    clause.amount,
+  )} per turn (${remaining ?? '?'} turns remaining)`
 }
 
 function threadForCounterpart(
@@ -346,6 +436,11 @@ export default function DiplomacyPage() {
   const [proposalClauses, setProposalClauses] = useState<TreatyClause[]>([])
   const [peaceDuration, setPeaceDuration] = useState<number>(10)
   const [freeText, setFreeText] = useState('')
+  const [proposerGives, setProposerGives] = useState<ResourceBag>(emptyBag())
+  const [recipientGives, setRecipientGives] = useState<ResourceBag>(emptyBag())
+  const [tributePayer, setTributePayer] = useState<PlayerId | ''>('')
+  const [tributeAmount, setTributeAmount] = useState<ResourceBag>(emptyBag())
+  const [tributeDuration, setTributeDuration] = useState<number>(5)
 
   if (!currentPlayer) {
     return (
@@ -456,17 +551,82 @@ export default function DiplomacyPage() {
     setFreeText('')
   }
 
+  const swapValid =
+    bagIsValid(proposerGives) &&
+    bagIsValid(recipientGives) &&
+    !(bagIsZero(proposerGives) && bagIsZero(recipientGives))
+
+  const effectiveTributePayer: PlayerId | '' =
+    tributePayer &&
+    (tributePayer === currentPlayer || tributePayer === effectiveRecipient)
+      ? tributePayer
+      : currentPlayer
+  const tributeDurationValid =
+    Number.isFinite(tributeDuration) &&
+    tributeDuration >= 1 &&
+    tributeDuration <= PEACE_CLAUSE_MAX_DURATION
+  const tributeValid =
+    Boolean(effectiveRecipient) &&
+    bagIsValid(tributeAmount) &&
+    !bagIsZero(tributeAmount) &&
+    tributeDurationValid
+
+  function addSwapClause() {
+    if (!swapValid) return
+    setProposalClauses((prev) => [
+      ...prev,
+      {
+        clause_type: 'resource_swap',
+        proposer_gives: { ...proposerGives },
+        recipient_gives: { ...recipientGives },
+      },
+    ])
+    setProposerGives(emptyBag())
+    setRecipientGives(emptyBag())
+  }
+
+  function addTributeClause() {
+    if (!tributeValid) return
+    setProposalClauses((prev) => [
+      ...prev,
+      {
+        clause_type: 'recurring_tribute',
+        payer: effectiveTributePayer || currentPlayer,
+        amount: { ...tributeAmount },
+        duration_turns: tributeDuration,
+        turns_remaining: tributeDuration,
+      },
+    ])
+    setTributeAmount(emptyBag())
+  }
+
   function removeClauseAt(idx: number) {
     setProposalClauses((prev) => prev.filter((_, i) => i !== idx))
   }
 
   function submitProposal() {
     if (!effectiveRecipient || proposalClauses.length === 0) return
-    const clausesToSend: TreatyClause[] = proposalClauses.map((c) =>
-      c.clause_type === 'peace'
-        ? { clause_type: 'peace', duration_turns: c.duration_turns }
-        : { clause_type: 'free_text', text: c.text ?? '' },
-    )
+    const clausesToSend: TreatyClause[] = proposalClauses.map((c) => {
+      if (c.clause_type === 'peace') {
+        return { clause_type: 'peace', duration_turns: c.duration_turns }
+      }
+      if (c.clause_type === 'free_text') {
+        return { clause_type: 'free_text', text: c.text ?? '' }
+      }
+      if (c.clause_type === 'resource_swap') {
+        return {
+          clause_type: 'resource_swap',
+          proposer_gives: c.proposer_gives ?? emptyBag(),
+          recipient_gives: c.recipient_gives ?? emptyBag(),
+        }
+      }
+      return {
+        clause_type: 'recurring_tribute',
+        payer: c.payer ?? currentPlayer,
+        amount: c.amount ?? emptyBag(),
+        duration_turns: c.duration_turns,
+      }
+    })
     proposeTreaty.mutate({
       recipient: effectiveRecipient,
       clauses: clausesToSend,
@@ -769,6 +929,100 @@ export default function DiplomacyPage() {
                       >
                         <Plus className="h-4 w-4 mr-1" />
                         Clause
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-md p-3 space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Add resource swap
+                    </div>
+                    <BagInputs
+                      label="You give"
+                      bag={proposerGives}
+                      onChange={setProposerGives}
+                      testIdPrefix="swap-proposer"
+                    />
+                    <BagInputs
+                      label={`${effectiveRecipient || 'Recipient'} gives`}
+                      bag={recipientGives}
+                      onChange={setRecipientGives}
+                      testIdPrefix="swap-recipient"
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!swapValid}
+                        onClick={addSwapClause}
+                        data-testid="add-resource-swap"
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Swap clause
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-md p-3 space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Add recurring tribute
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground">
+                        Payer
+                      </label>
+                      <select
+                        className="flex-1 border rounded-md bg-background px-2 py-1 text-sm"
+                        value={effectiveTributePayer}
+                        onChange={(e) =>
+                          setTributePayer(e.target.value as PlayerId)
+                        }
+                        data-testid="tribute-payer"
+                      >
+                        <option value={currentPlayer}>
+                          {currentPlayer} (you)
+                        </option>
+                        {effectiveRecipient && (
+                          <option value={effectiveRecipient}>
+                            {effectiveRecipient}
+                          </option>
+                        )}
+                      </select>
+                    </div>
+                    <BagInputs
+                      label="Amount per turn"
+                      bag={tributeAmount}
+                      onChange={setTributeAmount}
+                      testIdPrefix="tribute-amount"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground">
+                        Duration
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={PEACE_CLAUSE_MAX_DURATION}
+                        value={tributeDuration}
+                        onChange={(e) =>
+                          setTributeDuration(Number(e.target.value))
+                        }
+                        className="w-24 border rounded-md bg-background px-2 py-1 text-sm"
+                        data-testid="tribute-duration"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        turns
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="ml-auto"
+                        disabled={!tributeValid}
+                        onClick={addTributeClause}
+                        data-testid="add-recurring-tribute"
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Tribute clause
                       </Button>
                     </div>
                   </div>
