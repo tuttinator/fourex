@@ -17,12 +17,16 @@ from ...game.models import (
     AttackAction,
     BuildBuildingAction,
     BuildImprovementAction,
+    CancelTreatyAction,
     DeclareWarAction,
     FoundCityAction,
     GameState,
     MoveAction,
+    ProposeTreatyAction,
+    RespondToTreatyAction,
     SendMessageAction,
     TrainUnitAction,
+    WithdrawTreatyAction,
 )
 from ...game.rules import redact_state, resolve_turn
 
@@ -49,6 +53,14 @@ def _parse_action(raw: dict[str, Any]) -> Action:
         return DeclareWarAction.model_validate(raw)
     elif action_type == "SEND_MESSAGE":
         return SendMessageAction.model_validate(raw)
+    elif action_type == "PROPOSE_TREATY":
+        return ProposeTreatyAction.model_validate(raw)
+    elif action_type == "RESPOND_TO_TREATY":
+        return RespondToTreatyAction.model_validate(raw)
+    elif action_type == "WITHDRAW_TREATY":
+        return WithdrawTreatyAction.model_validate(raw)
+    elif action_type == "CANCEL_TREATY":
+        return CancelTreatyAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 
@@ -63,11 +75,15 @@ def _validate_actions_against_state(
         execute_attack,
         execute_build_building,
         execute_build_improvement,
+        execute_cancel_treaty,
         execute_declare_war,
         execute_found_city,
         execute_move,
+        execute_propose_treaty,
+        execute_respond_to_treaty,
         execute_send_message,
         execute_train_unit,
+        execute_withdraw_treaty,
         reset_unit_moves,
     )
 
@@ -93,6 +109,14 @@ def _validate_actions_against_state(
             r = execute_declare_war(test_state, player_id, action)
         elif isinstance(action, SendMessageAction):
             r = execute_send_message(test_state, player_id, action)
+        elif isinstance(action, ProposeTreatyAction):
+            r = execute_propose_treaty(test_state, player_id, action)
+        elif isinstance(action, RespondToTreatyAction):
+            r = execute_respond_to_treaty(test_state, player_id, action)
+        elif isinstance(action, WithdrawTreatyAction):
+            r = execute_withdraw_treaty(test_state, player_id, action)
+        elif isinstance(action, CancelTreatyAction):
+            r = execute_cancel_treaty(test_state, player_id, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}

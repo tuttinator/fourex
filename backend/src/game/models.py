@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import Enum
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -397,6 +398,64 @@ class DiplomaticEvent(BaseModel):
 MESSAGE_BODY_MAX_LENGTH = 2000
 MESSAGES_PER_TURN_LIMIT = 5
 
+TREATY_PROPOSAL_EXPIRY_TURNS = 3
+FREE_TEXT_CLAUSE_MAX_LENGTH = 500
+PEACE_CLAUSE_MAX_DURATION = 100
+
+
+class PeaceClause(BaseModel):
+    """Sets the pair's ``DiplomaticState`` to PEACE for ``duration_turns`` turns.
+
+    ``turns_remaining`` is decremented at the end of each turn during the
+    diplomacy-resolution phase; when it reaches zero the clause expires.
+    """
+
+    clause_type: Literal["peace"] = "peace"
+    duration_turns: int = Field(gt=0, le=PEACE_CLAUSE_MAX_DURATION)
+    turns_remaining: int = Field(ge=0)
+
+
+class FreeTextClause(BaseModel):
+    """Unenforced free-form clause text. Purely informational."""
+
+    clause_type: Literal["free_text"] = "free_text"
+    text: str = Field(min_length=1, max_length=FREE_TEXT_CLAUSE_MAX_LENGTH)
+
+
+TreatyClause = Annotated[
+    PeaceClause | FreeTextClause,
+    Field(discriminator="clause_type"),
+]
+
+
+class Treaty(BaseModel):
+    """A ratified bilateral treaty with one or more clauses.
+
+    Treaties are *public* — visible to all players in the game regardless of
+    discovery. Ids are drawn from ``GameState.next_treaty_id`` for determinism.
+    """
+
+    id: int
+    parties: tuple[PlayerId, PlayerId]
+    clauses: list[TreatyClause]
+    turn_ratified: int
+
+
+class TreatyProposal(BaseModel):
+    """A pending proposal awaiting a response from ``recipient``.
+
+    Proposals are *private* to ``proposer`` and ``recipient`` — third parties
+    cannot see them via any read endpoint. Auto-expires on
+    ``expires_on_turn`` if still unanswered.
+    """
+
+    id: int
+    proposer: PlayerId
+    recipient: PlayerId
+    clauses: list[TreatyClause]
+    turn_proposed: int
+    expires_on_turn: int
+
 
 class Message(BaseModel):
     """A private bilateral message between two players.
@@ -432,6 +491,8 @@ class GameState(BaseModel):
     next_city_id: int = 1
     next_event_id: int = 1
     next_message_id: int = 1
+    next_proposal_id: int = 1
+    next_treaty_id: int = 1
     max_turns: int = 100
     victory_conditions: list[str] = Field(
         default_factory=lambda: ["domination", "economic", "elimination", "score"]
@@ -440,6 +501,8 @@ class GameState(BaseModel):
     discovered: dict[PlayerId, list[PlayerId]] = Field(default_factory=dict)
     diplomatic_events: list[DiplomaticEvent] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
+    pending_proposals: list[TreatyProposal] = Field(default_factory=list)
+    active_treaties: list[Treaty] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -543,6 +606,40 @@ class SendMessageAction(BaseModel):
     body: str
 
 
+class ProposeTreatyAction(BaseModel):
+    """Propose a treaty with one or more clauses to a discovered player."""
+
+    type: str = "PROPOSE_TREATY"
+    recipient: PlayerId
+    clauses: list[TreatyClause]
+
+
+class RespondToTreatyAction(BaseModel):
+    """Accept or decline a pending treaty proposal addressed to you."""
+
+    type: str = "RESPOND_TO_TREATY"
+    proposal_id: int
+    accept: bool
+
+
+class WithdrawTreatyAction(BaseModel):
+    """Withdraw a pending proposal you previously made, before a response."""
+
+    type: str = "WITHDRAW_TREATY"
+    proposal_id: int
+
+
+class CancelTreatyAction(BaseModel):
+    """Unilaterally cancel a ratified treaty you are a party to.
+
+    If the treaty has active obligations (e.g. an unexpired peace clause) the
+    cancellation is recorded as ``TREATY_VIOLATED``; otherwise ``TREATY_CANCELLED``.
+    """
+
+    type: str = "CANCEL_TREATY"
+    treaty_id: int
+
+
 Action = (
     MoveAction
     | AttackAction
@@ -552,6 +649,10 @@ Action = (
     | BuildBuildingAction
     | DeclareWarAction
     | SendMessageAction
+    | ProposeTreatyAction
+    | RespondToTreatyAction
+    | WithdrawTreatyAction
+    | CancelTreatyAction
 )
 
 

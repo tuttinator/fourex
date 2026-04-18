@@ -292,6 +292,31 @@ export interface DiplomacyMessage {
 	turn_sent: number;
 }
 
+export type TreatyClauseType = "peace" | "free_text";
+
+export interface TreatyClause {
+	clause_type: TreatyClauseType;
+	duration_turns?: number;
+	turns_remaining?: number;
+	text?: string;
+}
+
+export interface TreatyProposalRecord {
+	id: number;
+	proposer: PlayerId;
+	recipient: PlayerId;
+	clauses: TreatyClause[];
+	turn_proposed: number;
+	expires_on_turn: number;
+}
+
+export interface TreatyRecord {
+	id: number;
+	parties: [PlayerId, PlayerId];
+	clauses: TreatyClause[];
+	turn_ratified: number;
+}
+
 export interface DiplomacyStateResponse {
 	game_id: string;
 	player: PlayerId;
@@ -300,6 +325,8 @@ export interface DiplomacyStateResponse {
 	relations: DiplomacyRelation[];
 	events: DiplomacyEvent[];
 	messages: DiplomacyMessage[];
+	pending_proposals: TreatyProposalRecord[];
+	active_treaties: TreatyRecord[];
 }
 
 export interface MessageListResponse {
@@ -311,3 +338,6 @@ export interface MessageListResponse {
 
 export const MESSAGE_BODY_MAX_LENGTH = 2000;
 export const MESSAGES_PER_TURN_LIMIT = 5;
+export const FREE_TEXT_CLAUSE_MAX_LENGTH = 500;
+export const PEACE_CLAUSE_MAX_DURATION = 100;
+export const TREATY_PROPOSAL_EXPIRY_TURNS = 3;

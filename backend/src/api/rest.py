@@ -12,15 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
+    FREE_TEXT_CLAUSE_MAX_LENGTH,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
+    PEACE_CLAUSE_MAX_DURATION,
     Action,
+    CancelTreatyAction,
     CreateGameRequest,
     DeclareWarAction,
+    FreeTextClause,
     GameState,
+    PeaceClause,
     PlayerId,
     PromptLog,
+    ProposeTreatyAction,
+    RespondToTreatyAction,
     SendMessageAction,
+    WithdrawTreatyAction,
 )
 from ..game.rules import redact_state
 from .persistent_game_controller import get_persistent_game_controller
@@ -742,6 +750,39 @@ class DiplomacyMessageResponse(BaseModel):
     turn_sent: int
 
 
+class TreatyClauseResponse(BaseModel):
+    """A clause on a pending or active treaty.
+
+    Serialised as a discriminated object; exactly one of the two clause-type
+    fields is populated per entry.
+    """
+
+    clause_type: Literal["peace", "free_text"]
+    duration_turns: int | None = None
+    turns_remaining: int | None = None
+    text: str | None = None
+
+
+class TreatyProposalResponse(BaseModel):
+    """A pending proposal awaiting a response (visible only to proposer/recipient)."""
+
+    id: int
+    proposer: PlayerId
+    recipient: PlayerId
+    clauses: list[TreatyClauseResponse]
+    turn_proposed: int
+    expires_on_turn: int
+
+
+class TreatyResponse(BaseModel):
+    """A ratified active treaty (public to all players)."""
+
+    id: int
+    parties: tuple[PlayerId, PlayerId]
+    clauses: list[TreatyClauseResponse]
+    turn_ratified: int
+
+
 class DiplomacyStateResponse(BaseModel):
     """Viewer's redacted diplomatic slice of game state."""
 
@@ -752,6 +793,8 @@ class DiplomacyStateResponse(BaseModel):
     relations: list[DiplomacyRelation]
     events: list[DiplomacyEventResponse]
     messages: list[DiplomacyMessageResponse]
+    pending_proposals: list[TreatyProposalResponse]
+    active_treaties: list[TreatyResponse]
 
 
 class SendMessageRequest(BaseModel):
@@ -819,11 +862,88 @@ async def get_diplomacy(
                 )
                 for m in redacted.messages
             ],
+            pending_proposals=[
+                TreatyProposalResponse(
+                    id=p.id,
+                    proposer=p.proposer,
+                    recipient=p.recipient,
+                    clauses=[_serialise_clause(c) for c in p.clauses],
+                    turn_proposed=p.turn_proposed,
+                    expires_on_turn=p.expires_on_turn,
+                )
+                for p in redacted.pending_proposals
+            ],
+            active_treaties=[
+                TreatyResponse(
+                    id=t.id,
+                    parties=t.parties,
+                    clauses=[_serialise_clause(c) for c in t.clauses],
+                    turn_ratified=t.turn_ratified,
+                )
+                for t in redacted.active_treaties
+            ],
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _serialise_clause(clause: PeaceClause | FreeTextClause) -> TreatyClauseResponse:
+    """Convert a typed clause into the wire-format response."""
+    if isinstance(clause, PeaceClause):
+        return TreatyClauseResponse(
+            clause_type="peace",
+            duration_turns=clause.duration_turns,
+            turns_remaining=clause.turns_remaining,
+        )
+    return TreatyClauseResponse(clause_type="free_text", text=clause.text)
+
+
+def _parse_clauses_from_request(
+    clauses: list[dict[str, Any]],
+) -> list[PeaceClause | FreeTextClause]:
+    """Parse incoming clause dicts into typed ``TreatyClause`` instances.
+
+    Raises ``HTTPException(400)`` on unknown clause type or invalid fields.
+    """
+    parsed: list[PeaceClause | FreeTextClause] = []
+    for raw in clauses:
+        ctype = raw.get("clause_type")
+        if ctype == "peace":
+            try:
+                duration = int(raw.get("duration_turns", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="peace clause duration_turns must be an integer",
+                )
+            if duration <= 0 or duration > PEACE_CLAUSE_MAX_DURATION:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"peace clause duration must be 1..{PEACE_CLAUSE_MAX_DURATION}"
+                    ),
+                )
+            parsed.append(
+                PeaceClause(
+                    duration_turns=duration,
+                    turns_remaining=duration,
+                )
+            )
+        elif ctype == "free_text":
+            text = str(raw.get("text", ""))
+            if not 1 <= len(text) <= FREE_TEXT_CLAUSE_MAX_LENGTH:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"free_text clause length must be 1..{FREE_TEXT_CLAUSE_MAX_LENGTH}"
+                    ),
+                )
+            parsed.append(FreeTextClause(text=text))
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown clause_type: {ctype}")
+    return parsed
 
 
 @router.get("/games/{game_id}/diplomacy/messages", tags=["diplomacy"])
@@ -928,6 +1048,143 @@ async def send_message_endpoint(
 
         await controller.submit_player_actions(game_id, current_player, merged)
         return {"status": "message_queued", "recipient": request.recipient}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ProposeTreatyRequest(BaseModel):
+    """Queue a PROPOSE_TREATY action to a discovered player."""
+
+    recipient: PlayerId
+    clauses: list[dict[str, Any]]
+
+
+class RespondToTreatyRequest(BaseModel):
+    """Accept or decline a pending proposal addressed to the caller."""
+
+    accept: bool
+
+
+async def _merge_and_submit_action(
+    controller: Any,
+    game_id: str,
+    current_player: PlayerId,
+    new_action: Action,
+) -> None:
+    """Append ``new_action`` to the caller's existing queued actions, then submit.
+
+    Mirrors the send-message endpoint's "don't wipe queued moves" pattern.
+    """
+    state = await controller.get_game_state(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    existing = await controller.repo.get_turn_action(
+        game_id, current_player, state.turn
+    )
+    existing_actions: list[Action] = []
+    if existing and existing.actions_json:
+        from ..mcp_server.tools.gameplay import _parse_action
+
+        raw_list = (
+            existing.actions_json if isinstance(existing.actions_json, list) else []
+        )
+        existing_actions = [_parse_action(a) for a in raw_list]
+
+    merged = existing_actions + [new_action]
+    await controller.submit_player_actions(game_id, current_player, merged)
+
+
+@router.post("/games/{game_id}/diplomacy/treaties/proposals", tags=["diplomacy"])
+async def propose_treaty_endpoint(
+    game_id: str,
+    request: ProposeTreatyRequest,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Queue a PROPOSE_TREATY action for the caller on the current turn."""
+    try:
+        if not request.clauses:
+            raise HTTPException(
+                status_code=400, detail="Treaty must have at least one clause."
+            )
+        parsed_clauses = _parse_clauses_from_request(request.clauses)
+        controller = get_persistent_game_controller(session)
+        action = ProposeTreatyAction(
+            recipient=request.recipient, clauses=parsed_clauses
+        )
+        await _merge_and_submit_action(controller, game_id, current_player, action)
+        return {"status": "proposal_queued", "recipient": request.recipient}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/games/{game_id}/diplomacy/treaties/proposals/{proposal_id}/respond",
+    tags=["diplomacy"],
+)
+async def respond_to_treaty_endpoint(
+    game_id: str,
+    proposal_id: int,
+    request: RespondToTreatyRequest,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Queue a RESPOND_TO_TREATY action for the caller on the current turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        action = RespondToTreatyAction(proposal_id=proposal_id, accept=request.accept)
+        await _merge_and_submit_action(controller, game_id, current_player, action)
+        return {
+            "status": "response_queued",
+            "proposal_id": str(proposal_id),
+            "accept": str(request.accept),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete(
+    "/games/{game_id}/diplomacy/treaties/proposals/{proposal_id}",
+    tags=["diplomacy"],
+)
+async def withdraw_treaty_endpoint(
+    game_id: str,
+    proposal_id: int,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Queue a WITHDRAW_TREATY action for the caller on the current turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        action = WithdrawTreatyAction(proposal_id=proposal_id)
+        await _merge_and_submit_action(controller, game_id, current_player, action)
+        return {"status": "withdrawal_queued", "proposal_id": str(proposal_id)}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/games/{game_id}/diplomacy/treaties/{treaty_id}", tags=["diplomacy"])
+async def cancel_treaty_endpoint(
+    game_id: str,
+    treaty_id: int,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Queue a CANCEL_TREATY action for the caller on the current turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        action = CancelTreatyAction(treaty_id=treaty_id)
+        await _merge_and_submit_action(controller, game_id, current_player, action)
+        return {"status": "cancellation_queued", "treaty_id": str(treaty_id)}
     except HTTPException:
         raise
     except ValueError as e:

@@ -10,12 +10,14 @@ from .models import (
     IMPROVEMENT_STATS,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
+    TREATY_PROPOSAL_EXPIRY_TURNS,
     UNIT_STATS,
     Action,
     ActionResult,
     AttackAction,
     BuildBuildingAction,
     BuildImprovementAction,
+    CancelTreatyAction,
     City,
     Coord,
     DeclareWarAction,
@@ -27,17 +29,23 @@ from .models import (
     ImprovementType,
     Message,
     MoveAction,
+    PeaceClause,
     PlayerId,
+    ProposeTreatyAction,
     Resource,
     ResourceBag,
+    RespondToTreatyAction,
     SendMessageAction,
     Terrain,
     Tile,
     TrainUnitAction,
+    Treaty,
+    TreatyProposal,
     TurnResult,
     Unit,
     UnitType,
     VictoryResult,
+    WithdrawTreatyAction,
 )
 
 
@@ -215,6 +223,15 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
         if msg.sender == player_id or msg.recipient == player_id
     ]
 
+    # Pending treaty proposals are private to proposer and recipient; third
+    # parties see neither content nor existence. Ratified treaties in
+    # ``active_treaties`` are public by design — no redaction applied.
+    redacted.pending_proposals = [
+        p
+        for p in state.pending_proposals
+        if p.proposer == player_id or p.recipient == player_id
+    ]
+
     return redacted
 
 
@@ -339,6 +356,10 @@ def execute_declare_war(
         counterparty=target,
         payload={"cause": "declaration"},
     )
+    # Declaring war cancels every active treaty between the two parties.
+    # The war is the antecedent signal, so these are routine cancellations,
+    # not violations (per user story 6 + Phase 3 acceptance criteria).
+    _cancel_treaties_between(state, actor, target, actor=actor, cause="war_declared")
     return ActionResult(
         success=True,
         message=f"{actor} declared war on {target}.",
@@ -430,6 +451,375 @@ def execute_send_message(
         message=f"{sender} sent a message to {recipient}.",
         action=action,
     )
+
+
+def _treaty_involves(treaty: Treaty, player: PlayerId) -> bool:
+    """Return True if ``player`` is one of the two treaty parties."""
+    return player in treaty.parties
+
+
+def _treaty_has_active_obligation(treaty: Treaty) -> bool:
+    """Return True if cancellation of ``treaty`` should count as a violation.
+
+    Phase 3 obligation types: unexpired ``PeaceClause``. A pure free-text
+    treaty has no mechanical obligations and can be cancelled cleanly.
+    Later phases will add tribute, vision, open-borders, and alliance.
+    """
+    for clause in treaty.clauses:
+        if isinstance(clause, PeaceClause) and clause.turns_remaining > 0:
+            return True
+    return False
+
+
+def _cancel_treaties_between(
+    state: GameState,
+    a: PlayerId,
+    b: PlayerId,
+    actor: PlayerId,
+    cause: str,
+    violate_on_obligation: bool = False,
+) -> None:
+    """Cancel every active treaty between ``a`` and ``b`` with a given cause.
+
+    Used by ``execute_declare_war`` (``violate_on_obligation=False``: the war
+    declaration is the antecedent signal, so cancellations are not violations)
+    and by the treacherous-attack branch (``violate_on_obligation=True``:
+    attacking while a peace clause is still active is a violation).
+    """
+    key = _diplomacy_key(a, b)
+    remaining: list[Treaty] = []
+    for treaty in state.active_treaties:
+        parties_key = _diplomacy_key(treaty.parties[0], treaty.parties[1])
+        if parties_key == key:
+            violated = violate_on_obligation and _treaty_has_active_obligation(treaty)
+            event_type = (
+                DiplomaticEventType.TREATY_VIOLATED
+                if violated
+                else DiplomaticEventType.TREATY_CANCELLED
+            )
+            emit_diplomatic_event(
+                state,
+                event_type,
+                actor=actor,
+                counterparty=b if actor == a else a,
+                payload={"treaty_id": str(treaty.id), "cause": cause},
+            )
+        else:
+            remaining.append(treaty)
+    state.active_treaties = remaining
+
+
+def execute_propose_treaty(
+    state: GameState, proposer: PlayerId, action: ProposeTreatyAction
+) -> ActionResult:
+    """Queue a treaty proposal awaiting the recipient's response.
+
+    Validation:
+    - Recipient must be a player, not the proposer, and discovered by proposer.
+    - Proposal must have at least one clause.
+    - Peace clauses must have positive duration; free-text must be non-empty
+      (Pydantic-enforced).
+    """
+    recipient = action.recipient
+    if recipient == proposer:
+        return ActionResult(
+            success=False,
+            message="Cannot propose a treaty to yourself.",
+            action=action,
+        )
+    if recipient not in state.players:
+        return ActionResult(
+            success=False,
+            message=f"Player {recipient} is not in this game.",
+            action=action,
+        )
+    if not has_discovered(state, proposer, recipient):
+        return ActionResult(
+            success=False,
+            message=f"Cannot propose to undiscovered player {recipient}.",
+            action=action,
+        )
+    if not action.clauses:
+        return ActionResult(
+            success=False,
+            message="Treaty must have at least one clause.",
+            action=action,
+        )
+
+    # Normalise: for peace clauses, ensure turns_remaining matches duration_turns
+    # at proposal time so the recipient sees exactly the offered duration.
+    normalised_clauses: list = []
+    for clause in action.clauses:
+        if isinstance(clause, PeaceClause):
+            normalised_clauses.append(
+                PeaceClause(
+                    duration_turns=clause.duration_turns,
+                    turns_remaining=clause.duration_turns,
+                )
+            )
+        else:
+            normalised_clauses.append(clause)
+
+    proposal = TreatyProposal(
+        id=state.next_proposal_id,
+        proposer=proposer,
+        recipient=recipient,
+        clauses=normalised_clauses,
+        turn_proposed=state.turn,
+        expires_on_turn=state.turn + TREATY_PROPOSAL_EXPIRY_TURNS,
+    )
+    state.pending_proposals.append(proposal)
+    state.next_proposal_id += 1
+
+    emit_diplomatic_event(
+        state,
+        DiplomaticEventType.TREATY_PROPOSED,
+        actor=proposer,
+        counterparty=recipient,
+        payload={
+            "proposal_id": str(proposal.id),
+            "clause_count": str(len(proposal.clauses)),
+        },
+    )
+
+    return ActionResult(
+        success=True,
+        message=f"Proposal {proposal.id} sent to {recipient}.",
+        action=action,
+    )
+
+
+def _apply_ratified_clauses(state: GameState, treaty: Treaty) -> None:
+    """Apply the immediate effects of each clause in a newly-ratified treaty.
+
+    Phase 3:
+    - ``PeaceClause``: if the pair is currently at WAR, flip to PEACE. The
+      per-clause ``turns_remaining`` tracks the active duration.
+    - ``FreeTextClause``: no mechanical effect.
+    """
+    a, b = treaty.parties
+    for clause in treaty.clauses:
+        if isinstance(clause, PeaceClause):
+            current = state.get_diplomatic_state(a, b)
+            if current == DiplomaticState.WAR:
+                set_relation(state, a, b, DiplomaticState.PEACE)
+
+
+def execute_respond_to_treaty(
+    state: GameState, actor: PlayerId, action: RespondToTreatyAction
+) -> ActionResult:
+    """Accept or decline a pending proposal addressed to ``actor``."""
+    proposal = next(
+        (p for p in state.pending_proposals if p.id == action.proposal_id),
+        None,
+    )
+    if proposal is None:
+        return ActionResult(
+            success=False,
+            message=f"Proposal {action.proposal_id} not found.",
+            action=action,
+        )
+    if proposal.recipient != actor:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Proposal {proposal.id} is addressed to {proposal.recipient}; "
+                f"only they can respond."
+            ),
+            action=action,
+        )
+
+    state.pending_proposals = [
+        p for p in state.pending_proposals if p.id != proposal.id
+    ]
+
+    if not action.accept:
+        emit_diplomatic_event(
+            state,
+            DiplomaticEventType.PROPOSAL_DECLINED,
+            actor=actor,
+            counterparty=proposal.proposer,
+            payload={"proposal_id": str(proposal.id)},
+        )
+        return ActionResult(
+            success=True,
+            message=f"Proposal {proposal.id} declined.",
+            action=action,
+        )
+
+    treaty = Treaty(
+        id=state.next_treaty_id,
+        parties=(proposal.proposer, proposal.recipient),
+        clauses=proposal.clauses,
+        turn_ratified=state.turn,
+    )
+    state.next_treaty_id += 1
+    state.active_treaties.append(treaty)
+    _apply_ratified_clauses(state, treaty)
+
+    emit_diplomatic_event(
+        state,
+        DiplomaticEventType.PROPOSAL_ACCEPTED,
+        actor=actor,
+        counterparty=proposal.proposer,
+        payload={
+            "proposal_id": str(proposal.id),
+            "treaty_id": str(treaty.id),
+        },
+    )
+    return ActionResult(
+        success=True,
+        message=f"Proposal {proposal.id} accepted; treaty {treaty.id} active.",
+        action=action,
+    )
+
+
+def execute_withdraw_treaty(
+    state: GameState, actor: PlayerId, action: WithdrawTreatyAction
+) -> ActionResult:
+    """Withdraw a pending proposal the caller previously made."""
+    proposal = next(
+        (p for p in state.pending_proposals if p.id == action.proposal_id),
+        None,
+    )
+    if proposal is None:
+        return ActionResult(
+            success=False,
+            message=f"Proposal {action.proposal_id} not found.",
+            action=action,
+        )
+    if proposal.proposer != actor:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Only the original proposer ({proposal.proposer}) may "
+                f"withdraw proposal {proposal.id}."
+            ),
+            action=action,
+        )
+
+    state.pending_proposals = [
+        p for p in state.pending_proposals if p.id != proposal.id
+    ]
+    emit_diplomatic_event(
+        state,
+        DiplomaticEventType.PROPOSAL_WITHDRAWN,
+        actor=actor,
+        counterparty=proposal.recipient,
+        payload={"proposal_id": str(proposal.id)},
+    )
+    return ActionResult(
+        success=True,
+        message=f"Proposal {proposal.id} withdrawn.",
+        action=action,
+    )
+
+
+def execute_cancel_treaty(
+    state: GameState, actor: PlayerId, action: CancelTreatyAction
+) -> ActionResult:
+    """Unilaterally cancel an active treaty the caller is a party to.
+
+    If the treaty has active obligations (e.g. unexpired peace clause), the
+    cancellation is recorded as ``TREATY_VIOLATED``; otherwise as
+    ``TREATY_CANCELLED``.
+    """
+    treaty = next(
+        (t for t in state.active_treaties if t.id == action.treaty_id),
+        None,
+    )
+    if treaty is None:
+        return ActionResult(
+            success=False,
+            message=f"Treaty {action.treaty_id} not found.",
+            action=action,
+        )
+    if not _treaty_involves(treaty, actor):
+        return ActionResult(
+            success=False,
+            message=f"You are not a party to treaty {treaty.id}.",
+            action=action,
+        )
+
+    counterparty = (
+        treaty.parties[1] if treaty.parties[0] == actor else treaty.parties[0]
+    )
+    state.active_treaties = [t for t in state.active_treaties if t.id != treaty.id]
+
+    violated = _treaty_has_active_obligation(treaty)
+    event_type = (
+        DiplomaticEventType.TREATY_VIOLATED
+        if violated
+        else DiplomaticEventType.TREATY_CANCELLED
+    )
+    emit_diplomatic_event(
+        state,
+        event_type,
+        actor=actor,
+        counterparty=counterparty,
+        payload={"treaty_id": str(treaty.id), "cause": "unilateral_cancellation"},
+    )
+    return ActionResult(
+        success=True,
+        message=(f"Treaty {treaty.id} " f"{'violated' if violated else 'cancelled'}."),
+        action=action,
+    )
+
+
+def resolve_diplomacy_phase(state: GameState) -> None:
+    """Decrement clause durations, expire fully-expired treaties, and expire
+    pending proposals past their deadline.
+
+    Runs once per turn after action execution. Iteration order is fixed
+    (by treaty/proposal id) so replays are bit-identical.
+    """
+    # Decrement peace-clause durations and collect fully-expired treaties.
+    treaties_to_remove: list[int] = []
+    for treaty in sorted(state.active_treaties, key=lambda t: t.id):
+        any_active = False
+        for clause in treaty.clauses:
+            if isinstance(clause, PeaceClause):
+                if clause.turns_remaining > 0:
+                    clause.turns_remaining -= 1
+                if clause.turns_remaining > 0:
+                    any_active = True
+            # Free-text clauses never expire mechanically — they don't count
+            # as active obligations and don't keep the treaty alive either.
+        if not any_active and all(isinstance(c, PeaceClause) for c in treaty.clauses):
+            # All peace clauses fully expired: treaty has run its course.
+            treaties_to_remove.append(treaty.id)
+
+    for treaty_id in treaties_to_remove:
+        treaty = next(t for t in state.active_treaties if t.id == treaty_id)
+        emit_diplomatic_event(
+            state,
+            DiplomaticEventType.TREATY_EXPIRED,
+            actor=treaty.parties[0],
+            counterparty=treaty.parties[1],
+            payload={"treaty_id": str(treaty.id)},
+        )
+    state.active_treaties = [
+        t for t in state.active_treaties if t.id not in treaties_to_remove
+    ]
+
+    # Expire pending proposals whose deadline has been reached.
+    expired_proposals: list[TreatyProposal] = [
+        p
+        for p in sorted(state.pending_proposals, key=lambda p: p.id)
+        if state.turn >= p.expires_on_turn
+    ]
+    for proposal in expired_proposals:
+        emit_diplomatic_event(
+            state,
+            DiplomaticEventType.PROPOSAL_EXPIRED,
+            actor=proposal.proposer,
+            counterparty=proposal.recipient,
+            payload={"proposal_id": str(proposal.id)},
+        )
+    expired_ids = {p.id for p in expired_proposals}
+    state.pending_proposals = [
+        p for p in state.pending_proposals if p.id not in expired_ids
+    ]
 
 
 def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, str]:
@@ -550,6 +940,16 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                 counterparty=target.owner,
                 payload={"cause": "treacherous_attack"},
             )
+            # Active peace treaties between the parties are violated by the
+            # treacherous strike; pure free-text treaties are cancelled.
+            _cancel_treaties_between(
+                state,
+                attacker.owner,
+                target.owner,
+                actor=attacker.owner,
+                cause="treacherous_attack",
+                violate_on_obligation=True,
+            )
 
         # Calculate damage
         attacker_strength = attacker.stats.attack
@@ -629,6 +1029,14 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                 actor=attacker.owner,
                 counterparty=target_city.owner,
                 payload={"cause": "treacherous_attack"},
+            )
+            _cancel_treaties_between(
+                state,
+                attacker.owner,
+                target_city.owner,
+                actor=attacker.owner,
+                cause="treacherous_attack",
+                violate_on_obligation=True,
             )
 
         # Calculate damage (soldiers get +25% vs cities)
@@ -1467,6 +1875,14 @@ def resolve_turn(
                 result = execute_declare_war(state, player_id, action)
             elif isinstance(action, SendMessageAction):
                 result = execute_send_message(state, player_id, action)
+            elif isinstance(action, ProposeTreatyAction):
+                result = execute_propose_treaty(state, player_id, action)
+            elif isinstance(action, RespondToTreatyAction):
+                result = execute_respond_to_treaty(state, player_id, action)
+            elif isinstance(action, WithdrawTreatyAction):
+                result = execute_withdraw_treaty(state, player_id, action)
+            elif isinstance(action, CancelTreatyAction):
+                result = execute_cancel_treaty(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,
@@ -1477,6 +1893,11 @@ def resolve_turn(
             player_results.append(result)
 
         results[player_id] = player_results
+
+    # Diplomacy-resolution phase: decrement clause durations, expire treaties,
+    # expire pending proposals. Runs once after all player actions have been
+    # processed so everyone sees the same turn-boundary state.
+    resolve_diplomacy_phase(state)
 
     # Check for eliminations after actions resolve
     newly_eliminated = check_elimination(state)

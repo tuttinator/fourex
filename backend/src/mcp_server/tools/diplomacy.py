@@ -1,9 +1,11 @@
 """
-Diplomacy MCP tools: declare_war, get_diplomacy_state, send_message, get_messages.
+Diplomacy MCP tools: declare_war, get_diplomacy_state, send_message,
+get_messages, propose_treaty, respond_to_treaty, withdraw_treaty, cancel_treaty.
 
-Phases 1 and 2 of the diplomacy system — war declarations, treacherous-attack
-events, the per-player discovered-players set, the public event feed, and
-private bilateral messaging. Later phases add treaties and alliance mechanics.
+Phases 1, 2, and 3 of the diplomacy system — war declarations, treacherous-
+attack events, the per-player discovered-players set, the public event feed,
+private bilateral messaging, and the treaty lifecycle (peace + free-text
+clauses). Later phases add resource and alliance clauses.
 """
 
 from typing import Any
@@ -15,11 +17,20 @@ from ...auth import AuthError, authenticate
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
 from ...game.models import (
+    FREE_TEXT_CLAUSE_MAX_LENGTH,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
+    PEACE_CLAUSE_MAX_DURATION,
+    TREATY_PROPOSAL_EXPIRY_TURNS,
+    CancelTreatyAction,
     DeclareWarAction,
+    FreeTextClause,
     GameState,
+    PeaceClause,
+    ProposeTreatyAction,
+    RespondToTreatyAction,
     SendMessageAction,
+    WithdrawTreatyAction,
 )
 from ...game.rules import redact_state
 
@@ -137,6 +148,12 @@ def register(mcp: FastMCP) -> None:
             "relations": _serialise_diplomacy(redacted, auth.player_id),
             "events": [e.model_dump(mode="json") for e in redacted.diplomatic_events],
             "messages": [m.model_dump(mode="json") for m in redacted.messages],
+            "pending_proposals": [
+                p.model_dump(mode="json") for p in redacted.pending_proposals
+            ],
+            "active_treaties": [
+                t.model_dump(mode="json") for t in redacted.active_treaties
+            ],
         }
 
     @mcp.tool(
@@ -255,4 +272,228 @@ def register(mcp: FastMCP) -> None:
             "player": auth.player_id,
             "turn": state.turn,
             "messages": [m.model_dump(mode="json") for m in messages_sorted],
+        }
+
+    @mcp.tool(
+        name="propose_treaty",
+        description=(
+            "Queue a PROPOSE_TREATY action bundling one or more clauses. "
+            "Phase 3 supports two clause types: peace (with duration_turns, "
+            f"1..{PEACE_CLAUSE_MAX_DURATION}) and free_text "
+            f"(text up to {FREE_TEXT_CLAUSE_MAX_LENGTH} chars). Proposals "
+            f"auto-expire after {TREATY_PROPOSAL_EXPIRY_TURNS} turns if "
+            "unanswered. Include the returned action in your next "
+            "submit_actions call."
+        ),
+        annotations=ToolAnnotations(
+            title="Propose Treaty",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "action", "treaty"]},
+    )
+    async def propose_treaty(
+        api_key: str,
+        recipient: str,
+        clauses: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Queue a PROPOSE_TREATY action.
+
+        Args:
+            api_key: Your player API key.
+            recipient: Discovered player to propose to.
+            clauses: A non-empty list of clause dicts. Each must include a
+                ``clause_type`` field: ``peace`` (with ``duration_turns``
+                int), or ``free_text`` (with ``text`` string).
+
+        Returns:
+            The action dict to submit.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+        parsed_clauses: list = []
+        for raw in clauses:
+            ctype = raw.get("clause_type")
+            if ctype == "peace":
+                duration = int(raw.get("duration_turns", 0))
+                parsed_clauses.append(
+                    PeaceClause(
+                        duration_turns=duration,
+                        turns_remaining=duration,
+                    )
+                )
+            elif ctype == "free_text":
+                parsed_clauses.append(FreeTextClause(text=str(raw.get("text", ""))))
+            else:
+                return {"error": f"Unknown clause_type: {ctype}"}
+
+        action = ProposeTreatyAction(recipient=recipient, clauses=parsed_clauses)
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "action": action.model_dump(mode="json"),
+            "note": (
+                "Include this action in your next submit_actions call to "
+                "actually send the proposal."
+            ),
+        }
+
+    @mcp.tool(
+        name="respond_to_treaty",
+        description=(
+            "Queue a RESPOND_TO_TREATY action accepting or declining a "
+            "pending proposal addressed to you. Include the returned action "
+            "in your next submit_actions call."
+        ),
+        annotations=ToolAnnotations(
+            title="Respond To Treaty",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "action", "treaty"]},
+    )
+    async def respond_to_treaty(
+        api_key: str,
+        proposal_id: int,
+        accept: bool,
+    ) -> dict[str, Any]:
+        """Queue a RESPOND_TO_TREATY action.
+
+        Args:
+            api_key: Your player API key.
+            proposal_id: The pending proposal id to respond to.
+            accept: True to accept and ratify; False to decline.
+
+        Returns:
+            The action dict to submit.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+        action = RespondToTreatyAction(proposal_id=proposal_id, accept=accept)
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "action": action.model_dump(mode="json"),
+            "note": (
+                "Include this action in your next submit_actions call to "
+                "actually respond."
+            ),
+        }
+
+    @mcp.tool(
+        name="withdraw_treaty",
+        description=(
+            "Queue a WITHDRAW_TREATY action cancelling a pending proposal "
+            "you previously made (before a response). Include the returned "
+            "action in your next submit_actions call."
+        ),
+        annotations=ToolAnnotations(
+            title="Withdraw Treaty",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "action", "treaty"]},
+    )
+    async def withdraw_treaty(
+        api_key: str,
+        proposal_id: int,
+    ) -> dict[str, Any]:
+        """Queue a WITHDRAW_TREATY action.
+
+        Args:
+            api_key: Your player API key.
+            proposal_id: The proposal id to withdraw.
+
+        Returns:
+            The action dict to submit.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+        action = WithdrawTreatyAction(proposal_id=proposal_id)
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "action": action.model_dump(mode="json"),
+            "note": (
+                "Include this action in your next submit_actions call to "
+                "actually withdraw."
+            ),
+        }
+
+    @mcp.tool(
+        name="cancel_treaty",
+        description=(
+            "Queue a CANCEL_TREATY action unilaterally ending an active "
+            "treaty you are a party to. If the treaty has active obligations "
+            "(e.g. an unexpired peace clause), cancellation is a VIOLATION; "
+            "otherwise a routine cancellation. Include the returned action "
+            "in your next submit_actions call."
+        ),
+        annotations=ToolAnnotations(
+            title="Cancel Treaty",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "action", "treaty"]},
+    )
+    async def cancel_treaty(
+        api_key: str,
+        treaty_id: int,
+    ) -> dict[str, Any]:
+        """Queue a CANCEL_TREATY action.
+
+        Args:
+            api_key: Your player API key.
+            treaty_id: The active treaty id to cancel.
+
+        Returns:
+            The action dict to submit.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+        action = CancelTreatyAction(treaty_id=treaty_id)
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "action": action.model_dump(mode="json"),
+            "note": (
+                "Include this action in your next submit_actions call to "
+                "actually cancel."
+            ),
         }

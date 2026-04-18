@@ -7,6 +7,7 @@ import type {
 	GamesListResponse,
 	GameState,
 	MessageListResponse,
+	TreatyClause,
 	TurnDetailResponse,
 	TurnListResponse,
 	TurnPromptsResponse,
@@ -236,6 +237,58 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ recipient, body }),
+			},
+		);
+	},
+
+	async proposeTreaty(
+		gameId: string,
+		recipient: string,
+		clauses: TreatyClause[],
+	): Promise<{ status: string; recipient: string }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/proposals`,
+			{
+				method: "POST",
+				body: JSON.stringify({ recipient, clauses }),
+			},
+		);
+	},
+
+	async respondToTreaty(
+		gameId: string,
+		proposalId: number,
+		accept: boolean,
+	): Promise<{ status: string; proposal_id: number; accept: boolean }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/proposals/${proposalId}/respond`,
+			{
+				method: "POST",
+				body: JSON.stringify({ accept }),
+			},
+		);
+	},
+
+	async withdrawTreaty(
+		gameId: string,
+		proposalId: number,
+	): Promise<{ status: string; proposal_id: number }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/proposals/${proposalId}`,
+			{
+				method: "DELETE",
+			},
+		);
+	},
+
+	async cancelTreaty(
+		gameId: string,
+		treatyId: number,
+	): Promise<{ status: string; treaty_id: number }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/${treatyId}`,
+			{
+				method: "DELETE",
 			},
 		);
 	},

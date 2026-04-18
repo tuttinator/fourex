@@ -13,6 +13,12 @@ import {
   Swords,
   Skull,
   Handshake,
+  FileText,
+  Plus,
+  Trash2,
+  Check,
+  X,
+  ScrollText,
 } from 'lucide-react'
 
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
@@ -27,10 +33,16 @@ import type {
   DiplomacyRelation,
   DiplomacyStateResponse,
   PlayerId,
+  TreatyClause,
+  TreatyProposalRecord,
+  TreatyRecord,
 } from '@/types/game'
 import {
+  FREE_TEXT_CLAUSE_MAX_LENGTH,
   MESSAGE_BODY_MAX_LENGTH,
   MESSAGES_PER_TURN_LIMIT,
+  PEACE_CLAUSE_MAX_DURATION,
+  TREATY_PROPOSAL_EXPIRY_TURNS,
 } from '@/types/game'
 
 function getAuthPlayerId(): PlayerId | null {
@@ -99,6 +111,56 @@ function eventStyle(event: DiplomacyEvent): {
           'border-orange-500 bg-orange-500/10 text-orange-700 dark:text-orange-400',
         Icon: Swords,
       }
+    case 'treaty_violated':
+      return {
+        label: 'Treaty violated',
+        className: 'border-destructive bg-destructive/10 text-destructive',
+        Icon: Skull,
+      }
+    case 'treaty_cancelled':
+      return {
+        label: 'Treaty cancelled',
+        className:
+          'border-orange-500 bg-orange-500/10 text-orange-700 dark:text-orange-400',
+        Icon: ScrollText,
+      }
+    case 'treaty_expired':
+      return {
+        label: 'Treaty expired',
+        className: 'border-border bg-muted/40 text-foreground',
+        Icon: ScrollText,
+      }
+    case 'proposal_accepted':
+      return {
+        label: 'Proposal accepted',
+        className:
+          'border-green-600 bg-green-500/10 text-green-700 dark:text-green-400',
+        Icon: Check,
+      }
+    case 'proposal_declined':
+      return {
+        label: 'Proposal declined',
+        className: 'border-border bg-muted/40 text-foreground',
+        Icon: X,
+      }
+    case 'proposal_withdrawn':
+      return {
+        label: 'Proposal withdrawn',
+        className: 'border-border bg-muted/40 text-foreground',
+        Icon: X,
+      }
+    case 'proposal_expired':
+      return {
+        label: 'Proposal expired',
+        className: 'border-border bg-muted/40 text-foreground',
+        Icon: X,
+      }
+    case 'treaty_proposed':
+      return {
+        label: 'Treaty proposed',
+        className: 'border-border bg-muted/40 text-foreground',
+        Icon: FileText,
+      }
     default:
       return {
         label: event.type.replace(/_/g, ' '),
@@ -106,6 +168,14 @@ function eventStyle(event: DiplomacyEvent): {
         Icon: Handshake,
       }
   }
+}
+
+function clauseSummary(clause: TreatyClause): string {
+  if (clause.clause_type === 'peace') {
+    const remaining = clause.turns_remaining ?? clause.duration_turns
+    return `Peace (${remaining ?? '?'} turns remaining)`
+  }
+  return `Free text: ${clause.text ?? ''}`
 }
 
 function threadForCounterpart(
@@ -183,9 +253,99 @@ export default function DiplomacyPage() {
     },
   })
 
+  const proposeTreaty = useMutation({
+    mutationFn: ({
+      recipient,
+      clauses,
+    }: {
+      recipient: PlayerId
+      clauses: TreatyClause[]
+    }) => api.proposeTreaty(gameId, recipient, clauses),
+    onSuccess: (_, { recipient }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.diplomacy(gameId) })
+      setProposalClauses([])
+      toast({
+        title: 'Proposal queued',
+        description: `Treaty proposal to ${recipient} will be sent at end of turn.`,
+      })
+    },
+    onError: (err, { recipient }) => {
+      toast({
+        title: `Could not propose treaty to ${recipient}`,
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const respondToTreaty = useMutation({
+    mutationFn: ({
+      proposalId,
+      accept,
+    }: {
+      proposalId: number
+      accept: boolean
+    }) => api.respondToTreaty(gameId, proposalId, accept),
+    onSuccess: (_, { accept }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.diplomacy(gameId) })
+      toast({
+        title: accept ? 'Acceptance queued' : 'Decline queued',
+        description: 'Resolves at end of turn.',
+      })
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not respond to proposal',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const withdrawTreaty = useMutation({
+    mutationFn: (proposalId: number) =>
+      api.withdrawTreaty(gameId, proposalId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.diplomacy(gameId) })
+      toast({
+        title: 'Withdraw queued',
+        description: 'Proposal will be withdrawn at end of turn.',
+      })
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not withdraw proposal',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const cancelTreaty = useMutation({
+    mutationFn: (treatyId: number) => api.cancelTreaty(gameId, treatyId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.diplomacy(gameId) })
+      toast({
+        title: 'Cancellation queued',
+        description: 'Treaty cancellation resolves at end of turn.',
+      })
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not cancel treaty',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    },
+  })
+
   const [selectedCounterpart, setSelectedCounterpart] =
     useState<PlayerId | null>(null)
   const [draft, setDraft] = useState('')
+  const [proposalRecipient, setProposalRecipient] = useState<PlayerId | ''>('')
+  const [proposalClauses, setProposalClauses] = useState<TreatyClause[]>([])
+  const [peaceDuration, setPeaceDuration] = useState<number>(10)
+  const [freeText, setFreeText] = useState('')
 
   if (!currentPlayer) {
     return (
@@ -248,8 +408,70 @@ export default function DiplomacyPage() {
   const relations = diplomacy?.relations ?? []
   const events = diplomacy?.events ?? []
   const messages = diplomacy?.messages ?? []
+  const pendingProposals = diplomacy?.pending_proposals ?? []
+  const activeTreaties = diplomacy?.active_treaties ?? []
   const allPlayers = gameDetail?.players ?? []
   const currentPlayerIndex = allPlayers.indexOf(currentPlayer)
+
+  const inbox = pendingProposals.filter(
+    (p) => p.recipient === currentPlayer,
+  )
+  const outbox = pendingProposals.filter(
+    (p) => p.proposer === currentPlayer,
+  )
+
+  const effectiveRecipient =
+    proposalRecipient && discovered.includes(proposalRecipient)
+      ? proposalRecipient
+      : discovered[0] ?? ''
+
+  const hasPeaceClause = proposalClauses.some(
+    (c) => c.clause_type === 'peace',
+  )
+  const freeTextTooLong = freeText.length > FREE_TEXT_CLAUSE_MAX_LENGTH
+  const peaceDurationValid =
+    Number.isFinite(peaceDuration) &&
+    peaceDuration >= 1 &&
+    peaceDuration <= PEACE_CLAUSE_MAX_DURATION
+
+  function addPeaceClause() {
+    if (!peaceDurationValid || hasPeaceClause) return
+    setProposalClauses((prev) => [
+      ...prev,
+      {
+        clause_type: 'peace',
+        duration_turns: peaceDuration,
+        turns_remaining: peaceDuration,
+      },
+    ])
+  }
+
+  function addFreeTextClause() {
+    const trimmed = freeText.trim()
+    if (!trimmed || freeTextTooLong) return
+    setProposalClauses((prev) => [
+      ...prev,
+      { clause_type: 'free_text', text: trimmed },
+    ])
+    setFreeText('')
+  }
+
+  function removeClauseAt(idx: number) {
+    setProposalClauses((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  function submitProposal() {
+    if (!effectiveRecipient || proposalClauses.length === 0) return
+    const clausesToSend: TreatyClause[] = proposalClauses.map((c) =>
+      c.clause_type === 'peace'
+        ? { clause_type: 'peace', duration_turns: c.duration_turns }
+        : { clause_type: 'free_text', text: c.text ?? '' },
+    )
+    proposeTreaty.mutate({
+      recipient: effectiveRecipient,
+      clauses: clausesToSend,
+    })
+  }
 
   const gameStatus = gameDetail?.status
   const gameActive = gameStatus === 'active'
@@ -438,6 +660,347 @@ export default function DiplomacyPage() {
                       })}
                   </ul>
                 </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card data-testid="proposal-builder">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Propose treaty
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {discovered.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Discover another player before proposing a treaty.
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Recipient
+                    </label>
+                    <select
+                      className="w-full border rounded-md bg-background px-2 py-1 text-sm"
+                      value={effectiveRecipient}
+                      onChange={(e) =>
+                        setProposalRecipient(e.target.value as PlayerId)
+                      }
+                      data-testid="proposal-recipient"
+                    >
+                      {discovered.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="border rounded-md p-3 space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Add peace clause
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={PEACE_CLAUSE_MAX_DURATION}
+                        value={peaceDuration}
+                        onChange={(e) =>
+                          setPeaceDuration(Number(e.target.value))
+                        }
+                        className="w-24 border rounded-md bg-background px-2 py-1 text-sm"
+                        data-testid="peace-duration"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        turns
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="ml-auto"
+                        disabled={!peaceDurationValid || hasPeaceClause}
+                        onClick={addPeaceClause}
+                        title={
+                          hasPeaceClause
+                            ? 'Only one peace clause per proposal'
+                            : undefined
+                        }
+                        data-testid="add-peace"
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Peace
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-md p-3 space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      Add free-text clause
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={freeText}
+                      onChange={(e) => setFreeText(e.target.value)}
+                      placeholder="Plain-language obligation (non-binding)…"
+                      className="w-full resize-y border rounded-md bg-background p-2 text-sm"
+                      data-testid="free-text-input"
+                    />
+                    <div className="flex items-center justify-between">
+                      <span
+                        className={`text-xs ${
+                          freeTextTooLong
+                            ? 'text-destructive'
+                            : 'text-muted-foreground'
+                        }`}
+                      >
+                        {freeText.length}/{FREE_TEXT_CLAUSE_MAX_LENGTH}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!freeText.trim() || freeTextTooLong}
+                        onClick={addFreeTextClause}
+                        data-testid="add-free-text"
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Clause
+                      </Button>
+                    </div>
+                  </div>
+
+                  {proposalClauses.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        Clauses ({proposalClauses.length})
+                      </div>
+                      <ul className="space-y-1">
+                        {proposalClauses.map((c, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-center justify-between gap-2 border rounded-md px-2 py-1 text-sm"
+                            data-testid="draft-clause"
+                          >
+                            <span className="truncate">
+                              {clauseSummary(c)}
+                            </span>
+                            <button
+                              type="button"
+                              className="opacity-70 hover:opacity-100"
+                              onClick={() => removeClauseAt(idx)}
+                              aria-label="Remove clause"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <Button
+                    className="w-full"
+                    disabled={
+                      !gameActive ||
+                      !effectiveRecipient ||
+                      proposalClauses.length === 0 ||
+                      proposeTreaty.isPending
+                    }
+                    title={
+                      !gameActive
+                        ? `Proposals only while active (status: ${
+                            gameStatus ?? 'unknown'
+                          }).`
+                        : undefined
+                    }
+                    onClick={submitProposal}
+                    data-testid="submit-proposal"
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    Send proposal
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Proposals expire after {TREATY_PROPOSAL_EXPIRY_TURNS} turns
+                    if not answered.
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ScrollText className="h-5 w-5" />
+                Active treaties
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {activeTreaties.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No active treaties.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {activeTreaties.map((t: TreatyRecord) => {
+                    const otherParty =
+                      t.parties[0] === currentPlayer
+                        ? t.parties[1]
+                        : t.parties[0]
+                    return (
+                      <li
+                        key={t.id}
+                        className="border rounded-md p-3 space-y-2"
+                        data-testid={`treaty-${t.id}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="font-mono text-sm">
+                            with {otherParty}
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            Ratified turn {t.turn_ratified}
+                          </span>
+                        </div>
+                        <ul className="text-xs space-y-0.5">
+                          {t.clauses.map((c, i) => (
+                            <li key={i}>• {clauseSummary(c)}</li>
+                          ))}
+                        </ul>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={!gameActive || cancelTreaty.isPending}
+                          onClick={() => cancelTreaty.mutate(t.id)}
+                          data-testid={`cancel-treaty-${t.id}`}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Cancel (violation if active)
+                        </Button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Proposals inbox</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {inbox.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No pending proposals addressed to you.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {inbox.map((p: TreatyProposalRecord) => (
+                    <li
+                      key={p.id}
+                      className="border rounded-md p-3 space-y-2"
+                      data-testid={`inbox-proposal-${p.id}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-mono text-sm">
+                          from {p.proposer}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Expires turn {p.expires_on_turn}
+                        </span>
+                      </div>
+                      <ul className="text-xs space-y-0.5">
+                        {p.clauses.map((c, i) => (
+                          <li key={i}>• {clauseSummary(c)}</li>
+                        ))}
+                      </ul>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          disabled={!gameActive || respondToTreaty.isPending}
+                          onClick={() =>
+                            respondToTreaty.mutate({
+                              proposalId: p.id,
+                              accept: true,
+                            })
+                          }
+                          data-testid={`accept-${p.id}`}
+                        >
+                          <Check className="h-4 w-4 mr-1" />
+                          Accept
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!gameActive || respondToTreaty.isPending}
+                          onClick={() =>
+                            respondToTreaty.mutate({
+                              proposalId: p.id,
+                              accept: false,
+                            })
+                          }
+                          data-testid={`decline-${p.id}`}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Decline
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Proposals outbox</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {outbox.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  You have no pending proposals awaiting reply.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {outbox.map((p: TreatyProposalRecord) => (
+                    <li
+                      key={p.id}
+                      className="border rounded-md p-3 space-y-2"
+                      data-testid={`outbox-proposal-${p.id}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-mono text-sm">
+                          to {p.recipient}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Expires turn {p.expires_on_turn}
+                        </span>
+                      </div>
+                      <ul className="text-xs space-y-0.5">
+                        {p.clauses.map((c, i) => (
+                          <li key={i}>• {clauseSummary(c)}</li>
+                        ))}
+                      </ul>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!gameActive || withdrawTreaty.isPending}
+                        onClick={() => withdrawTreaty.mutate(p.id)}
+                        data-testid={`withdraw-${p.id}`}
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Withdraw
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </CardContent>
           </Card>
