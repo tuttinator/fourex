@@ -187,22 +187,22 @@ class TestCollectResources:
     """Test the full collect_resources flow with cities and tile yields."""
 
     def test_base_city_food_still_applies(self):
-        """Cities still produce +1 base food independent of territory."""
+        """Cities produce +2 base food independent of territory."""
         state = _make_state()
         _add_city(state, "p1", 5, 5)
 
         collect_resources(state)
-        assert state.stockpiles["p1"].food == 1
+        assert state.stockpiles["p1"].food == 2
 
     def test_base_city_food_with_granary(self):
-        """Granary boosts base city food to +1 (floor of 1 * 1.5 = 1)."""
+        """Granary boosts base city food to +3 (int(2 * 1.5) = 3)."""
         state = _make_state()
         city = _add_city(state, "p1", 5, 5)
         city.buildings.add(BuildingType.GRANARY)
 
         collect_resources(state)
-        # int(1 * 1.5) = 1
-        assert state.stockpiles["p1"].food == 1
+        # int(2 * 1.5) = 3
+        assert state.stockpiles["p1"].food == 3
 
     def test_owned_food_tile_yields(self):
         """Food resource tile within borders yields +1 food on top of base city food."""
@@ -211,8 +211,8 @@ class TestCollectResources:
         _set_tile(state, 5, 6, resource=Resource.FOOD, owner="p1", city_id=city.id)
 
         collect_resources(state)
-        # 1 (base city) + 1 (food tile) = 2
-        assert state.stockpiles["p1"].food == 2
+        # 2 (base city) + 1 (food tile) = 3
+        assert state.stockpiles["p1"].food == 3
 
     def test_owned_ore_tile_yields(self):
         state = _make_state()
@@ -255,7 +255,7 @@ class TestCollectResources:
 
         collect_resources(state)
         # Only base city food, no tile yield
-        assert state.stockpiles["p1"].food == 1
+        assert state.stockpiles["p1"].food == 2
 
     def test_plains_without_resource_yields_nothing(self):
         """Owned plains tiles without a resource contribute nothing."""
@@ -264,7 +264,7 @@ class TestCollectResources:
         _set_tile(state, 5, 6, owner="p1", city_id=city.id)
 
         collect_resources(state)
-        assert state.stockpiles["p1"] == ResourceBag(food=1)
+        assert state.stockpiles["p1"] == ResourceBag(food=2)
 
     def test_improved_farm_yields_3_food(self):
         """Farm on a food tile within borders yields +3 food total."""
@@ -281,8 +281,8 @@ class TestCollectResources:
         )
 
         collect_resources(state)
-        # 1 (base city) + 3 (farm tile) = 4
-        assert state.stockpiles["p1"].food == 4
+        # 2 (base city) + 3 (farm tile) = 5
+        assert state.stockpiles["p1"].food == 5
 
     def test_improved_mine_yields_3_ore(self):
         """Mine on an ore tile within borders yields +3 ore total."""
@@ -346,9 +346,9 @@ class TestCollectResources:
 
         collect_resources(state)
 
-        assert state.stockpiles["p1"].food == 2  # 1 base + 1 tile
+        assert state.stockpiles["p1"].food == 3  # 2 base + 1 tile
         assert state.stockpiles["p1"].ore == 0
-        assert state.stockpiles["p2"].food == 1  # 1 base only
+        assert state.stockpiles["p2"].food == 2  # 2 base only
         assert state.stockpiles["p2"].ore == 1
 
     def test_same_player_two_cities(self):
@@ -358,8 +358,8 @@ class TestCollectResources:
         _add_city(state, "p1", 7, 7)
 
         collect_resources(state)
-        # 1 + 1 base food from two cities
-        assert state.stockpiles["p1"].food == 2
+        # 2 + 2 base food from two cities
+        assert state.stockpiles["p1"].food == 4
 
     def test_multiple_resource_tiles_accumulate(self):
         """Multiple owned tiles contribute their yields cumulatively."""
@@ -371,7 +371,7 @@ class TestCollectResources:
         _set_tile(state, 6, 5, resource=Resource.ORE, owner="p1", city_id=city.id)
 
         collect_resources(state)
-        assert state.stockpiles["p1"].food == 3  # 1 base + 2 food tiles
+        assert state.stockpiles["p1"].food == 4  # 2 base + 2 food tiles
         assert state.stockpiles["p1"].ore == 1
 
     def test_city_tile_itself_does_not_double_count(self):
@@ -384,7 +384,7 @@ class TestCollectResources:
 
         collect_resources(state)
         # Only base city food, not base + tile yield
-        assert state.stockpiles["p1"].food == 1
+        assert state.stockpiles["p1"].food == 2
 
 
 class TestTileYieldsInResolveTurn:
@@ -408,8 +408,8 @@ class TestTileYieldsInResolveTurn:
 
         resolve_turn(state, {"p1": []})
 
-        # 1 base food + 3 wood from lumber mill
-        assert state.stockpiles["p1"].food == 1
+        # 2 base food + 3 wood from lumber mill
+        assert state.stockpiles["p1"].food == 2
         assert state.stockpiles["p1"].wood == 3
 
     def test_culture_expansion_then_yield_collection(self):
@@ -429,5 +429,5 @@ class TestTileYieldsInResolveTurn:
         # Border should have expanded to radius 1, claiming (5,6)
         tile = state.get_tile(Coord(x=5, y=6))
         assert tile.owner == "p1"
-        # Yields: 1 base food + 1 food from newly claimed tile = 2
-        assert state.stockpiles["p1"].food == 2
+        # Yields: 2 base food + 1 food from newly claimed tile = 3
+        assert state.stockpiles["p1"].food == 3

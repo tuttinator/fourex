@@ -393,12 +393,12 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
         )
 
     # Check if player can afford city
-    cost = ResourceBag(food=30)
+    cost = ResourceBag(food=15)
     player_resources = state.stockpiles.get(worker.owner, ResourceBag())
     if not player_resources.can_afford(cost):
         return ActionResult(
             success=False,
-            message=f"Player {worker.owner} cannot afford city (need 30 food)",
+            message=f"Player {worker.owner} cannot afford city (need 15 food)",
             action=action,
         )
 
@@ -783,7 +783,7 @@ def collect_resources(state: GameState) -> None:
     """
     # Base city food production (independent of territory)
     for city in state.cities.values():
-        base_food = 1
+        base_food = 2
         food_production = int(base_food * city.food_multiplier())
 
         current_resources = state.stockpiles.get(city.owner, ResourceBag())

@@ -112,7 +112,7 @@ class TestBuildBuilding:
 
         assert result.success is True
         assert BuildingType.MONUMENT in city.buildings
-        assert state.stockpiles["p1"].wood == 0
+        assert state.stockpiles["p1"].wood == 10
 
     def test_build_library(self):
         state = _make_state_with_grid()
@@ -126,7 +126,7 @@ class TestBuildBuilding:
 
         assert result.success is True
         assert BuildingType.LIBRARY in city.buildings
-        assert state.stockpiles["p1"] == ResourceBag(wood=0, ore=0)
+        assert state.stockpiles["p1"] == ResourceBag(wood=15, ore=5)
 
     def test_build_temple(self):
         state = _make_state_with_grid()

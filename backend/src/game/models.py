@@ -138,7 +138,7 @@ class UnitStats(BaseModel):
 
 UNIT_STATS = {
     UnitType.SCOUT: UnitStats(
-        cost=ResourceBag(food=20),
+        cost=ResourceBag(food=10),
         moves=3,
         hp=2,
         sight=3,
@@ -147,7 +147,7 @@ UNIT_STATS = {
         special="Ignores forest movement penalty",
     ),
     UnitType.WORKER: UnitStats(
-        cost=ResourceBag(food=30),
+        cost=ResourceBag(food=15),
         moves=2,
         hp=2,
         sight=2,
@@ -156,7 +156,7 @@ UNIT_STATS = {
         special="Builds improvements, cities",
     ),
     UnitType.SOLDIER: UnitStats(
-        cost=ResourceBag(food=30, ore=10),
+        cost=ResourceBag(food=15, ore=5),
         moves=2,
         hp=4,
         sight=2,
@@ -165,7 +165,7 @@ UNIT_STATS = {
         special="+25% vs cities",
     ),
     UnitType.ARCHER: UnitStats(
-        cost=ResourceBag(food=30, wood=10),
+        cost=ResourceBag(food=15, wood=5),
         moves=2,
         hp=3,
         sight=3,
@@ -187,25 +187,25 @@ class ImprovementStats(BaseModel):
 
 IMPROVEMENT_STATS = {
     ImprovementType.FARM: ImprovementStats(
-        cost=ResourceBag(wood=20),
+        cost=ResourceBag(wood=10),
         valid_terrain=[Terrain.PLAINS],
         required_resource=Resource.FOOD,
         effect="+2 food bonus (total +3 food on food tile)",
     ),
     ImprovementType.MINE: ImprovementStats(
-        cost=ResourceBag(wood=20),
+        cost=ResourceBag(wood=10),
         valid_terrain=[Terrain.MOUNTAIN],
         required_resource=Resource.ORE,
         effect="+2 ore bonus (total +3 ore on ore tile)",
     ),
     ImprovementType.LUMBER_MILL: ImprovementStats(
-        cost=ResourceBag(wood=10),
+        cost=ResourceBag(wood=5),
         valid_terrain=[Terrain.FOREST],
         required_resource=None,
         effect="+2 wood bonus (total +3 wood on forest tile)",
     ),
     ImprovementType.CRYSTAL_EXTRACTOR: ImprovementStats(
-        cost=ResourceBag(wood=20, ore=10),
+        cost=ResourceBag(wood=10, ore=5),
         valid_terrain=[Terrain.PLAINS, Terrain.FOREST, Terrain.MOUNTAIN],
         required_resource=Resource.CRYSTAL,
         effect="+1 crystal bonus (total +2 crystal on crystal tile)",
@@ -223,22 +223,22 @@ class BuildingStats(BaseModel):
 
 BUILDING_STATS = {
     BuildingType.GRANARY: BuildingStats(
-        cost=ResourceBag(wood=40), hp=10, effect="+50% food output"
+        cost=ResourceBag(wood=20), hp=10, effect="+50% food output"
     ),
     BuildingType.BARRACKS: BuildingStats(
-        cost=ResourceBag(wood=50), hp=10, effect="-25% unit training cost"
+        cost=ResourceBag(wood=25), hp=10, effect="-25% unit training cost"
     ),
     BuildingType.WALLS: BuildingStats(
-        cost=ResourceBag(ore=40), hp=15, effect="City gains +5 HP & ranged counter-fire"
+        cost=ResourceBag(ore=20), hp=15, effect="City gains +5 HP & ranged counter-fire"
     ),
     BuildingType.MONUMENT: BuildingStats(
-        cost=ResourceBag(wood=20), hp=5, effect="+1 culture/turn"
+        cost=ResourceBag(wood=10), hp=5, effect="+1 culture/turn"
     ),
     BuildingType.LIBRARY: BuildingStats(
-        cost=ResourceBag(wood=30, ore=10), hp=5, effect="+2 culture/turn"
+        cost=ResourceBag(wood=15, ore=5), hp=5, effect="+2 culture/turn"
     ),
     BuildingType.TEMPLE: BuildingStats(
-        cost=ResourceBag(wood=30, ore=20, crystal=10),
+        cost=ResourceBag(wood=15, ore=10, crystal=5),
         hp=5,
         effect="+3 culture/turn",
     ),

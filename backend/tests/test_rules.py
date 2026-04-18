@@ -419,7 +419,7 @@ class TestCityManagement:
 
         # Resources consumed
         remaining = state.stockpiles["player1"]
-        assert remaining.food == 20  # 50 - 30
+        assert remaining.food == 35  # 50 - 15
 
     def test_execute_train_unit(self):
         """Test unit training in cities."""
@@ -456,9 +456,9 @@ class TestCityManagement:
         assert unit.type == UnitType.SCOUT
         assert unit.loc == Coord(x=5, y=5)
 
-        # Resources consumed (scout costs 20 food)
+        # Resources consumed (scout costs 10 food)
         remaining = state.stockpiles["player1"]
-        assert remaining.food == 30  # 50 - 20
+        assert remaining.food == 40  # 50 - 10
 
 
 class TestTurnResolution:
@@ -538,6 +538,6 @@ class TestTurnResolution:
         # Collect resources
         collect_resources(state)
 
-        # Should get 1 food per city per turn
+        # Should get 2 food per city per turn
         resources = state.stockpiles["player1"]
-        assert resources.food == 1
+        assert resources.food == 2

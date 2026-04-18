@@ -254,7 +254,7 @@ class TestFoundCityEdgeCases:
     def test_cannot_found_without_food(self):
         state = _plains_state()
         state.players = ["p1"]
-        state.stockpiles["p1"] = ResourceBag(food=10)
+        state.stockpiles["p1"] = ResourceBag(food=5)
         worker = _add_unit(state, "p1", UnitType.WORKER, 2, 2)
 
         result = execute_found_city(state, FoundCityAction(worker_id=worker.id))
@@ -337,10 +337,10 @@ class TestTrainUnitEdgeCases:
         )
 
         assert result.success is True
-        # Soldier costs food=30, ore=10 at full price; barracks multiplies
-        # by 0.75 -> food=22, ore=7.
-        assert state.stockpiles["p1"].food == 78
-        assert state.stockpiles["p1"].ore == 93
+        # Soldier costs food=15, ore=5 at full price; barracks multiplies
+        # by 0.75 -> food=11, ore=3.
+        assert state.stockpiles["p1"].food == 89
+        assert state.stockpiles["p1"].ore == 97
 
 
 class TestBuildBuildingEdgeCases:
@@ -364,7 +364,7 @@ class TestBuildBuildingEdgeCases:
 
         assert result.success is True
         assert BuildingType.GRANARY in city.buildings
-        assert state.stockpiles["p1"].wood == 20  # 60 - 40
+        assert state.stockpiles["p1"].wood == 40  # 60 - 20
 
     def test_duplicate_building_rejected(self):
         state = _plains_state()
@@ -427,7 +427,7 @@ class TestResourceCollection:
         assert pile.wood >= 0
         assert pile.ore >= 0
         assert pile.crystal >= 0
-        assert pile.food == 1  # Base city output
+        assert pile.food == 2  # Base city output
 
     def test_granary_boosts_food(self):
         state = _plains_state()
@@ -439,10 +439,8 @@ class TestResourceCollection:
 
         collect_resources(state)
 
-        # 1 base * 1.5 multiplier = 1 (int-cast in rules.py).
-        # The only guarantee is >= base; if rules change we want this to
-        # catch it either way.
-        assert state.stockpiles["p1"].food >= 1
+        # 2 base * 1.5 multiplier = 3 (int-cast in rules.py).
+        assert state.stockpiles["p1"].food == 3
 
 
 class TestResolveTurnInvariants:
@@ -471,4 +469,4 @@ class TestResolveTurnInvariants:
         assert worker.id not in state.units
         assert state.get_tile(Coord(x=2, y=2)).unit_id is None
         # Stockpile deducted exactly once, not twice.
-        assert state.stockpiles["p1"].food == 70 + 1  # 100 - 30 + collect
+        assert state.stockpiles["p1"].food == 85 + 2  # 100 - 15 + collect (base 2)
