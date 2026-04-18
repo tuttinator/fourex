@@ -66,6 +66,25 @@ class DiplomaticState(str, Enum):
     WAR = "war"
 
 
+class DiplomaticEventType(str, Enum):
+    """Types of public diplomatic events emitted by the engine."""
+
+    WAR_DECLARED = "war_declared"
+    TREACHEROUS_ATTACK = "treacherous_attack"
+    TREATY_PROPOSED = "treaty_proposed"
+    PROPOSAL_WITHDRAWN = "proposal_withdrawn"
+    PROPOSAL_EXPIRED = "proposal_expired"
+    PROPOSAL_ACCEPTED = "proposal_accepted"
+    PROPOSAL_DECLINED = "proposal_declined"
+    PROPOSAL_FAILED_UNFUNDABLE = "proposal_failed_unfundable"
+    TREATY_CANCELLED = "treaty_cancelled"
+    TREATY_VIOLATED = "treaty_violated"
+    TREATY_EXPIRED = "treaty_expired"
+    TRIBUTE_PAID = "tribute_paid"
+    TRIBUTE_FAILED = "tribute_failed"
+    MESSAGE_SENT = "message_sent"
+
+
 PlayerId = str
 
 
@@ -360,6 +379,21 @@ class VictoryResult(BaseModel):
     scores: dict[PlayerId, int] = Field(default_factory=dict)
 
 
+class DiplomaticEvent(BaseModel):
+    """A public (or visibility-gated) diplomatic event logged to the game feed.
+
+    Event ids are drawn from ``GameState.next_event_id`` — a deterministic
+    monotonic counter — so replays produce identical ids.
+    """
+
+    id: int
+    type: DiplomaticEventType
+    actor: PlayerId
+    counterparty: PlayerId | None = None
+    turn: int
+    payload: dict[str, str] = Field(default_factory=dict)
+
+
 class GameState(BaseModel):
     """Complete game state."""
 
@@ -377,11 +411,14 @@ class GameState(BaseModel):
     stockpiles: dict[PlayerId, ResourceBag] = Field(default_factory=dict)
     next_unit_id: int = 1
     next_city_id: int = 1
+    next_event_id: int = 1
     max_turns: int = 100
     victory_conditions: list[str] = Field(
         default_factory=lambda: ["domination", "economic", "elimination", "score"]
     )
     eliminated_players: list[PlayerId] = Field(default_factory=list)
+    discovered: dict[PlayerId, list[PlayerId]] = Field(default_factory=dict)
+    diplomatic_events: list[DiplomaticEvent] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -465,6 +502,13 @@ class BuildBuildingAction(BaseModel):
     building_type: BuildingType
 
 
+class DeclareWarAction(BaseModel):
+    """Declare war on another (discovered) player. Effect is immediate."""
+
+    type: str = "DECLARE_WAR"
+    target_player: PlayerId
+
+
 Action = (
     MoveAction
     | AttackAction
@@ -472,6 +516,7 @@ Action = (
     | FoundCityAction
     | TrainUnitAction
     | BuildBuildingAction
+    | DeclareWarAction
 )
 
 

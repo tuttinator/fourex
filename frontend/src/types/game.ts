@@ -266,3 +266,29 @@ export const PLAYER_COLORS: Record<number, string> = {
 	6: "#98d8c8",
 	7: "#f7dc6f",
 };
+
+// Diplomacy types (Phase 1)
+
+export interface DiplomacyRelation {
+	player_a: PlayerId;
+	player_b: PlayerId;
+	state: "peace" | "alliance" | "war";
+}
+
+export interface DiplomacyEvent {
+	id: number;
+	type: string;
+	actor: PlayerId;
+	counterparty: PlayerId | null;
+	turn: number;
+	payload: Record<string, string>;
+}
+
+export interface DiplomacyStateResponse {
+	game_id: string;
+	player: PlayerId;
+	turn: number;
+	discovered: PlayerId[];
+	relations: DiplomacyRelation[];
+	events: DiplomacyEvent[];
+}

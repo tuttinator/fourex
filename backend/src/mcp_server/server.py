@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from ..database.connection import close_db, init_db
-from .tools import analysis, gameplay, history, lifecycle, memory, rendering
+from .tools import analysis, diplomacy, gameplay, history, lifecycle, memory, rendering
 
 
 def create_mcp_server() -> FastMCP:
@@ -39,6 +39,7 @@ def create_mcp_server() -> FastMCP:
     history.register(mcp)
     analysis.register(mcp)
     rendering.register(mcp)
+    diplomacy.register(mcp)
 
     return mcp
 

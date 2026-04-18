@@ -17,6 +17,7 @@ from ...game.rules import (
     calculate_scores,
     generate_map,
     place_starting_units,
+    update_discovery,
 )
 
 
@@ -110,6 +111,9 @@ def register(mcp: FastMCP) -> None:
             rng = random.Random(seed)
             for player in players:
                 place_starting_units(state, player, rng)
+
+            # Seed discovered-players sets from starting visibility.
+            update_discovery(state)
 
             # Persist game
             await repo.create_game(
@@ -209,6 +213,10 @@ def register(mcp: FastMCP) -> None:
             # Place a starting worker + scout for the new player
             rng = random.Random(game.seed + len(updated_players))
             place_starting_units(state, player_name, rng)
+
+            # Refresh discovered-players sets so the new player and neighbours
+            # start with any mutually-visible entries already in place.
+            update_discovery(state)
 
             await repo.update_game_state(game_id, state)
 

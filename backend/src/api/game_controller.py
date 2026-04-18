@@ -17,6 +17,7 @@ from ..game.rules import (
     generate_map,
     place_starting_units,
     resolve_turn,
+    update_discovery,
 )
 
 
@@ -59,6 +60,9 @@ class GameController:
         rng = random.Random(seed)
         for player in players:
             place_starting_units(state, player, rng)
+
+        # Initialise discovered-players sets from starting visibility.
+        update_discovery(state)
 
         self.games[game_id] = state
         self.pending_actions[game_id] = {}

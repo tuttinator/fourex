@@ -1,6 +1,7 @@
 import type {
 	CreateGameRequest,
 	CreateLobbyRequest,
+	DiplomacyStateResponse,
 	GameDetailResponse,
 	GamesListParams,
 	GamesListResponse,
@@ -189,6 +190,25 @@ export const api = {
 			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/prompts`,
 		);
 	},
+
+	async getDiplomacy(gameId: string): Promise<DiplomacyStateResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy`,
+		);
+	},
+
+	async declareWar(
+		gameId: string,
+		targetPlayer: string,
+	): Promise<{ status: string; target: string }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/declare-war`,
+			{
+				method: "POST",
+				body: JSON.stringify({ target_player: targetPlayer }),
+			},
+		);
+	},
 };
 
 // React Query keys
@@ -206,6 +226,7 @@ export const queryKeys = {
 		["game", gameId, "turn", turnNumber, "state", perspective ?? "god"] as const,
 	turnPrompts: (gameId: string, turnNumber: number) =>
 		["game", gameId, "turn", turnNumber, "prompts"] as const,
+	diplomacy: (gameId: string) => ["game", gameId, "diplomacy"] as const,
 };
 
 // Utility functions

@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
-from ..game.models import Action, CreateGameRequest, GameState, PlayerId, PromptLog
+from ..game.models import (
+    Action,
+    CreateGameRequest,
+    DeclareWarAction,
+    GameState,
+    PlayerId,
+    PromptLog,
+)
 from ..game.rules import redact_state
 from .persistent_game_controller import get_persistent_game_controller
 
@@ -692,6 +699,106 @@ async def get_turn_prompts(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Diplomacy endpoints (Phase 1: relations foundation) ---
+
+
+class DeclareWarRequest(BaseModel):
+    """Queue a DECLARE_WAR action against a discovered player."""
+
+    target_player: PlayerId
+
+
+class DiplomacyRelation(BaseModel):
+    """A single pairwise diplomatic-state entry visible to the viewer."""
+
+    player_a: PlayerId
+    player_b: PlayerId
+    state: str
+
+
+class DiplomacyEventResponse(BaseModel):
+    """A public diplomatic event entry visible to the viewer."""
+
+    id: int
+    type: str
+    actor: PlayerId
+    counterparty: PlayerId | None
+    turn: int
+    payload: dict[str, str]
+
+
+class DiplomacyStateResponse(BaseModel):
+    """Viewer's redacted diplomatic slice of game state."""
+
+    game_id: str
+    player: PlayerId
+    turn: int
+    discovered: list[PlayerId]
+    relations: list[DiplomacyRelation]
+    events: list[DiplomacyEventResponse]
+
+
+@router.get("/games/{game_id}/diplomacy", tags=["diplomacy"])
+async def get_diplomacy(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> DiplomacyStateResponse:
+    """Return the viewer's redacted diplomatic view: discovered players,
+    visible pairwise relations, and the public events feed."""
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        redacted = redact_state(state, current_player)
+        return DiplomacyStateResponse(
+            game_id=game_id,
+            player=current_player,
+            turn=state.turn,
+            discovered=redacted.discovered.get(current_player, []),
+            relations=[
+                DiplomacyRelation(player_a=k[0], player_b=k[1], state=v.value)
+                for k, v in redacted.diplomacy.items()
+            ],
+            events=[
+                DiplomacyEventResponse(
+                    id=e.id,
+                    type=e.type.value,
+                    actor=e.actor,
+                    counterparty=e.counterparty,
+                    turn=e.turn,
+                    payload=e.payload,
+                )
+                for e in redacted.diplomatic_events
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/games/{game_id}/diplomacy/declare-war", tags=["diplomacy"])
+async def declare_war(
+    game_id: str,
+    request: DeclareWarRequest,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Submit a DECLARE_WAR action for the caller on the current turn."""
+    try:
+        controller = get_persistent_game_controller(session)
+        action = DeclareWarAction(target_player=request.target_player)
+        await controller.submit_player_actions(game_id, current_player, [action])
+        return {"status": "declaration_submitted", "target": request.target_player}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/games/{game_id}/restore", tags=["games"])

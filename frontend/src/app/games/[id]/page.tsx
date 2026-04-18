@@ -167,6 +167,12 @@ export default function GameDetailPage() {
             </div>
             <div className="flex items-center gap-3">
               <Button asChild variant="outline" size="sm">
+                <Link href={`/games/${game.game_id}/diplomacy`}>
+                  <Users className="h-4 w-4 mr-2" />
+                  Diplomacy
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
                 <Link href={`/games/${game.game_id}/replay`}>
                   <Play className="h-4 w-4 mr-2" />
                   Replay

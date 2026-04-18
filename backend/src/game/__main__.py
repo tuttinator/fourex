@@ -20,7 +20,13 @@ from .models import (
     TrainUnitAction,
     UnitType,
 )
-from .rules import STARTING_STOCKPILE, generate_map, place_starting_units, resolve_turn
+from .rules import (
+    STARTING_STOCKPILE,
+    generate_map,
+    place_starting_units,
+    resolve_turn,
+    update_discovery,
+)
 
 
 def create_test_game(players: list[PlayerId], seed: int) -> GameState:
@@ -53,6 +59,7 @@ def create_test_game(players: list[PlayerId], seed: int) -> GameState:
                 f"at ({unit.loc.x}, {unit.loc.y})"
             )
 
+    update_discovery(state)
     return state
 
 

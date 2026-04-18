@@ -21,6 +21,7 @@ from ..game.rules import (
     place_starting_units,
     redact_state,
     resolve_turn,
+    update_discovery,
 )
 from .websocket import broadcast_player_action, broadcast_turn_end, broadcast_turn_start
 
@@ -162,6 +163,9 @@ class PersistentGameController:
         # Place starting units
         self._place_starting_units(state, players, db_game.seed)
 
+        # Seed discovered-players sets from starting visibility.
+        update_discovery(state)
+
         # Transition to active
         await self.repo.update_game_status(game_id, "active")
         await self.repo.update_game_state(game_id, state)
@@ -212,6 +216,9 @@ class PersistentGameController:
 
         # Place starting units
         self._place_starting_units(state, players, seed)
+
+        # Seed discovered-players sets from starting visibility.
+        update_discovery(state)
 
         # Save to database
         await self.repo.create_game(

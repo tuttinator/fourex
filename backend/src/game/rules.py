@@ -16,6 +16,9 @@ from .models import (
     BuildImprovementAction,
     City,
     Coord,
+    DeclareWarAction,
+    DiplomaticEvent,
+    DiplomaticEventType,
     DiplomaticState,
     FoundCityAction,
     GameState,
@@ -152,7 +155,13 @@ def get_tiles_in_range(
 
 
 def redact_state(state: GameState, player_id: PlayerId) -> GameState:
-    """Create a copy of game state with fog-of-war applied for the given player."""
+    """Create a copy of game state with fog-of-war applied for the given player.
+
+    Also filters diplomatic state: the viewer sees only their own discovered
+    set, only diplomacy entries involving the viewer or two discovered-by-viewer
+    players, and only diplomatic events where the viewer is the actor, the
+    counterparty, or has discovered both parties.
+    """
     visible_tiles = get_visible_tiles(state, player_id)
     redacted = deepcopy(state)
 
@@ -173,7 +182,156 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
             visible_cities[city_id] = city
     redacted.cities = visible_cities
 
+    # Redact diplomatic state
+    discovered_set = set(state.discovered.get(player_id, [])) | {player_id}
+    redacted.discovered = {player_id: list(state.discovered.get(player_id, []))}
+
+    redacted.diplomacy = {
+        key: value
+        for key, value in state.diplomacy.items()
+        if player_id in key or (key[0] in discovered_set and key[1] in discovered_set)
+    }
+
+    redacted.diplomatic_events = [
+        event
+        for event in state.diplomatic_events
+        if event.actor == player_id
+        or event.counterparty == player_id
+        or (
+            event.actor in discovered_set
+            and (event.counterparty is None or event.counterparty in discovered_set)
+        )
+    ]
+
     return redacted
+
+
+def _diplomacy_key(a: PlayerId, b: PlayerId) -> tuple[PlayerId, PlayerId]:
+    """Return a canonical sorted-pair key for the ``GameState.diplomacy`` dict."""
+    return (a, b) if a <= b else (b, a)
+
+
+def set_relation(
+    state: GameState, a: PlayerId, b: PlayerId, value: DiplomaticState
+) -> None:
+    """Canonicalise relation storage so ``get_diplomatic_state`` stays symmetric.
+
+    Clears both ordered keys before writing the sorted-pair key, so callers that
+    previously stored ``(a, b)`` don't leave the inverse entry behind.
+    """
+    state.diplomacy.pop((a, b), None)
+    state.diplomacy.pop((b, a), None)
+    state.diplomacy[_diplomacy_key(a, b)] = value
+
+
+def emit_diplomatic_event(
+    state: GameState,
+    event_type: DiplomaticEventType,
+    actor: PlayerId,
+    counterparty: PlayerId | None = None,
+    payload: dict[str, str] | None = None,
+) -> DiplomaticEvent:
+    """Append a public diplomatic event with a deterministic id."""
+    event = DiplomaticEvent(
+        id=state.next_event_id,
+        type=event_type,
+        actor=actor,
+        counterparty=counterparty,
+        turn=state.turn,
+        payload=payload or {},
+    )
+    state.diplomatic_events.append(event)
+    state.next_event_id += 1
+    return event
+
+
+def record_discovery(state: GameState, viewer: PlayerId, target: PlayerId) -> None:
+    """Record that ``viewer`` has now observed ``target``. Idempotent.
+
+    Discovery is permanent: once added, entries are never removed.
+    """
+    if viewer == target:
+        return
+    bucket = state.discovered.setdefault(viewer, [])
+    if target not in bucket:
+        bucket.append(target)
+
+
+def has_discovered(state: GameState, viewer: PlayerId, target: PlayerId) -> bool:
+    """Return True if ``viewer`` has ever observed ``target``."""
+    if viewer == target:
+        return True
+    return target in state.discovered.get(viewer, [])
+
+
+def update_discovery(state: GameState) -> None:
+    """Update each player's discovered set based on currently-visible owners.
+
+    Called once per turn during resolution. Discovery flows both ways: if
+    player A can see an object owned by B, A discovers B. B does not
+    automatically discover A from that observation.
+    """
+    for viewer in state.players:
+        if viewer in state.eliminated_players:
+            continue
+        visible = get_visible_tiles(state, viewer)
+        for unit in state.units.values():
+            if unit.loc in visible and unit.owner != viewer:
+                record_discovery(state, viewer, unit.owner)
+        for city in state.cities.values():
+            if city.loc in visible and city.owner != viewer:
+                record_discovery(state, viewer, city.owner)
+
+
+def execute_declare_war(
+    state: GameState, actor: PlayerId, action: DeclareWarAction
+) -> ActionResult:
+    """Declare war on ``action.target_player``. Takes effect immediately.
+
+    Rejected if the target is not in ``actor``'s discovered set, if the target
+    is ``actor`` themselves, if the target is not a game participant, or if
+    the pair is already at war.
+    """
+    target = action.target_player
+    if target == actor:
+        return ActionResult(
+            success=False,
+            message="Cannot declare war on yourself.",
+            action=action,
+        )
+    if target not in state.players:
+        return ActionResult(
+            success=False,
+            message=f"Player {target} is not in this game.",
+            action=action,
+        )
+    if not has_discovered(state, actor, target):
+        return ActionResult(
+            success=False,
+            message=f"Cannot declare war on undiscovered player {target}.",
+            action=action,
+        )
+    current = state.get_diplomatic_state(actor, target)
+    if current == DiplomaticState.WAR:
+        return ActionResult(
+            success=False,
+            message=f"Already at war with {target}.",
+            action=action,
+        )
+
+    set_relation(state, actor, target, DiplomaticState.WAR)
+    emit_diplomatic_event(
+        state,
+        DiplomaticEventType.WAR_DECLARED,
+        actor=actor,
+        counterparty=target,
+        payload={"cause": "declaration"},
+    )
+    return ActionResult(
+        success=True,
+        message=f"{actor} declared war on {target}.",
+        action=action,
+    )
 
 
 def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, str]:
@@ -276,6 +434,25 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                 action=action,
             )
 
+        # Treacherous first strike: attacking at PEACE flips to WAR and logs
+        # a public TREACHEROUS_ATTACK event in addition to the combat outcome.
+        if diplomatic_state == DiplomaticState.PEACE and attacker.owner != target.owner:
+            set_relation(state, attacker.owner, target.owner, DiplomaticState.WAR)
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.TREACHEROUS_ATTACK,
+                actor=attacker.owner,
+                counterparty=target.owner,
+                payload={"target_type": "unit", "target_id": str(target.id)},
+            )
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.WAR_DECLARED,
+                actor=attacker.owner,
+                counterparty=target.owner,
+                payload={"cause": "treacherous_attack"},
+            )
+
         # Calculate damage
         attacker_strength = attacker.stats.attack
         defender_strength = target.stats.attack
@@ -333,6 +510,27 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                 success=False,
                 message=f"Cannot attack allied city {target_city.id}",
                 action=action,
+            )
+
+        # Treacherous first strike against an at-peace city.
+        if (
+            diplomatic_state == DiplomaticState.PEACE
+            and attacker.owner != target_city.owner
+        ):
+            set_relation(state, attacker.owner, target_city.owner, DiplomaticState.WAR)
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.TREACHEROUS_ATTACK,
+                actor=attacker.owner,
+                counterparty=target_city.owner,
+                payload={"target_type": "city", "target_id": str(target_city.id)},
+            )
+            emit_diplomatic_event(
+                state,
+                DiplomaticEventType.WAR_DECLARED,
+                actor=attacker.owner,
+                counterparty=target_city.owner,
+                payload={"cause": "treacherous_attack"},
             )
 
         # Calculate damage (soldiers get +25% vs cities)
@@ -1167,6 +1365,8 @@ def resolve_turn(
                 result = execute_build_improvement(state, action)
             elif isinstance(action, BuildBuildingAction):
                 result = execute_build_building(state, action)
+            elif isinstance(action, DeclareWarAction):
+                result = execute_declare_war(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,
@@ -1191,6 +1391,10 @@ def resolve_turn(
 
     # Collect resources at end of turn
     collect_resources(state)
+
+    # Update each player's discovered-players set based on end-of-turn visibility.
+    # Discovery is permanent; this only adds entries, never removes them.
+    update_discovery(state)
 
     # Check for eliminations again (in case actions during this phase caused them)
     newly_eliminated = check_elimination(state)
