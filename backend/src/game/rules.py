@@ -8,6 +8,8 @@ from copy import deepcopy
 from .models import (
     BUILDING_STATS,
     IMPROVEMENT_STATS,
+    MESSAGE_BODY_MAX_LENGTH,
+    MESSAGES_PER_TURN_LIMIT,
     UNIT_STATS,
     Action,
     ActionResult,
@@ -23,10 +25,12 @@ from .models import (
     FoundCityAction,
     GameState,
     ImprovementType,
+    Message,
     MoveAction,
     PlayerId,
     Resource,
     ResourceBag,
+    SendMessageAction,
     Terrain,
     Tile,
     TrainUnitAction,
@@ -203,6 +207,14 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
         )
     ]
 
+    # Messages are strictly private to sender and recipient — third parties
+    # cannot see content or existence regardless of discovery.
+    redacted.messages = [
+        msg
+        for msg in state.messages
+        if msg.sender == player_id or msg.recipient == player_id
+    ]
+
     return redacted
 
 
@@ -330,6 +342,92 @@ def execute_declare_war(
     return ActionResult(
         success=True,
         message=f"{actor} declared war on {target}.",
+        action=action,
+    )
+
+
+def _count_messages_sent_this_turn(state: GameState, sender: PlayerId) -> int:
+    """Count messages ``sender`` has already sent during the current turn.
+
+    Counts directly from ``state.messages`` (rather than a transient counter)
+    so the limit is robust to replay and resubmission.
+    """
+    return sum(
+        1
+        for msg in state.messages
+        if msg.sender == sender and msg.turn_sent == state.turn
+    )
+
+
+def execute_send_message(
+    state: GameState, sender: PlayerId, action: SendMessageAction
+) -> ActionResult:
+    """Queue a private message from ``sender`` to ``action.recipient``.
+
+    Validation:
+    - Recipient cannot be the sender.
+    - Recipient must be a player in the game and must have been discovered.
+    - Body length must be between 1 and ``MESSAGE_BODY_MAX_LENGTH`` characters.
+    - Sender cannot exceed ``MESSAGES_PER_TURN_LIMIT`` messages this turn.
+    """
+    recipient = action.recipient
+    if recipient == sender:
+        return ActionResult(
+            success=False,
+            message="Cannot send a message to yourself.",
+            action=action,
+        )
+    if recipient not in state.players:
+        return ActionResult(
+            success=False,
+            message=f"Player {recipient} is not in this game.",
+            action=action,
+        )
+    if not has_discovered(state, sender, recipient):
+        return ActionResult(
+            success=False,
+            message=f"Cannot message undiscovered player {recipient}.",
+            action=action,
+        )
+    body_length = len(action.body)
+    if body_length == 0:
+        return ActionResult(
+            success=False,
+            message="Message body cannot be empty.",
+            action=action,
+        )
+    if body_length > MESSAGE_BODY_MAX_LENGTH:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Message body is {body_length} chars; limit is "
+                f"{MESSAGE_BODY_MAX_LENGTH}."
+            ),
+            action=action,
+        )
+    if _count_messages_sent_this_turn(state, sender) >= MESSAGES_PER_TURN_LIMIT:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Per-turn message limit reached ({MESSAGES_PER_TURN_LIMIT} "
+                f"messages/turn)."
+            ),
+            action=action,
+        )
+
+    message = Message(
+        id=state.next_message_id,
+        sender=sender,
+        recipient=recipient,
+        body=action.body,
+        turn_sent=state.turn,
+    )
+    state.messages.append(message)
+    state.next_message_id += 1
+
+    return ActionResult(
+        success=True,
+        message=f"{sender} sent a message to {recipient}.",
         action=action,
     )
 
@@ -1367,6 +1465,8 @@ def resolve_turn(
                 result = execute_build_building(state, action)
             elif isinstance(action, DeclareWarAction):
                 result = execute_declare_war(state, player_id, action)
+            elif isinstance(action, SendMessageAction):
+                result = execute_send_message(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,

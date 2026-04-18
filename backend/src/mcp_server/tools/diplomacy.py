@@ -1,9 +1,9 @@
 """
-Diplomacy MCP tools: declare_war, get_diplomacy_state.
+Diplomacy MCP tools: declare_war, get_diplomacy_state, send_message, get_messages.
 
-Phase 1 of the diplomacy system — covers war declarations, treacherous-attack
-events, the per-player discovered-players set, and the public event feed.
-Later phases add messaging, treaties, and alliance mechanics.
+Phases 1 and 2 of the diplomacy system — war declarations, treacherous-attack
+events, the per-player discovered-players set, the public event feed, and
+private bilateral messaging. Later phases add treaties and alliance mechanics.
 """
 
 from typing import Any
@@ -14,7 +14,13 @@ from mcp.types import ToolAnnotations
 from ...auth import AuthError, authenticate
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
-from ...game.models import DeclareWarAction, GameState
+from ...game.models import (
+    MESSAGE_BODY_MAX_LENGTH,
+    MESSAGES_PER_TURN_LIMIT,
+    DeclareWarAction,
+    GameState,
+    SendMessageAction,
+)
 from ...game.rules import redact_state
 
 
@@ -130,4 +136,123 @@ def register(mcp: FastMCP) -> None:
             "discovered": redacted.discovered.get(auth.player_id, []),
             "relations": _serialise_diplomacy(redacted, auth.player_id),
             "events": [e.model_dump(mode="json") for e in redacted.diplomatic_events],
+            "messages": [m.model_dump(mode="json") for m in redacted.messages],
+        }
+
+    @mcp.tool(
+        name="send_message",
+        description=(
+            "Queue a private SEND_MESSAGE action addressed to a discovered "
+            f"player. Body must be 1..{MESSAGE_BODY_MAX_LENGTH} chars. Up to "
+            f"{MESSAGES_PER_TURN_LIMIT} messages per sender per turn. "
+            "Include the returned ``action`` in your next submit_actions call."
+        ),
+        annotations=ToolAnnotations(
+            title="Send Message",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "action"]},
+    )
+    async def send_message(
+        api_key: str,
+        recipient: str,
+        body: str,
+    ) -> dict[str, Any]:
+        """Queue a SEND_MESSAGE action for the current turn.
+
+        Args:
+            api_key: Your player API key.
+            recipient: Discovered player to message.
+            body: Message text (≤2000 characters).
+
+        Returns:
+            The action dict to include in your next submit_actions call,
+            alongside the rest of your turn actions.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+        action = SendMessageAction(recipient=recipient, body=body)
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "action": action.model_dump(mode="json"),
+            "note": (
+                "Include this action in your next submit_actions call to "
+                "actually send the message."
+            ),
+        }
+
+    @mcp.tool(
+        name="get_messages",
+        description=(
+            "Return the private message history visible to the authenticated "
+            "player: all messages you have sent or received, optionally filtered "
+            "by counterparty and/or a lower-bound turn."
+        ),
+        annotations=ToolAnnotations(
+            title="Get Messages",
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["diplomacy", "query"]},
+    )
+    async def get_messages(
+        api_key: str,
+        counterparty: str | None = None,
+        since_turn: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch your inbox + outbox, optionally filtered.
+
+        Args:
+            api_key: Your player API key.
+            counterparty: If provided, only return messages between you and
+                this player.
+            since_turn: If provided, only return messages with
+                ``turn_sent >= since_turn``.
+
+        Returns:
+            A list of ``Message`` dicts (sender, recipient, body, turn_sent,
+            id) sorted ascending by id.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+            state = GameState.model_validate(game.state)
+            redacted = redact_state(state, auth.player_id)
+
+        messages = redacted.messages
+        if counterparty is not None:
+            messages = [
+                m
+                for m in messages
+                if m.sender == counterparty or m.recipient == counterparty
+            ]
+        if since_turn is not None:
+            messages = [m for m in messages if m.turn_sent >= since_turn]
+
+        messages_sorted = sorted(messages, key=lambda m: m.id)
+
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "turn": state.turn,
+            "messages": [m.model_dump(mode="json") for m in messages_sorted],
         }

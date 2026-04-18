@@ -21,6 +21,7 @@ from ...game.models import (
     FoundCityAction,
     GameState,
     MoveAction,
+    SendMessageAction,
     TrainUnitAction,
 )
 from ...game.rules import redact_state, resolve_turn
@@ -46,6 +47,8 @@ def _parse_action(raw: dict[str, Any]) -> Action:
         return BuildBuildingAction.model_validate(raw)
     elif action_type == "DECLARE_WAR":
         return DeclareWarAction.model_validate(raw)
+    elif action_type == "SEND_MESSAGE":
+        return SendMessageAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 
@@ -63,6 +66,7 @@ def _validate_actions_against_state(
         execute_declare_war,
         execute_found_city,
         execute_move,
+        execute_send_message,
         execute_train_unit,
         reset_unit_moves,
     )
@@ -87,6 +91,8 @@ def _validate_actions_against_state(
             r = execute_build_building(test_state, action)
         elif isinstance(action, DeclareWarAction):
             r = execute_declare_war(test_state, player_id, action)
+        elif isinstance(action, SendMessageAction):
+            r = execute_send_message(test_state, player_id, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}

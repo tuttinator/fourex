@@ -12,12 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
+    MESSAGE_BODY_MAX_LENGTH,
+    MESSAGES_PER_TURN_LIMIT,
     Action,
     CreateGameRequest,
     DeclareWarAction,
     GameState,
     PlayerId,
     PromptLog,
+    SendMessageAction,
 )
 from ..game.rules import redact_state
 from .persistent_game_controller import get_persistent_game_controller
@@ -729,6 +732,16 @@ class DiplomacyEventResponse(BaseModel):
     payload: dict[str, str]
 
 
+class DiplomacyMessageResponse(BaseModel):
+    """A private message visible only to its sender and recipient."""
+
+    id: int
+    sender: PlayerId
+    recipient: PlayerId
+    body: str
+    turn_sent: int
+
+
 class DiplomacyStateResponse(BaseModel):
     """Viewer's redacted diplomatic slice of game state."""
 
@@ -738,6 +751,27 @@ class DiplomacyStateResponse(BaseModel):
     discovered: list[PlayerId]
     relations: list[DiplomacyRelation]
     events: list[DiplomacyEventResponse]
+    messages: list[DiplomacyMessageResponse]
+
+
+class SendMessageRequest(BaseModel):
+    """Queue a SEND_MESSAGE action addressed to a discovered player."""
+
+    recipient: PlayerId
+    body: str = Field(
+        min_length=1,
+        max_length=MESSAGE_BODY_MAX_LENGTH,
+        description=f"Message body (1..{MESSAGE_BODY_MAX_LENGTH} chars).",
+    )
+
+
+class MessageListResponse(BaseModel):
+    """Inbox + outbox slice for a player, optionally filtered."""
+
+    game_id: str
+    player: PlayerId
+    turn: int
+    messages: list[DiplomacyMessageResponse]
 
 
 @router.get("/games/{game_id}/diplomacy", tags=["diplomacy"])
@@ -775,11 +809,129 @@ async def get_diplomacy(
                 )
                 for e in redacted.diplomatic_events
             ],
+            messages=[
+                DiplomacyMessageResponse(
+                    id=m.id,
+                    sender=m.sender,
+                    recipient=m.recipient,
+                    body=m.body,
+                    turn_sent=m.turn_sent,
+                )
+                for m in redacted.messages
+            ],
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/games/{game_id}/diplomacy/messages", tags=["diplomacy"])
+async def list_messages(
+    game_id: str,
+    counterparty: PlayerId | None = Query(
+        default=None, description="Filter to messages with this player"
+    ),
+    since_turn: int | None = Query(
+        default=None, description="Only return messages with turn_sent >= this"
+    ),
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> MessageListResponse:
+    """Return the caller's inbox + outbox, optionally filtered."""
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        redacted = redact_state(state, current_player)
+        messages = list(redacted.messages)
+        if counterparty is not None:
+            messages = [
+                m
+                for m in messages
+                if m.sender == counterparty or m.recipient == counterparty
+            ]
+        if since_turn is not None:
+            messages = [m for m in messages if m.turn_sent >= since_turn]
+        messages.sort(key=lambda m: m.id)
+
+        return MessageListResponse(
+            game_id=game_id,
+            player=current_player,
+            turn=state.turn,
+            messages=[
+                DiplomacyMessageResponse(
+                    id=m.id,
+                    sender=m.sender,
+                    recipient=m.recipient,
+                    body=m.body,
+                    turn_sent=m.turn_sent,
+                )
+                for m in messages
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/games/{game_id}/diplomacy/messages", tags=["diplomacy"])
+async def send_message_endpoint(
+    game_id: str,
+    request: SendMessageRequest,
+    session: AsyncSession = Depends(get_database_session),
+    current_player: PlayerId = Depends(get_current_player),
+) -> dict[str, str]:
+    """Queue a SEND_MESSAGE action for the caller on the current turn.
+
+    Appends to any actions already submitted by the caller this turn rather
+    than replacing them, so players can send messages without losing queued
+    moves.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        state = await controller.get_game_state(game_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        existing = await controller.repo.get_turn_action(
+            game_id, current_player, state.turn
+        )
+        existing_actions: list[Action] = []
+        if existing and existing.actions_json:
+            from ..mcp_server.tools.gameplay import _parse_action
+
+            raw_list = (
+                existing.actions_json if isinstance(existing.actions_json, list) else []
+            )
+            existing_actions = [_parse_action(a) for a in raw_list]
+
+        new_action = SendMessageAction(recipient=request.recipient, body=request.body)
+        merged = existing_actions + [new_action]
+
+        sent_so_far = sum(
+            1
+            for a in existing_actions
+            if isinstance(a, SendMessageAction) and a.recipient is not None
+        )
+        if sent_so_far >= MESSAGES_PER_TURN_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Per-turn message limit reached "
+                    f"({MESSAGES_PER_TURN_LIMIT} messages/turn)."
+                ),
+            )
+
+        await controller.submit_player_actions(game_id, current_player, merged)
+        return {"status": "message_queued", "recipient": request.recipient}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/games/{game_id}/diplomacy/declare-war", tags=["diplomacy"])

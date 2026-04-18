@@ -394,6 +394,25 @@ class DiplomaticEvent(BaseModel):
     payload: dict[str, str] = Field(default_factory=dict)
 
 
+MESSAGE_BODY_MAX_LENGTH = 2000
+MESSAGES_PER_TURN_LIMIT = 5
+
+
+class Message(BaseModel):
+    """A private bilateral message between two players.
+
+    Ids are drawn from ``GameState.next_message_id`` — a deterministic monotonic
+    counter — so replays produce identical ids. Only the sender and recipient
+    ever see the message content or existence; ``redact_state`` enforces this.
+    """
+
+    id: int
+    sender: PlayerId
+    recipient: PlayerId
+    body: str
+    turn_sent: int
+
+
 class GameState(BaseModel):
     """Complete game state."""
 
@@ -412,6 +431,7 @@ class GameState(BaseModel):
     next_unit_id: int = 1
     next_city_id: int = 1
     next_event_id: int = 1
+    next_message_id: int = 1
     max_turns: int = 100
     victory_conditions: list[str] = Field(
         default_factory=lambda: ["domination", "economic", "elimination", "score"]
@@ -419,6 +439,7 @@ class GameState(BaseModel):
     eliminated_players: list[PlayerId] = Field(default_factory=list)
     discovered: dict[PlayerId, list[PlayerId]] = Field(default_factory=dict)
     diplomatic_events: list[DiplomaticEvent] = Field(default_factory=list)
+    messages: list[Message] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -509,6 +530,19 @@ class DeclareWarAction(BaseModel):
     target_player: PlayerId
 
 
+class SendMessageAction(BaseModel):
+    """Send a private bilateral message to a discovered player.
+
+    Capped at ``MESSAGE_BODY_MAX_LENGTH`` characters per message and
+    ``MESSAGES_PER_TURN_LIMIT`` messages per sender per turn. Only the sender
+    and recipient ever see the message.
+    """
+
+    type: str = "SEND_MESSAGE"
+    recipient: PlayerId
+    body: str
+
+
 Action = (
     MoveAction
     | AttackAction
@@ -517,6 +551,7 @@ Action = (
     | TrainUnitAction
     | BuildBuildingAction
     | DeclareWarAction
+    | SendMessageAction
 )
 
 

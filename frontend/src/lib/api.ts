@@ -6,6 +6,7 @@ import type {
 	GamesListParams,
 	GamesListResponse,
 	GameState,
+	MessageListResponse,
 	TurnDetailResponse,
 	TurnListResponse,
 	TurnPromptsResponse,
@@ -206,6 +207,35 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ target_player: targetPlayer }),
+			},
+		);
+	},
+
+	async listMessages(
+		gameId: string,
+		params: { counterparty?: string; since_turn?: number } = {},
+	): Promise<MessageListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.counterparty)
+			searchParams.set("counterparty", params.counterparty);
+		if (params.since_turn !== undefined)
+			searchParams.set("since_turn", String(params.since_turn));
+		const qs = searchParams.toString();
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/messages${qs ? `?${qs}` : ""}`,
+		);
+	},
+
+	async sendMessage(
+		gameId: string,
+		recipient: string,
+		body: string,
+	): Promise<{ status: string; recipient: string }> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/diplomacy/messages`,
+			{
+				method: "POST",
+				body: JSON.stringify({ recipient, body }),
 			},
 		);
 	},

@@ -284,6 +284,14 @@ export interface DiplomacyEvent {
 	payload: Record<string, string>;
 }
 
+export interface DiplomacyMessage {
+	id: number;
+	sender: PlayerId;
+	recipient: PlayerId;
+	body: string;
+	turn_sent: number;
+}
+
 export interface DiplomacyStateResponse {
 	game_id: string;
 	player: PlayerId;
@@ -291,4 +299,15 @@ export interface DiplomacyStateResponse {
 	discovered: PlayerId[];
 	relations: DiplomacyRelation[];
 	events: DiplomacyEvent[];
+	messages: DiplomacyMessage[];
 }
+
+export interface MessageListResponse {
+	game_id: string;
+	player: PlayerId;
+	turn: number;
+	messages: DiplomacyMessage[];
+}
+
+export const MESSAGE_BODY_MAX_LENGTH = 2000;
+export const MESSAGES_PER_TURN_LIMIT = 5;
