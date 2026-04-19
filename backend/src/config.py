@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # default; leave empty to skip issuer verification.
     auth_jwt_issuer: str = ""
 
+    # Shared secret used to gate the identity-upsert endpoint the Next.js
+    # server route calls on first magic-link verify. Kept distinct from
+    # `auth_secret` (which signs user JWTs) so the two rotate independently.
+    identity_service_secret: str = "dev-identity-service-secret-change-me"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.identities import router as identities_router
 from .api.rest import router as rest_router
 from .api.websocket import router as websocket_router
 from .config import settings
@@ -68,6 +69,10 @@ app = FastAPI(
             "name": "websockets",
             "description": "Real-time game updates via WebSocket",
         },
+        {
+            "name": "identity",
+            "description": "Server-to-server identity upsert called by the Next.js Auth.js adapter",
+        },
     ],
 )
 
@@ -83,6 +88,7 @@ app.add_middleware(
 # Include routers
 app.include_router(rest_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
+app.include_router(identities_router, prefix="/api/v1")
 
 
 # Mount MCP streamable-http server — shares DB, CORS, and autoreload.

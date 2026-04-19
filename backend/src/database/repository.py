@@ -22,6 +22,7 @@ from .models import (
     PromptLog,
     TurnAction,
     TurnSnapshot,
+    UserIdentity,
 )
 
 
@@ -256,6 +257,29 @@ class GameRepository:
         self.session.add(db_prompt_log)
         await self.session.flush()
         return db_prompt_log
+
+    async def upsert_user_identity_by_email(self, email: str) -> UserIdentity:
+        """Return the UserIdentity for an email, creating it if missing.
+
+        Idempotent: successive calls with the same normalised email return the
+        same row. Email is trimmed and lowercased so that ``Foo@Bar`` and
+        ``foo@bar`` resolve to a single identity.
+        """
+        normalised = email.strip().lower()
+        if not normalised:
+            raise ValueError("email is required")
+
+        result = await self.session.execute(
+            select(UserIdentity).where(UserIdentity.email == normalised)
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        identity = UserIdentity(email=normalised)
+        self.session.add(identity)
+        await self.session.flush()
+        return identity
 
     async def upsert_agent_memory(
         self, game_id: str, player_id: str, turn_number: int, scratchpad_text: str
