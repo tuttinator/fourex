@@ -541,14 +541,27 @@ class GameRepository:
         player_id: str,
         plaintext_key: str,
         expires_at: datetime | None,
+        user_identity_id: int | None = None,
     ) -> PlayerApiKey:
-        """Create or replace a hashed API key for a player."""
+        """Create or replace a hashed API key for a player.
+
+        When ``user_identity_id`` is provided (human-minted keys from Auth.js),
+        it's stored so the key can later be renewed via the JWT-gated
+        renewal endpoint. MCP-minted keys leave it ``None``.
+
+        On update of an existing row, ``user_identity_id`` is set only if
+        not already populated — we never clear an existing attribution, but
+        we do let a subsequent human join retroactively attribute a row
+        that was previously keyless.
+        """
         key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
 
         existing = await self.get_player_api_key(game_id, player_id)
         if existing:
             existing.key_hash = key_hash
             existing.expires_at = expires_at
+            if user_identity_id is not None and existing.user_identity_id is None:
+                existing.user_identity_id = user_identity_id
             await self.session.flush()
             return existing
 
@@ -557,6 +570,7 @@ class GameRepository:
             player_id=player_id,
             key_hash=key_hash,
             expires_at=expires_at,
+            user_identity_id=user_identity_id,
         )
         self.session.add(api_key)
         await self.session.flush()

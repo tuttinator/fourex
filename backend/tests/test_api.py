@@ -1,25 +1,45 @@
 """
 Tests for FastAPI endpoints.
+
+After Phase 2 of the human-frontend-parity plan the legacy ``player_*``
+bearer-token shortcut is gone: every gameplay/diplomacy endpoint requires
+a real per-game ``PlayerApiKey``. These tests mint that key directly
+against the DB after setting the game up via the legacy
+``POST /games/{id}/start`` flow (which itself is auth-free and creates
+the game eagerly for test convenience).
 """
 
 import time
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from backend.src.auth import create_player_key
+from backend.src.database.connection import async_session_factory, init_db
 from backend.src.main import app
 
 
 @pytest.fixture
-def client():
+def client() -> TestClient:
     """Test client fixture."""
     return TestClient(app)
 
 
-@pytest.fixture
-def auth_headers():
-    """Authentication headers for testing."""
-    return {"Authorization": "Bearer player_test_player_1"}
+@pytest_asyncio.fixture
+async def _init_db() -> None:
+    await init_db()
+
+
+async def _mint_key(game_id: str, player_id: str) -> str:
+    async with async_session_factory() as session:
+        key = await create_player_key(session, game_id, player_id)
+        await session.commit()
+        return key
+
+
+def _auth_headers(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"}
 
 
 class TestHealthEndpoints:
@@ -45,51 +65,44 @@ class TestGameEndpoints:
     def _game_id(self, prefix: str) -> str:
         return f"{prefix}_{int(time.time() * 1000000)}"
 
-    def test_start_game(self, client, auth_headers):
-        """Test creating a new game."""
+    def test_start_game(self, client):
+        """Legacy create-and-start flow — auth-free for test convenience."""
         game_id = self._game_id("test_game")
         response = client.post(
             f"/api/v1/games/{game_id}/start",
             json={"players": ["player_1", "player_2"], "seed": 42},
-            headers=auth_headers,
         )
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "game_created"
         assert data["game_id"] == game_id
 
-    def test_list_games(self, client, auth_headers):
-        """Test listing games."""
+    def test_list_games(self, client):
         game_id = self._game_id("test_game")
-        # First create a game
         client.post(
             f"/api/v1/games/{game_id}/start",
             json={"players": ["player_1", "player_2"], "seed": 42},
-            headers=auth_headers,
         )
 
-        # Then list games
-        response = client.get("/api/v1/games", headers=auth_headers)
+        response = client.get("/api/v1/games")
         assert response.status_code == 200
         data = response.json()
         assert "games" in data
         game_ids = [g["game_id"] for g in data["games"]]
         assert game_id in game_ids
 
-    def test_get_game_state(self, client, auth_headers):
-        """Test getting game state."""
+    @pytest.mark.asyncio
+    async def test_get_game_state(self, client, _init_db):
         game_id = self._game_id("test_game")
-        # Create game first
         client.post(
             f"/api/v1/games/{game_id}/start",
-            json={"players": ["test_player_1", "test_player_2"], "seed": 42},
-            headers=auth_headers,
+            json={"players": ["alice", "bob"], "seed": 42},
         )
+        key = await _mint_key(game_id, "alice")
 
-        # Get state
         response = client.get(
             f"/api/v1/state?game_id={game_id}",
-            headers=auth_headers,
+            headers=_auth_headers(key),
         )
         assert response.status_code == 200
         data = response.json()
@@ -97,40 +110,36 @@ class TestGameEndpoints:
         assert "players" in data
         assert "tiles" in data
 
-    def test_submit_actions(self, client, auth_headers):
-        """Test submitting player actions."""
+    @pytest.mark.asyncio
+    async def test_submit_actions(self, client, _init_db):
         game_id = self._game_id("test_game")
-        # Create game first
         client.post(
             f"/api/v1/games/{game_id}/start",
-            json={"players": ["test_player_1", "test_player_2"], "seed": 42},
-            headers=auth_headers,
+            json={"players": ["alice", "bob"], "seed": 42},
         )
+        key = await _mint_key(game_id, "alice")
 
-        # Submit empty actions
         response = client.post(
             f"/api/v1/actions?game_id={game_id}",
             json=[],
-            headers=auth_headers,
+            headers=_auth_headers(key),
         )
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "actions_submitted"
         assert data["count"] == "0"
 
-    def test_submit_prompt_log(self, client, auth_headers):
-        """Test submitting prompt logs."""
+    @pytest.mark.asyncio
+    async def test_submit_prompt_log(self, client, _init_db):
         game_id = self._game_id("test_game")
-        # Create game first
         client.post(
             f"/api/v1/games/{game_id}/start",
-            json={"players": ["test_player_1", "test_player_2"], "seed": 42},
-            headers=auth_headers,
+            json={"players": ["alice", "bob"], "seed": 42},
         )
+        key = await _mint_key(game_id, "alice")
 
-        # Submit prompt log
         prompt_data = {
-            "player": "test_player_1",
+            "player": "alice",
             "prompt": "What should I do?",
             "response": "Move scout north",
             "tokens_in": 10,
@@ -141,7 +150,7 @@ class TestGameEndpoints:
         response = client.post(
             f"/api/v1/prompts?game_id={game_id}",
             json=prompt_data,
-            headers=auth_headers,
+            headers=_auth_headers(key),
         )
         assert response.status_code == 200
         data = response.json()
@@ -149,79 +158,99 @@ class TestGameEndpoints:
 
 
 class TestAuthentication:
-    """Test authentication and authorization."""
+    """Test authentication and authorization after the Phase 2 unification."""
 
-    def test_missing_auth_header(self, client):
-        """State endpoint allows unauthenticated observation mode."""
+    def test_missing_auth_header_on_state(self, client):
+        """GET /state allows unauthenticated observation — returns 404 for missing game."""
         response = client.get("/api/v1/state")
         assert response.status_code == 404
 
-    def test_invalid_token_format(self, client):
-        """Test invalid token format."""
-        headers = {"Authorization": "Bearer invalid_format"}
-        response = client.get("/api/v1/state", headers=headers)
-        assert response.status_code == 404
+    def test_invalid_key_rejected_on_actions(self, client):
+        """POST /actions requires a valid API key; bogus bearer → 401."""
+        headers = {"Authorization": "Bearer fx_bogus_not_a_real_key"}
+        response = client.post(
+            "/api/v1/actions?game_id=any", json=[], headers=headers
+        )
+        assert response.status_code == 401
 
-    def test_valid_token_format(self, client):
-        """Test valid token format (even if game doesn't exist)."""
-        headers = {"Authorization": "Bearer player_test_player"}
-        response = client.get("/api/v1/state", headers=headers)
-        assert response.status_code == 404
+    def test_missing_auth_on_actions(self, client):
+        """POST /actions with no Authorization header → 401."""
+        response = client.post("/api/v1/actions?game_id=any", json=[])
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_key_for_wrong_game_rejected(self, client, _init_db):
+        """A key minted for one game is rejected on calls targeting another."""
+        game_a = f"crossgame_a_{int(time.time() * 1000000)}"
+        game_b = f"crossgame_b_{int(time.time() * 1000000)}"
+        client.post(
+            f"/api/v1/games/{game_a}/start",
+            json={"players": ["alice", "bob"], "seed": 42},
+        )
+        client.post(
+            f"/api/v1/games/{game_b}/start",
+            json={"players": ["alice", "bob"], "seed": 42},
+        )
+        key_for_a = await _mint_key(game_a, "alice")
+
+        resp = client.post(
+            f"/api/v1/actions?game_id={game_b}",
+            json=[],
+            headers=_auth_headers(key_for_a),
+        )
+        assert resp.status_code == 403
+
+    def test_legacy_player_prefix_no_longer_works(self, client):
+        """The ``Bearer player_<name>`` shortcut from Phase 0 is gone."""
+        headers = {"Authorization": "Bearer player_alice"}
+        response = client.post(
+            "/api/v1/actions?game_id=any", json=[], headers=headers
+        )
+        assert response.status_code == 401
 
 
 class TestErrorHandling:
     """Test error handling in API endpoints."""
 
-    def test_game_not_found(self, client, auth_headers):
-        """Test getting state for non-existent game."""
+    @pytest.mark.asyncio
+    async def test_game_not_found(self, client, _init_db):
+        key = "fx_does_not_matter"
         response = client.get(
             "/api/v1/state?game_id=nonexistent",
-            headers=auth_headers,
+            headers=_auth_headers(key),
         )
+        # GET /state uses optional auth: a bogus key degrades to unauthenticated
+        # observation, so game lookup runs and returns 404.
         assert response.status_code == 404
-        data = response.json()
-        assert "Game not found" in data["detail"]
 
-    def test_duplicate_game_creation(self, client, auth_headers):
-        """Test creating game with duplicate ID."""
+    def test_duplicate_game_creation(self, client):
         game_id = f"duplicate_test_{int(time.time() * 1000000)}"
         game_data = {"players": ["player_1", "player_2"], "seed": 42}
 
-        # Create first game
         response1 = client.post(
-            f"/api/v1/games/{game_id}/start",
-            json=game_data,
-            headers=auth_headers,
+            f"/api/v1/games/{game_id}/start", json=game_data
         )
         assert response1.status_code == 200
 
-        # Try to create duplicate
         response2 = client.post(
-            f"/api/v1/games/{game_id}/start",
-            json=game_data,
-            headers=auth_headers,
+            f"/api/v1/games/{game_id}/start", json=game_data
         )
         assert response2.status_code == 400
         data = response2.json()
         assert "already exists" in data["detail"]
 
-    def test_invalid_player_count(self, client, auth_headers):
-        """Test creating game with invalid player count."""
-        # Too few players
+    def test_invalid_player_count(self, client):
         response = client.post(
             "/api/v1/games/invalid_count/start",
             json={"players": ["player_1"], "seed": 42},
-            headers=auth_headers,
         )
         assert response.status_code == 400
         data = response.json()
         assert "2-8 players" in data["detail"]
 
-        # Too many players
         response = client.post(
             "/api/v1/games/invalid_count_2/start",
             json={"players": [f"player_{i}" for i in range(10)], "seed": 42},
-            headers=auth_headers,
         )
         assert response.status_code == 400
         data = response.json()

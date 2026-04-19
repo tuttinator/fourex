@@ -10,8 +10,11 @@ Verifies that:
 import time
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from backend.src.auth import create_player_key
+from backend.src.database.connection import async_session_factory, init_db
 from backend.src.main import app
 
 
@@ -20,12 +23,24 @@ def client():
     return TestClient(app)
 
 
+@pytest_asyncio.fixture
+async def _init_db() -> None:
+    await init_db()
+
+
 def _game_id(prefix: str = "p9") -> str:
     return f"{prefix}_{int(time.time() * 1000000)}"
 
 
-def _auth(player: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer player_{player}"}
+async def _mint_key(game_id: str, player_id: str) -> str:
+    async with async_session_factory() as session:
+        key = await create_player_key(session, game_id, player_id)
+        await session.commit()
+        return key
+
+
+def _auth(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"}
 
 
 def _create_game(client, game_id: str, players: list[str]) -> None:
@@ -39,24 +54,27 @@ def _create_game(client, game_id: str, players: list[str]) -> None:
 class TestTurnPersistence:
     """Verify that _process_turn saves turn_actions and turn_snapshots."""
 
-    def test_turn_actions_and_snapshots_saved_after_turn(self, client):
+    @pytest.mark.asyncio
+    async def test_turn_actions_and_snapshots_saved_after_turn(
+        self, client, _init_db
+    ):
         """When all players submit, turn resolves and persists actions+snapshots."""
         game_id = _game_id()
         p1, p2 = "alice", "bob"
         _create_game(client, game_id, [p1, p2])
+        k1 = await _mint_key(game_id, p1)
+        k2 = await _mint_key(game_id, p2)
 
-        # Both players submit empty actions to trigger turn resolution
         resp1 = client.post(
-            f"/api/v1/actions?game_id={game_id}", json=[], headers=_auth(p1)
+            f"/api/v1/actions?game_id={game_id}", json=[], headers=_auth(k1)
         )
         assert resp1.status_code == 200
 
         resp2 = client.post(
-            f"/api/v1/actions?game_id={game_id}", json=[], headers=_auth(p2)
+            f"/api/v1/actions?game_id={game_id}", json=[], headers=_auth(k2)
         )
         assert resp2.status_code == 200
 
-        # After both submit, turn should have advanced from 0 to 1
         state_resp = client.get(f"/api/v1/state?game_id={game_id}")
         assert state_resp.status_code == 200
         assert state_resp.json()["turn"] == 1
@@ -65,49 +83,49 @@ class TestTurnPersistence:
 class TestScratchpadEndpoints:
     """Verify REST scratchpad read/write."""
 
-    def test_write_and_read_scratchpad(self, client):
-        """Write a scratchpad entry and read it back."""
+    @pytest.mark.asyncio
+    async def test_write_and_read_scratchpad(self, client, _init_db):
         game_id = _game_id()
         player = "alice"
         _create_game(client, game_id, [player, "bob"])
+        key = await _mint_key(game_id, player)
 
-        # Write scratchpad
         resp = client.post(
             f"/api/v1/scratchpad?game_id={game_id}",
             json={"content": "My strategic notes for turn 0", "turn_number": 0},
-            headers=_auth(player),
+            headers=_auth(key),
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "scratchpad_saved"
 
-        # Read it back
         resp = client.get(
             f"/api/v1/scratchpad?game_id={game_id}&turn_number=0",
-            headers=_auth(player),
+            headers=_auth(key),
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["content"] == "My strategic notes for turn 0"
         assert data["turn"] == 0
 
-    def test_read_scratchpad_no_entry(self, client):
-        """Reading a non-existent scratchpad returns None content."""
+    @pytest.mark.asyncio
+    async def test_read_scratchpad_no_entry(self, client, _init_db):
         game_id = _game_id()
         _create_game(client, game_id, ["alice", "bob"])
+        key = await _mint_key(game_id, "alice")
 
         resp = client.get(
             f"/api/v1/scratchpad?game_id={game_id}&turn_number=0",
-            headers=_auth("alice"),
+            headers=_auth(key),
         )
         assert resp.status_code == 200
         assert resp.json()["content"] is None
 
-    def test_scratchpad_overwrite(self, client):
-        """Writing twice to the same turn overwrites the previous entry."""
+    @pytest.mark.asyncio
+    async def test_scratchpad_overwrite(self, client, _init_db):
         game_id = _game_id()
         _create_game(client, game_id, ["alice", "bob"])
-
-        headers = _auth("alice")
+        key = await _mint_key(game_id, "alice")
+        headers = _auth(key)
 
         client.post(
             f"/api/v1/scratchpad?game_id={game_id}",
@@ -126,46 +144,48 @@ class TestScratchpadEndpoints:
         )
         assert resp.json()["content"] == "second"
 
-    def test_scratchpad_exceeds_cap(self, client):
-        """Content exceeding 4000 chars is rejected."""
+    @pytest.mark.asyncio
+    async def test_scratchpad_exceeds_cap(self, client, _init_db):
         game_id = _game_id()
         _create_game(client, game_id, ["alice", "bob"])
+        key = await _mint_key(game_id, "alice")
 
         resp = client.post(
             f"/api/v1/scratchpad?game_id={game_id}",
             json={"content": "x" * 4001, "turn_number": 0},
-            headers=_auth("alice"),
+            headers=_auth(key),
         )
-        assert resp.status_code == 422  # Pydantic validation error
+        assert resp.status_code == 422
 
-    def test_scratchpad_private_per_player(self, client):
-        """A player cannot read another player's scratchpad."""
+    @pytest.mark.asyncio
+    async def test_scratchpad_private_per_player(self, client, _init_db):
         game_id = _game_id()
         _create_game(client, game_id, ["alice", "bob"])
+        alice_key = await _mint_key(game_id, "alice")
+        bob_key = await _mint_key(game_id, "bob")
 
-        # Alice writes
         client.post(
             f"/api/v1/scratchpad?game_id={game_id}",
             json={"content": "alice secret", "turn_number": 0},
-            headers=_auth("alice"),
+            headers=_auth(alice_key),
         )
 
-        # Bob reads — should get None (his own empty scratchpad)
         resp = client.get(
             f"/api/v1/scratchpad?game_id={game_id}&turn_number=0",
-            headers=_auth("bob"),
+            headers=_auth(bob_key),
         )
         assert resp.json()["content"] is None
 
-    def test_scratchpad_defaults_to_current_turn(self, client):
-        """Without turn_number, scratchpad writes to current turn."""
+    @pytest.mark.asyncio
+    async def test_scratchpad_defaults_to_current_turn(self, client, _init_db):
         game_id = _game_id()
         _create_game(client, game_id, ["alice", "bob"])
+        key = await _mint_key(game_id, "alice")
 
         resp = client.post(
             f"/api/v1/scratchpad?game_id={game_id}",
             json={"content": "auto turn"},
-            headers=_auth("alice"),
+            headers=_auth(key),
         )
         assert resp.status_code == 200
-        assert resp.json()["turn"] == "0"  # Current turn is 0
+        assert resp.json()["turn"] == "0"

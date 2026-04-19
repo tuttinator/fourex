@@ -5,10 +5,16 @@ REST API endpoints for game state and actions.
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import (
+    AuthContext,
+    AuthError,
+    create_player_key,
+    require_api_key,
+    require_api_key_optional,
+)
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
@@ -34,35 +40,35 @@ from ..game.models import (
     WithdrawTreatyAction,
 )
 from ..game.rules import redact_state
+from ..identity import UserIdentityContext, require_user_identity
 from .persistent_game_controller import get_persistent_game_controller
 
 router = APIRouter()
-security = HTTPBearer()
 
 
 def get_current_player(
-    token: HTTPAuthorizationCredentials = Depends(security),
+    auth: AuthContext = Depends(require_api_key),
 ) -> PlayerId:
-    """Extract player ID from Bearer token."""
-    # Simple token validation - in production, use JWT
-    if not token.credentials.startswith("player_"):
-        raise HTTPException(status_code=401, detail="Invalid token format")
+    """Resolve the caller's ``player_id`` from their per-game API key.
 
-    player_id = token.credentials[7:]  # Remove "player_" prefix
-    return player_id
+    Thin wrapper preserved so existing handlers can keep their
+    ``current_player: PlayerId = Depends(get_current_player)`` signatures;
+    the underlying dependency enforces both key validity and that the key
+    matches the game_id on the request (path or query).
+    """
+    return auth.player_id
 
 
 def get_current_player_optional(
-    token: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+    auth: AuthContext | None = Depends(require_api_key_optional),
 ) -> PlayerId | None:
-    """Extract player ID from Bearer token, returning None if no token provided."""
-    if not token or not token.credentials:
-        return None
+    """Optional variant: returns ``None`` when the caller is unauthenticated.
 
-    if not token.credentials.startswith("player_"):
-        return None
-
-    return token.credentials[7:]  # Remove "player_" prefix
+    Used by ``GET /state`` and ``POST /games/{id}/start``'s legacy path to
+    allow unauthenticated god-mode observation / test-only create-and-start
+    flow respectively.
+    """
+    return auth.player_id if auth is not None else None
 
 
 @router.get("/state", tags=["state"])
@@ -282,8 +288,19 @@ async def list_games(
 
 
 class CreateLobbyRequest(BaseModel):
-    """Request to create a game lobby."""
+    """Request to create a game lobby.
 
+    The caller's ``UserIdentity`` comes from the Auth.js JWT dependency;
+    ``player_id`` is the in-game display name they want for their seat in
+    this specific lobby. One identity may run multiple games under
+    different display names.
+    """
+
+    player_id: str = Field(
+        min_length=1,
+        max_length=64,
+        description="In-game display name the creator wants for slot 0",
+    )
     player_slots: int = Field(ge=2, le=8, description="Number of player slots (2-8)")
     map_width: int = Field(default=20, ge=10, le=100, description="Map width")
     map_height: int = Field(default=20, ge=10, le=100, description="Map height")
@@ -313,18 +330,41 @@ class GameDetailResponse(BaseModel):
 class JoinLeaveRequest(BaseModel):
     """Request to join or leave a game."""
 
-    player_id: str = Field(description="Player identifier")
+    player_id: str = Field(
+        min_length=1,
+        max_length=64,
+        description="In-game display name for the joining seat",
+    )
 
 
-@router.post("/games", tags=["games"])
+class LobbyKeyResponse(BaseModel):
+    """Lobby detail + freshly minted per-game API key.
+
+    Returned by ``POST /games`` and ``POST /games/{game_id}/join``. The
+    caller stores the plaintext ``api_key`` (we only persist its hash) and
+    presents it as ``Authorization: Bearer`` on all gameplay/diplomacy
+    calls for this game. The key is bound to
+    ``(game_id, player_id, user_identity_id)`` and expires after 24h; the
+    JWT-gated renewal endpoint rotates it in-place.
+    """
+
+    game: GameDetailResponse
+    api_key: str
+
+
+@router.post("/games", tags=["games"], response_model=LobbyKeyResponse)
 async def create_lobby(
     request: CreateLobbyRequest,
     game_id: str = Query(description="Unique game identifier"),
     session: AsyncSession = Depends(get_database_session),
-    current_player: PlayerId = Depends(get_current_player),
-) -> GameDetailResponse:
-    """
-    Create a new game lobby in waiting status. Map is generated but the game is not started.
+    identity: UserIdentityContext = Depends(require_user_identity),
+) -> LobbyKeyResponse:
+    """Create a new game lobby in waiting status.
+
+    Requires a valid Auth.js JWT (via ``require_user_identity``). Seats
+    the caller in slot 0 under ``request.player_id``, mints a PlayerApiKey
+    attributed to their ``UserIdentity``, and returns the key so the
+    browser can authenticate subsequent gameplay/diplomacy requests.
     """
     try:
         controller = get_persistent_game_controller(session)
@@ -334,17 +374,28 @@ async def create_lobby(
             map_width=request.map_width,
             map_height=request.map_height,
             seed=request.seed,
-            creator=current_player,
+            creator=request.player_id,
         )
-        # Return the created game detail
+        # Seat the creator immediately so the lobby isn't empty.
+        await controller.join_game(game_id, request.player_id)
+        api_key = await create_player_key(
+            session,
+            game_id,
+            request.player_id,
+            user_identity_id=identity.user_identity_id,
+        )
+        await session.commit()
+
         game_info = await controller.get_game_info(game_id)
         if not game_info:
             raise HTTPException(
                 status_code=500, detail="Failed to retrieve created game"
             )
-        return _game_detail_response(game_info)
+        return LobbyKeyResponse(game=_game_detail_response(game_info), api_key=api_key)
     except HTTPException:
         raise
+    except AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -369,24 +420,39 @@ async def get_game_detail(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/games/{game_id}/join", tags=["games"])
+@router.post("/games/{game_id}/join", tags=["games"], response_model=LobbyKeyResponse)
 async def join_game(
     game_id: str,
+    request: JoinLeaveRequest,
     session: AsyncSession = Depends(get_database_session),
-    current_player: PlayerId = Depends(get_current_player),
-) -> GameDetailResponse:
-    """
-    Join a waiting game. The player is identified by their Bearer token.
+    identity: UserIdentityContext = Depends(require_user_identity),
+) -> LobbyKeyResponse:
+    """Join a waiting game and receive a per-game API key.
+
+    Requires a valid Auth.js JWT. Appends the caller's chosen
+    ``player_id`` to the game, mints a PlayerApiKey attributed to their
+    ``UserIdentity``, and returns it so the browser can authenticate
+    subsequent gameplay/diplomacy requests.
     """
     try:
         controller = get_persistent_game_controller(session)
-        await controller.join_game(game_id, current_player)
+        await controller.join_game(game_id, request.player_id)
+        api_key = await create_player_key(
+            session,
+            game_id,
+            request.player_id,
+            user_identity_id=identity.user_identity_id,
+        )
+        await session.commit()
+
         game_info = await controller.get_game_info(game_id)
         if not game_info:
             raise HTTPException(status_code=500, detail="Failed to retrieve game")
-        return _game_detail_response(game_info)
+        return LobbyKeyResponse(game=_game_detail_response(game_info), api_key=api_key)
     except HTTPException:
         raise
+    except AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -397,9 +463,7 @@ async def leave_game(
     session: AsyncSession = Depends(get_database_session),
     current_player: PlayerId = Depends(get_current_player),
 ) -> GameDetailResponse:
-    """
-    Leave a waiting game. The player is identified by their Bearer token.
-    """
+    """Leave a waiting game. Authenticated by the caller's per-game API key."""
     try:
         controller = get_persistent_game_controller(session)
         await controller.leave_game(game_id, current_player)

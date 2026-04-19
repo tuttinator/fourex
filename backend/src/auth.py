@@ -4,14 +4,22 @@ Player API key authentication service.
 Transport-agnostic layer used by both MCP tools and REST endpoints.
 Generates cryptographically random API keys, stores SHA-256 hashes,
 and validates incoming keys to resolve (game_id, player_id).
+
+The FastAPI dependencies at the bottom of this module wrap ``authenticate``
+for use on gameplay/diplomacy REST endpoints. They are co-located with the
+core verifier so a reviewer sees the complete API-key surface in one file,
+mirroring the pattern in ``identity.py`` for JWT verification.
 """
 
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .database.connection import get_database_session
 from .database.repository import GameRepository
 
 
@@ -53,10 +61,14 @@ async def create_player_key(
     game_id: str,
     player_id: str,
     ttl: timedelta = DEFAULT_KEY_TTL,
+    user_identity_id: int | None = None,
 ) -> str:
     """Generate and persist a new API key for a player in a game.
 
-    Returns the plaintext key. Only the SHA-256 hash is stored.
+    Returns the plaintext key. Only the SHA-256 hash is stored. When
+    ``user_identity_id`` is provided (human Auth.js flow) the key row is
+    attributed to that identity so it's renewable via the JWT-gated
+    renewal endpoint; MCP-minted keys leave it ``None``.
     """
     repo = GameRepository(session)
 
@@ -76,6 +88,7 @@ async def create_player_key(
         player_id=player_id,
         plaintext_key=plaintext,
         expires_at=expires_at,
+        user_identity_id=user_identity_id,
     )
 
     return plaintext
@@ -105,6 +118,92 @@ async def authenticate(session: AsyncSession, api_key: str) -> AuthContext:
         )
 
     return AuthContext(game_id=record.game_id, player_id=record.player_id)
+
+
+_bearer_required = HTTPBearer(auto_error=False)
+_bearer_optional = HTTPBearer(auto_error=False)
+
+
+def _route_game_id(request: Request) -> str | None:
+    """Return the ``game_id`` the request targets, from path or query.
+
+    Gameplay/diplomacy endpoints expose ``game_id`` as either a path
+    parameter (``/games/{game_id}/...``) or a query parameter
+    (``/state?game_id=...``). Extract whichever is present so the
+    API-key dependency can enforce that the caller's key matches the
+    game being addressed.
+    """
+    path_game_id = request.path_params.get("game_id")
+    if path_game_id:
+        return path_game_id
+    return request.query_params.get("game_id")
+
+
+async def require_api_key(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_required),
+    session: AsyncSession = Depends(get_database_session),
+) -> AuthContext:
+    """FastAPI dependency: require a valid per-game API key.
+
+    Returns the resolved ``AuthContext``. A missing, malformed, or
+    expired key produces 401. If the URL targets a specific ``game_id``
+    (path or query) that doesn't match the key's binding, returns 403 —
+    the caller is authenticated, just not for this game.
+
+    Shared by every gameplay/diplomacy REST endpoint. Orthogonal to the
+    JWT dependency in ``identity.py`` that authorises lobby-lifecycle
+    calls; gameplay keys are never used for lobby work and vice versa.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        auth = await authenticate(session, credentials.credentials)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    requested_game_id = _route_game_id(request)
+    if requested_game_id and auth.game_id != requested_game_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key is not valid for this game",
+        )
+    return auth
+
+
+async def require_api_key_optional(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_optional),
+    session: AsyncSession = Depends(get_database_session),
+) -> AuthContext | None:
+    """Variant of ``require_api_key`` that returns ``None`` when no
+    credentials are supplied, instead of 401.
+
+    Used by endpoints (notably ``GET /state``) that allow unauthenticated
+    god-mode observation while still applying fog-of-war for authenticated
+    players. Malformed or mismatched credentials still produce ``None``
+    rather than an error — unauthenticated observation is an explicit
+    affordance.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        auth = await authenticate(session, credentials.credentials)
+    except AuthError:
+        return None
+
+    requested_game_id = _route_game_id(request)
+    if requested_game_id and auth.game_id != requested_game_id:
+        return None
+    return auth
 
 
 async def expire_keys_for_game(session: AsyncSession, game_id: str) -> int:
