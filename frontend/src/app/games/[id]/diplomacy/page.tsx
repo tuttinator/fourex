@@ -46,11 +46,10 @@ import {
   TREATY_PROPOSAL_EXPIRY_TURNS,
 } from '@/types/game'
 
-function getAuthPlayerId(): PlayerId | null {
-  if (typeof window === 'undefined') return null
-  const token = localStorage.getItem('auth_token')
-  if (!token || !token.startsWith('player_')) return null
-  return token.slice(7)
+import { getGamePlayerId } from '@/lib/game-auth'
+
+function getAuthPlayerId(gameId: string): PlayerId | null {
+  return getGamePlayerId(gameId)
 }
 
 function relationLabel(state: DiplomacyRelation['state']): string {
@@ -286,7 +285,7 @@ export default function DiplomacyPage() {
   const { id: gameId } = useParams<{ id: string }>()
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const currentPlayer = getAuthPlayerId()
+  const currentPlayer = getAuthPlayerId(gameId)
 
   const { data: gameDetail } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),

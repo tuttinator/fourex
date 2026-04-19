@@ -1,3 +1,4 @@
+import { getGameApiKey } from "@/lib/game-auth";
 import type {
 	CreateGameRequest,
 	CreateLobbyRequest,
@@ -6,6 +7,8 @@ import type {
 	GamesListParams,
 	GamesListResponse,
 	GameState,
+	JoinLobbyRequest,
+	LobbyKeyResponse,
 	MessageListResponse,
 	TreatyClause,
 	TurnDetailResponse,
@@ -26,28 +29,34 @@ export class ApiError extends Error {
 	}
 }
 
+interface FetchApiOptions extends RequestInit {
+	/** Scope the per-game API key lookup. If omitted, no Authorization header. */
+	gameId?: string | null;
+}
+
 async function fetchApi<T>(
 	endpoint: string,
-	options: RequestInit = {},
+	options: FetchApiOptions = {},
 ): Promise<T> {
+	const { gameId, headers: overrideHeaders, ...rest } = options;
 	const url = `${API_BASE_URL}${endpoint}`;
 
 	const defaultHeaders: Record<string, string> = {
 		"Content-Type": "application/json",
 	};
 
-	const token =
-		typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
-
-	if (token) {
-		defaultHeaders["Authorization"] = `Bearer ${token}`;
+	if (gameId) {
+		const apiKey = getGameApiKey(gameId);
+		if (apiKey) {
+			defaultHeaders["Authorization"] = `Bearer ${apiKey}`;
+		}
 	}
 
 	const config: RequestInit = {
-		...options,
+		...rest,
 		headers: {
 			...defaultHeaders,
-			...options.headers,
+			...overrideHeaders,
 		},
 	};
 
@@ -75,6 +84,26 @@ async function fetchApi<T>(
 			error instanceof Error ? error.message : "Network error",
 		);
 	}
+}
+
+async function fetchBff<T>(path: string, init: RequestInit): Promise<T> {
+	const response = await fetch(path, {
+		...init,
+		headers: {
+			"Content-Type": "application/json",
+			...(init.headers ?? {}),
+		},
+	});
+	if (!response.ok) {
+		const errorData = await response
+			.json()
+			.catch(() => ({ detail: "Unknown error" }));
+		throw new ApiError(
+			response.status,
+			errorData.detail || errorData.message || "Request failed",
+		);
+	}
+	return response.json();
 }
 
 export const api = {
@@ -107,46 +136,59 @@ export const api = {
 	async createLobby(
 		gameId: string,
 		request: CreateLobbyRequest,
-	): Promise<GameDetailResponse> {
-		const params = new URLSearchParams({ game_id: gameId });
-		return fetchApi(`/games?${params}`, {
-			method: "POST",
-			body: JSON.stringify(request),
-		});
+	): Promise<LobbyKeyResponse> {
+		// Routed through the Next.js BFF so the Auth.js JWT (stored in an
+		// HttpOnly cookie) can be forwarded to FastAPI server-side.
+		return fetchBff<LobbyKeyResponse>(
+			`/api/lobbies?game_id=${encodeURIComponent(gameId)}`,
+			{ method: "POST", body: JSON.stringify(request) },
+		);
 	},
 
 	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
 		return fetchApi(`/games/${encodeURIComponent(gameId)}`);
 	},
 
-	async joinGame(gameId: string): Promise<GameDetailResponse> {
-		return fetchApi(`/games/${encodeURIComponent(gameId)}/join`, {
-			method: "POST",
-		});
+	async joinLobby(
+		gameId: string,
+		request: JoinLobbyRequest,
+	): Promise<LobbyKeyResponse> {
+		return fetchBff<LobbyKeyResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/join`,
+			{ method: "POST", body: JSON.stringify(request) },
+		);
 	},
 
 	async leaveGame(gameId: string): Promise<GameDetailResponse> {
 		return fetchApi(`/games/${encodeURIComponent(gameId)}/leave`, {
 			method: "POST",
+			gameId,
 		});
 	},
 
-	async startGame(gameId: string): Promise<{ status: string; game_id: string }> {
+	async startGame(
+		gameId: string,
+	): Promise<{ status: string; game_id: string }> {
 		return fetchApi(`/games/${encodeURIComponent(gameId)}/start`, {
 			method: "POST",
+			gameId,
 		});
 	},
 
 	async getGameState(gameId: string): Promise<GameState> {
-		return fetchApi(`/state?game_id=${gameId}`);
+		return fetchApi(`/state?game_id=${gameId}`, { gameId });
 	},
 
-	async getGameStateAsPlayer(gameId: string, playerId: string): Promise<GameState> {
-		return fetchApi(`/state?game_id=${gameId}`, {
-			headers: {
-				Authorization: `Bearer player_${playerId}`,
-			},
-		});
+	async getGameStateAsPlayer(
+		gameId: string,
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		_playerId: string,
+	): Promise<GameState> {
+		// The legacy `player_<name>` bearer prefix has been retired. Observation
+		// perspective switching now only applies fog-of-war redaction if the
+		// caller holds the relevant per-game API key (i.e. they are that player).
+		// Otherwise the request falls through to god-mode observation.
+		return fetchApi(`/state?game_id=${gameId}`, { gameId });
 	},
 
 	async listTurns(
@@ -161,6 +203,7 @@ export const api = {
 		const qs = searchParams.toString();
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/turns${qs ? `?${qs}` : ""}`,
+			{ gameId },
 		);
 	},
 
@@ -170,6 +213,7 @@ export const api = {
 	): Promise<TurnDetailResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}`,
+			{ gameId },
 		);
 	},
 
@@ -181,6 +225,7 @@ export const api = {
 		const params = player ? `?player=${encodeURIComponent(player)}` : "";
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/state${params}`,
+			{ gameId },
 		);
 	},
 
@@ -190,12 +235,14 @@ export const api = {
 	): Promise<TurnPromptsResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/turns/${turnNumber}/prompts`,
+			{ gameId },
 		);
 	},
 
 	async getDiplomacy(gameId: string): Promise<DiplomacyStateResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/diplomacy`,
+			{ gameId },
 		);
 	},
 
@@ -208,6 +255,7 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ target_player: targetPlayer }),
+				gameId,
 			},
 		);
 	},
@@ -224,6 +272,7 @@ export const api = {
 		const qs = searchParams.toString();
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/diplomacy/messages${qs ? `?${qs}` : ""}`,
+			{ gameId },
 		);
 	},
 
@@ -237,6 +286,7 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ recipient, body }),
+				gameId,
 			},
 		);
 	},
@@ -251,6 +301,7 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ recipient, clauses }),
+				gameId,
 			},
 		);
 	},
@@ -265,6 +316,7 @@ export const api = {
 			{
 				method: "POST",
 				body: JSON.stringify({ accept }),
+				gameId,
 			},
 		);
 	},
@@ -277,6 +329,7 @@ export const api = {
 			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/proposals/${proposalId}`,
 			{
 				method: "DELETE",
+				gameId,
 			},
 		);
 	},
@@ -289,6 +342,7 @@ export const api = {
 			`/games/${encodeURIComponent(gameId)}/diplomacy/treaties/${treatyId}`,
 			{
 				method: "DELETE",
+				gameId,
 			},
 		);
 	},

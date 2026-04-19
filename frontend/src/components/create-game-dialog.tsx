@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
+import { setGameCredentials } from '@/lib/game-auth'
 import { useToast } from '@/hooks/use-toast'
 import type { CreateLobbyRequest } from '@/types/game'
 
@@ -25,6 +26,7 @@ interface CreateGameDialogProps {
 
 export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) {
   const [gameId, setGameId] = useState('')
+  const [playerId, setPlayerId] = useState('')
   const [playerSlots, setPlayerSlots] = useState('2')
   const [mapWidth, setMapWidth] = useState('20')
   const [mapHeight, setMapHeight] = useState('20')
@@ -37,18 +39,22 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
   const createLobbyMutation = useMutation({
     mutationFn: ({ gameId, request }: { gameId: string; request: CreateLobbyRequest }) =>
       api.createLobby(gameId, request),
-    onSuccess: (data) => {
-      toast({
-        title: 'Game lobby created',
-        description: `Game ${data.game_id} is waiting for ${data.player_slots} players.`,
+    onSuccess: ({ game, api_key }) => {
+      setGameCredentials(game.game_id, {
+        apiKey: api_key,
+        playerId: game.creator ?? playerId,
       })
-      queryClient.invalidateQueries({ queryKey: ["games"] })
+      toast({
+        title: 'Lobby created',
+        description: `Game ${game.game_id} is waiting for ${game.player_slots} players.`,
+      })
+      queryClient.invalidateQueries({ queryKey: ['games'] })
       handleClose()
-      router.push(`/games/${data.game_id}`)
+      router.push(`/games/${game.game_id}`)
     },
     onError: (error) => {
       toast({
-        title: 'Failed to create game',
+        title: 'Failed to create lobby',
         description: error.message,
         variant: 'destructive',
       })
@@ -57,6 +63,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
 
   const handleClose = () => {
     setGameId('')
+    setPlayerId('')
     setPlayerSlots('2')
     setMapWidth('20')
     setMapHeight('20')
@@ -68,7 +75,16 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
     if (!gameId.trim()) {
       toast({
         title: 'Invalid game ID',
-        description: 'Please enter a valid game ID.',
+        description: 'Please enter a game ID.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!playerId.trim()) {
+      toast({
+        title: 'Display name required',
+        description: 'Pick the display name you want for this lobby.',
         variant: 'destructive',
       })
       return
@@ -85,6 +101,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
     }
 
     const request: CreateLobbyRequest = {
+      player_id: playerId.trim(),
       player_slots: slots,
       map_width: parseInt(mapWidth) || 20,
       map_height: parseInt(mapHeight) || 20,
@@ -98,9 +115,9 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create New Game</DialogTitle>
+          <DialogTitle>Create New Lobby</DialogTitle>
           <DialogDescription>
-            Set up a game lobby. Players will join before the game starts.
+            Configure the lobby. You will be seated in slot 0 under the display name you choose.
           </DialogDescription>
         </DialogHeader>
 
@@ -114,6 +131,21 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
               placeholder="my-test-game"
               className="mt-1"
             />
+          </div>
+
+          <div>
+            <Label htmlFor="playerId">Your display name in this game</Label>
+            <Input
+              id="playerId"
+              value={playerId}
+              onChange={(e) => setPlayerId(e.target.value)}
+              placeholder="alice"
+              className="mt-1"
+              maxLength={64}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              This is how you appear on the map and in diplomacy — not your account email.
+            </p>
           </div>
 
           <div>

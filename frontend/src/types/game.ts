@@ -112,10 +112,20 @@ export interface CreateGameRequest {
 }
 
 export interface CreateLobbyRequest {
+	player_id: string;
 	player_slots: number;
 	map_width?: number;
 	map_height?: number;
 	seed?: number;
+}
+
+export interface JoinLobbyRequest {
+	player_id: string;
+}
+
+export interface LobbyKeyResponse {
+	game: GameDetailResponse;
+	api_key: string;
 }
 
 export interface GameDetailResponse {

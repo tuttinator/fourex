@@ -181,12 +181,17 @@ describe("observation: query keys", () => {
 });
 
 describe("observation: player perspective (fog-of-war) fetching", () => {
-	it("fetches game state with player auth token", async () => {
+	// The legacy `player_<name>` bearer prefix was removed in Phase 2
+	// (backend). With no per-game API key in storage, both the god-mode and
+	// player-perspective helpers degrade to anonymous observation against the
+	// same `/state` endpoint; redaction now depends on which key (if any)
+	// the browser holds, not on an ad-hoc header value.
+
+	it("fetches game state without an Authorization header when no API key is stored", async () => {
 		mockFetch.mockResolvedValueOnce({
 			ok: true,
 			json: async () => ({
 				...mockGameState,
-				// Simulated redacted state: only alice's visible tiles
 				tiles: [
 					{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice" },
 					{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", owner: "alice" },
@@ -203,40 +208,14 @@ describe("observation: player perspective (fog-of-war) fetching", () => {
 
 		const result = await api.getGameStateAsPlayer("my-game", "alice");
 		expect(result.tiles).toHaveLength(2);
-		expect(Object.keys(result.units)).toHaveLength(2);
-		expect(Object.keys(result.cities)).toHaveLength(1);
-
-		// Verify auth header was sent
-		const [, fetchOptions] = mockFetch.mock.calls[0];
-		expect(fetchOptions.headers.Authorization).toBe("Bearer player_alice");
-	});
-
-	it("sends player-specific auth header, not localStorage token", async () => {
-		// Set a localStorage token that should be overridden
-		vi.stubGlobal("localStorage", {
-			getItem: () => "player_operator",
-			setItem: vi.fn(),
-			removeItem: vi.fn(),
-		});
-
-		mockFetch.mockResolvedValueOnce({
-			ok: true,
-			json: async () => mockGameState,
-		});
-
-		await api.getGameStateAsPlayer("my-game", "bob");
 
 		const [, fetchOptions] = mockFetch.mock.calls[0];
-		expect(fetchOptions.headers.Authorization).toBe("Bearer player_bob");
+		expect(
+			(fetchOptions.headers as Record<string, string>).Authorization,
+		).toBeUndefined();
 	});
 
-	it("god-mode fetch does not send player auth header", async () => {
-		vi.stubGlobal("localStorage", {
-			getItem: () => null,
-			setItem: vi.fn(),
-			removeItem: vi.fn(),
-		});
-
+	it("god-mode fetch does not send an Authorization header", async () => {
 		mockFetch.mockResolvedValueOnce({
 			ok: true,
 			json: async () => mockGameState,
@@ -245,7 +224,9 @@ describe("observation: player perspective (fog-of-war) fetching", () => {
 		await api.getGameState("my-game");
 
 		const [, fetchOptions] = mockFetch.mock.calls[0];
-		expect(fetchOptions.headers.Authorization).toBeUndefined();
+		expect(
+			(fetchOptions.headers as Record<string, string>).Authorization,
+		).toBeUndefined();
 	});
 
 	it("redacted state has fewer tiles than full state", async () => {
@@ -262,18 +243,16 @@ describe("observation: player perspective (fog-of-war) fetching", () => {
 		expect(Object.keys(fullState.cities).length).toBeGreaterThan(Object.keys(redactedState.cities).length);
 	});
 
-	it("switching perspective changes the fetch URL parameter", async () => {
+	it("switching perspective reuses the /state endpoint", async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
 			json: async () => mockGameState,
 		});
 
-		// God mode
 		await api.getGameState("my-game");
 		const [godUrl] = mockFetch.mock.calls[0];
 		expect(godUrl).toContain("/state?game_id=my-game");
 
-		// Player perspective uses the same endpoint
 		await api.getGameStateAsPlayer("my-game", "alice");
 		const [playerUrl] = mockFetch.mock.calls[1];
 		expect(playerUrl).toContain("/state?game_id=my-game");

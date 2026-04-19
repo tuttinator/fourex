@@ -175,42 +175,51 @@ describe("api.createGame", () => {
 });
 
 describe("api.createLobby", () => {
-	const mockDetail = {
-		game_id: "lobby-1",
-		player_slots: 4,
-		players: [],
-		creator: "alice",
-		turn: 0,
-		max_turns: 100,
-		map_width: 20,
-		map_height: 20,
-		seed: 42,
-		status: "waiting",
-		winner: null,
-		victory_type: null,
-		created_at: "2026-04-16T00:00:00",
-		updated_at: "2026-04-16T00:00:00",
-		ended_at: null,
+	const mockLobbyResponse = {
+		game: {
+			game_id: "lobby-1",
+			player_slots: 4,
+			players: ["alice"],
+			creator: "alice",
+			turn: 0,
+			max_turns: 100,
+			map_width: 20,
+			map_height: 20,
+			seed: 42,
+			status: "waiting",
+			winner: null,
+			victory_type: null,
+			created_at: "2026-04-16T00:00:00",
+			updated_at: "2026-04-16T00:00:00",
+			ended_at: null,
+		},
+		api_key: "fx_testkey",
 	};
 
-	it("sends POST to /games with query param and body", async () => {
+	it("POSTs to the Next.js BFF so the Auth.js JWT can be forwarded", async () => {
 		mockFetch.mockResolvedValueOnce({
 			ok: true,
-			json: async () => mockDetail,
+			json: async () => mockLobbyResponse,
 		});
 
 		const result = await api.createLobby("lobby-1", {
+			player_id: "alice",
 			player_slots: 4,
 			seed: 42,
 		});
 
-		expect(result.game_id).toBe("lobby-1");
-		expect(result.player_slots).toBe(4);
-		expect(result.status).toBe("waiting");
+		expect(result.game.game_id).toBe("lobby-1");
+		expect(result.api_key).toBe("fx_testkey");
 		const calledUrl = mockFetch.mock.calls[0][0] as string;
-		expect(calledUrl).toContain("/games?");
-		expect(calledUrl).toContain("game_id=lobby-1");
+		// Must hit the BFF route, not FastAPI directly — the client can't
+		// read the HttpOnly JWT cookie to attach it itself.
+		expect(calledUrl).toBe("/api/lobbies?game_id=lobby-1");
 		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+		const body = JSON.parse(
+			(mockFetch.mock.calls[0][1] as RequestInit).body as string,
+		);
+		expect(body.player_id).toBe("alice");
+		expect(body.player_slots).toBe(4);
 	});
 });
 
@@ -257,26 +266,44 @@ describe("api.getGameDetail", () => {
 	});
 });
 
-describe("api.joinGame", () => {
-	it("sends POST to join endpoint", async () => {
-		const mockDetail = {
+describe("api.joinLobby", () => {
+	const mockLobbyResponse = {
+		game: {
 			game_id: "g1",
 			player_slots: 2,
-			players: ["alice"],
+			players: ["alice", "bob"],
 			creator: "alice",
+			turn: 0,
+			max_turns: 100,
+			map_width: 20,
+			map_height: 20,
+			seed: 42,
 			status: "waiting",
-		};
+			winner: null,
+			victory_type: null,
+			created_at: "2026-04-16T00:00:00",
+			updated_at: "2026-04-16T00:00:00",
+			ended_at: null,
+		},
+		api_key: "fx_bobkey",
+	};
 
+	it("POSTs to the Next.js BFF join route", async () => {
 		mockFetch.mockResolvedValueOnce({
 			ok: true,
-			json: async () => mockDetail,
+			json: async () => mockLobbyResponse,
 		});
 
-		const result = await api.joinGame("g1");
-		expect(result.players).toContain("alice");
+		const result = await api.joinLobby("g1", { player_id: "bob" });
+		expect(result.game.players).toContain("bob");
+		expect(result.api_key).toBe("fx_bobkey");
 		const calledUrl = mockFetch.mock.calls[0][0] as string;
-		expect(calledUrl).toContain("/games/g1/join");
+		expect(calledUrl).toBe("/api/lobbies/g1/join");
 		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+		const body = JSON.parse(
+			(mockFetch.mock.calls[0][1] as RequestInit).body as string,
+		);
+		expect(body.player_id).toBe("bob");
 	});
 
 	it("throws on full game", async () => {
@@ -286,7 +313,9 @@ describe("api.joinGame", () => {
 			json: async () => ({ detail: "Game g1 is full (2 slots)" }),
 		});
 
-		await expect(api.joinGame("g1")).rejects.toThrow("full");
+		await expect(
+			api.joinLobby("g1", { player_id: "charlie" }),
+		).rejects.toThrow("full");
 	});
 });
 

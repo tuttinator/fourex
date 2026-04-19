@@ -2,12 +2,15 @@
 
 import { useParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
 import { ObservationView } from '@/components/observation-view'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   ArrowLeft,
   Loader2,
@@ -19,8 +22,15 @@ import {
   Map,
   Hash,
   Clock,
+  Link as LinkIcon,
+  Check,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import {
+  clearGameCredentials,
+  getGamePlayerId,
+  setGameCredentials,
+} from '@/lib/game-auth'
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   switch (status) {
@@ -40,18 +50,17 @@ function formatDate(iso: string): string {
   })
 }
 
-function getAuthPlayerId(): string | null {
-  if (typeof window === 'undefined') return null
-  const token = localStorage.getItem('auth_token')
-  if (!token || !token.startsWith('player_')) return null
-  return token.slice(7)
-}
-
 export default function GameDetailPage() {
   const { id: gameId } = useParams<{ id: string }>()
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const currentPlayer = getAuthPlayerId()
+  const [joinPlayerId, setJoinPlayerId] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  // Per-game player id is stored in localStorage when we create/join.
+  // Re-read on every render so a fresh join reflects immediately.
+  const currentPlayer =
+    typeof window !== 'undefined' ? getGamePlayerId(gameId) : null
 
   const { data: game, isLoading, error, refetch } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),
@@ -60,26 +69,33 @@ export default function GameDetailPage() {
   })
 
   const joinMutation = useMutation({
-    mutationFn: () => api.joinGame(gameId),
-    onSuccess: () => {
+    mutationFn: (playerId: string) =>
+      api.joinLobby(gameId, { player_id: playerId }),
+    onSuccess: ({ game, api_key }) => {
+      setGameCredentials(game.game_id, {
+        apiKey: api_key,
+        playerId: joinPlayerId.trim(),
+      })
+      setJoinPlayerId('')
       queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
-      queryClient.invalidateQueries({ queryKey: ["games"] })
-      toast({ title: 'Joined game', description: `You joined ${gameId}.` })
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+      toast({ title: 'Joined lobby', description: `Seated as ${joinPlayerId.trim()}.` })
     },
-    onError: (error) => {
-      toast({ title: 'Failed to join', description: error.message, variant: 'destructive' })
+    onError: (err) => {
+      toast({ title: 'Failed to join', description: err.message, variant: 'destructive' })
     },
   })
 
   const leaveMutation = useMutation({
     mutationFn: () => api.leaveGame(gameId),
     onSuccess: () => {
+      clearGameCredentials(gameId)
       queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
-      queryClient.invalidateQueries({ queryKey: ["games"] })
-      toast({ title: 'Left game', description: `You left ${gameId}.` })
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+      toast({ title: 'Left lobby', description: `You left ${gameId}.` })
     },
-    onError: (error) => {
-      toast({ title: 'Failed to leave', description: error.message, variant: 'destructive' })
+    onError: (err) => {
+      toast({ title: 'Failed to leave', description: err.message, variant: 'destructive' })
     },
   })
 
@@ -87,13 +103,30 @@ export default function GameDetailPage() {
     mutationFn: () => api.startGame(gameId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
-      queryClient.invalidateQueries({ queryKey: ["games"] })
+      queryClient.invalidateQueries({ queryKey: ['games'] })
       toast({ title: 'Game started', description: `${gameId} is now active!` })
     },
-    onError: (error) => {
-      toast({ title: 'Failed to start', description: error.message, variant: 'destructive' })
+    onError: (err) => {
+      toast({ title: 'Failed to start', description: err.message, variant: 'destructive' })
     },
   })
+
+  const copyInviteLink = async () => {
+    if (typeof window === 'undefined') return
+    const url = `${window.location.origin}/games/${gameId}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      toast({ title: 'Invite link copied', description: url })
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Copy the URL from your address bar.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   if (isLoading) {
     return (
@@ -191,7 +224,7 @@ export default function GameDetailPage() {
   }
 
   // Waiting room view
-  const isCreator = currentPlayer === game.creator
+  const isCreator = currentPlayer !== null && currentPlayer === game.creator
   const isInGame = currentPlayer !== null && game.players.includes(currentPlayer)
   const isFull = game.players.length >= game.player_slots
   const canStart = isCreator && isFull && game.status === 'waiting'
@@ -222,7 +255,7 @@ export default function GameDetailPage() {
             )}
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
               <div className="flex items-center gap-2">
                 <Map className="h-4 w-4 text-muted-foreground" />
                 <span>{game.map_width}x{game.map_height}</span>
@@ -240,6 +273,19 @@ export default function GameDetailPage() {
                 <span>{formatDate(game.created_at)}</span>
               </div>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={copyInviteLink}
+              className="w-full"
+            >
+              {copied ? (
+                <Check className="h-4 w-4 mr-2" />
+              ) : (
+                <LinkIcon className="h-4 w-4 mr-2" />
+              )}
+              {copied ? 'Copied!' : 'Copy invite link'}
+            </Button>
           </CardContent>
         </Card>
 
@@ -283,24 +329,51 @@ export default function GameDetailPage() {
 
         {/* Actions */}
         <Card>
-          <CardContent className="pt-6">
-            {!currentPlayer ? (
-              <p className="text-sm text-muted-foreground text-center">
-                Set an auth token (player_NAME) in localStorage to join this game.
-              </p>
-            ) : (
+          <CardContent className="pt-6 space-y-4">
+            {!isInGame && !isFull && (
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="joinPlayerId">Your display name in this game</Label>
+                  <Input
+                    id="joinPlayerId"
+                    value={joinPlayerId}
+                    onChange={(e) => setJoinPlayerId(e.target.value)}
+                    placeholder="bob"
+                    className="mt-1"
+                    maxLength={64}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Must be unique within this lobby and not already taken.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => {
+                    const trimmed = joinPlayerId.trim()
+                    if (!trimmed) {
+                      toast({
+                        title: 'Display name required',
+                        description: 'Pick a name to play under.',
+                        variant: 'destructive',
+                      })
+                      return
+                    }
+                    joinMutation.mutate(trimmed)
+                  }}
+                  disabled={joinMutation.isPending}
+                  className="w-full"
+                >
+                  <LogIn className="h-4 w-4 mr-2" />
+                  {joinMutation.isPending ? 'Joining...' : 'Join Lobby'}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center">
+                  You must be signed in to join. If nothing happens, check you&apos;re signed in.
+                </p>
+              </div>
+            )}
+
+            {isInGame && (
               <div className="flex gap-2">
-                {!isInGame && !isFull && (
-                  <Button
-                    onClick={() => joinMutation.mutate()}
-                    disabled={joinMutation.isPending}
-                    className="flex-1"
-                  >
-                    <LogIn className="h-4 w-4 mr-2" />
-                    {joinMutation.isPending ? 'Joining...' : 'Join Game'}
-                  </Button>
-                )}
-                {isInGame && !isCreator && (
+                {!isCreator && (
                   <Button
                     variant="outline"
                     onClick={() => leaveMutation.mutate()}
@@ -308,7 +381,7 @@ export default function GameDetailPage() {
                     className="flex-1"
                   >
                     <LogOut className="h-4 w-4 mr-2" />
-                    {leaveMutation.isPending ? 'Leaving...' : 'Leave Game'}
+                    {leaveMutation.isPending ? 'Leaving...' : 'Leave Lobby'}
                   </Button>
                 )}
                 {isCreator && (
@@ -325,12 +398,13 @@ export default function GameDetailPage() {
                         : `Waiting for ${game.player_slots - game.players.length} more player${game.player_slots - game.players.length !== 1 ? 's' : ''}`}
                   </Button>
                 )}
-                {!isInGame && isFull && (
-                  <p className="text-sm text-muted-foreground text-center w-full">
-                    This game is full.
-                  </p>
-                )}
               </div>
+            )}
+
+            {!isInGame && isFull && (
+              <p className="text-sm text-muted-foreground text-center">
+                This lobby is full.
+              </p>
             )}
           </CardContent>
         </Card>
