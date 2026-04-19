@@ -6,6 +6,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
 import { ObservationView } from '@/components/observation-view'
+import { GameplayView } from '@/components/gameplay-view'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -223,9 +224,17 @@ export default function GameDetailPage() {
           </div>
         </div>
 
-        {/* Observation view fills remaining space */}
+        {/* Seated players in an active game get the gameplay controls;
+            observers and spectators on ended games drop to the read-only
+            observation view. */}
         <div className="flex-1 overflow-hidden">
-          <ObservationView gameId={gameId} />
+          {game.status === 'active' &&
+          currentPlayer &&
+          game.players.includes(currentPlayer) ? (
+            <GameplayView gameId={gameId} currentPlayer={currentPlayer} />
+          ) : (
+            <ObservationView gameId={gameId} />
+          )}
         </div>
       </div>
     )

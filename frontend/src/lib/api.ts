@@ -3,6 +3,7 @@ import type {
 	CreateGameRequest,
 	CreateLobbyRequest,
 	DiplomacyStateResponse,
+	GameAction,
 	GameDetailResponse,
 	GamesListParams,
 	GamesListResponse,
@@ -14,6 +15,7 @@ import type {
 	TurnDetailResponse,
 	TurnListResponse,
 	TurnPromptsResponse,
+	ValidMovesResponse,
 } from "@/types/game";
 
 const API_BASE_URL =
@@ -177,6 +179,27 @@ export const api = {
 
 	async getGameState(gameId: string): Promise<GameState> {
 		return fetchApi(`/state?game_id=${gameId}`, { gameId });
+	},
+
+	async getValidMoves(
+		gameId: string,
+		unitId: number,
+	): Promise<ValidMovesResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/units/${unitId}/valid-moves`,
+			{ gameId },
+		);
+	},
+
+	async submitActions(
+		gameId: string,
+		actions: GameAction[],
+	): Promise<{ status: string; count: string }> {
+		return fetchApi(`/actions?game_id=${encodeURIComponent(gameId)}`, {
+			method: "POST",
+			body: JSON.stringify(actions),
+			gameId,
+		});
 	},
 
 	async getGameStateAsPlayer(

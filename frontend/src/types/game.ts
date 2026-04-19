@@ -236,6 +236,10 @@ export interface MapCanvasProps {
 	onCityClick?: (city: City) => void;
 	viewport?: MapViewport;
 	onViewportChange?: (viewport: MapViewport) => void;
+	/** Unit id to draw a selection ring around (Phase 4 gameplay). */
+	selectedUnitId?: number | null;
+	/** Tiles to render a semi-transparent highlight on (move targets). */
+	highlightedTiles?: Coord[];
 }
 
 export interface PlayerListProps {
@@ -352,6 +356,40 @@ export interface MessageListResponse {
 	player: PlayerId;
 	turn: number;
 	messages: DiplomacyMessage[];
+}
+
+// Gameplay queue (Phase 4)
+
+export interface ValidMoveTile {
+	x: number;
+	y: number;
+	terrain: Terrain;
+	distance: number;
+}
+
+export interface ValidMovesResponse {
+	game_id: string;
+	unit_id: number;
+	moves_left: number;
+	moves: ValidMoveTile[];
+}
+
+export interface MoveActionPayload {
+	type: "MOVE";
+	unit_id: number;
+	to: Coord;
+}
+
+// Phase 4 ships the move action only; later phases extend this union with
+// attack / found-city / train / build-building / build-improvement.
+export type GameAction = MoveActionPayload;
+
+export interface QueuedAction {
+	/** Client-side id for removal from the queue before submit. */
+	queue_id: string;
+	action: GameAction;
+	/** Server-validation error returned on End Turn, if any. */
+	error?: string;
 }
 
 export const MESSAGE_BODY_MAX_LENGTH = 2000;

@@ -348,6 +348,78 @@ describe("api.startGame", () => {
 	});
 });
 
+describe("api.getValidMoves", () => {
+	it("GETs the per-unit valid-moves endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				unit_id: 7,
+				moves_left: 2,
+				moves: [
+					{ x: 1, y: 0, terrain: "plains", distance: 1 },
+					{ x: 0, y: 1, terrain: "forest", distance: 1 },
+				],
+			}),
+		});
+
+		const result = await api.getValidMoves("g1", 7);
+		expect(result.moves).toHaveLength(2);
+		expect(result.moves[0]).toMatchObject({ x: 1, y: 0 });
+
+		const [calledUrl, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/units/7/valid-moves");
+		expect(
+			(init.headers as Record<string, string>).Authorization,
+		).toBe("Bearer fx_aliceKey");
+	});
+});
+
+describe("api.submitActions", () => {
+	it("POSTs the batch to /actions with game_id query and bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ status: "actions_submitted", count: "2" }),
+		});
+
+		const result = await api.submitActions("g1", [
+			{ type: "MOVE", unit_id: 7, to: { x: 1, y: 0 } },
+			{ type: "MOVE", unit_id: 8, to: { x: 2, y: 2 } },
+		]);
+		expect(result.count).toBe("2");
+
+		const [calledUrl, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/actions?game_id=g1");
+		expect(init.method).toBe("POST");
+		expect(
+			(init.headers as Record<string, string>).Authorization,
+		).toBe("Bearer fx_aliceKey");
+		const body = JSON.parse(init.body as string);
+		expect(body).toHaveLength(2);
+		expect(body[0].type).toBe("MOVE");
+	});
+
+	it("surfaces server rejection (400) as ApiError", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 400,
+			json: async () => ({ detail: "Unit 7 cannot reach (5,5)" }),
+		});
+
+		await expect(
+			api.submitActions("g1", [
+				{ type: "MOVE", unit_id: 7, to: { x: 5, y: 5 } },
+			]),
+		).rejects.toThrow("cannot reach");
+	});
+});
+
 describe("queryKeys", () => {
 	it("generates stable keys for games list", () => {
 		expect(queryKeys.games()).toEqual(["games", {}]);

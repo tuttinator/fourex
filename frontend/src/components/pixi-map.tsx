@@ -54,6 +54,8 @@ export function PixiMap({
   onTileClick,
   onUnitClick,
   onCityClick,
+  selectedUnitId,
+  highlightedTiles,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
@@ -281,6 +283,21 @@ export function PixiMap({
       world.addChild(hpLabel)
     }
 
+    // Highlight overlay for queued-move target tiles (Phase 4)
+    if (highlightedTiles && highlightedTiles.length > 0) {
+      const highlightGfx = new Graphics()
+      for (const coord of highlightedTiles) {
+        const hx = coord.x * TILE_SIZE
+        const hy = coord.y * TILE_SIZE
+        highlightGfx.rect(hx, hy, TILE_SIZE, TILE_SIZE)
+        highlightGfx.fill({ color: 0xfbbf24, alpha: 0.35 })
+        highlightGfx.setStrokeStyle({ width: 2, color: 0xfbbf24, alpha: 0.9 })
+        highlightGfx.rect(hx + 1, hy + 1, TILE_SIZE - 2, TILE_SIZE - 2)
+        highlightGfx.stroke()
+      }
+      world.addChild(highlightGfx)
+    }
+
     // Units
     const unitLabelStyle = new TextStyle({
       fontFamily: 'monospace',
@@ -313,6 +330,14 @@ export function PixiMap({
       label.x = ux + TILE_SIZE / 2
       label.y = uy + TILE_SIZE / 2
       world.addChild(label)
+
+      if (selectedUnitId != null && unit.id === selectedUnitId) {
+        const ring = new Graphics()
+        ring.setStrokeStyle({ width: 2.5, color: 0xfbbf24, alpha: 1 })
+        ring.roundRect(ux + 3, uy + 3, TILE_SIZE - 6, TILE_SIZE - 6, 4)
+        ring.stroke()
+        world.addChild(ring)
+      }
     }
 
     // Interactive layer for hover/click detection
@@ -372,7 +397,7 @@ export function PixiMap({
     })
 
     world.addChild(interactiveLayer)
-  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady])
+  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, highlightedTiles])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {
