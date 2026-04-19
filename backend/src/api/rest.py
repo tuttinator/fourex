@@ -39,7 +39,16 @@ from ..game.models import (
     SendMessageAction,
     WithdrawTreatyAction,
 )
-from ..game.rules import get_valid_moves, get_visible_tiles, redact_state
+from ..game.rules import (
+    can_found_city_here,
+    get_buildable_buildings,
+    get_trainable_units,
+    get_valid_attacks,
+    get_valid_improvements,
+    get_valid_moves,
+    get_visible_tiles,
+    redact_state,
+)
 from ..identity import UserIdentityContext, require_user_identity
 from .persistent_game_controller import get_persistent_game_controller
 
@@ -158,6 +167,168 @@ async def get_unit_valid_moves(
         "unit_id": unit_id,
         "moves_left": unit.moves_left,
         "moves": moves,
+    }
+
+
+@router.get("/games/{game_id}/units/{unit_id}/valid-attacks", tags=["state"])
+async def get_unit_valid_attacks(
+    game_id: str,
+    unit_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List hostile targets a friendly unit can legally attack this turn.
+
+    Backs the Phase 5 frontend attack-highlight layer. Re-uses
+    ``rules.get_valid_attacks`` so highlighting and the server-side
+    validator in ``execute_attack`` share one source of truth.
+
+    Visibility: filtered by the caller's fog-of-war — targets on
+    unexplored tiles are suppressed. Ownership: only the owner of
+    ``unit_id`` may query (404 otherwise, matching the valid-moves
+    oracle-prevention pattern).
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.owner != current_player:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    visible = get_visible_tiles(state, current_player)
+    attacks = get_valid_attacks(state, unit_id, visible_coords=visible)
+    return {
+        "game_id": game_id,
+        "unit_id": unit_id,
+        "attack_range": unit.stats.attack_range,
+        "attack": unit.stats.attack,
+        "targets": attacks,
+    }
+
+
+@router.get("/games/{game_id}/units/{unit_id}/can-found-city", tags=["state"])
+async def get_unit_can_found_city(
+    game_id: str,
+    unit_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Report whether a friendly worker can Found City on its current tile.
+
+    Frontend surfaces a Found City control when ``can_found`` is true;
+    when false, ``reason`` explains why so the UI can tooltip the
+    greyed-out control. Only the owner of ``unit_id`` may query.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.owner != current_player:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    result = can_found_city_here(state, unit_id)
+    return {
+        "game_id": game_id,
+        "unit_id": unit_id,
+        **result,
+    }
+
+
+@router.get("/games/{game_id}/units/{unit_id}/valid-improvements", tags=["state"])
+async def get_unit_valid_improvements(
+    game_id: str,
+    unit_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List improvement types a friendly worker can build on its current tile.
+
+    Workers build on the tile they occupy; results are exhaustive over
+    the improvement types that pass terrain and tile-resource checks.
+    ``affordable`` per entry reflects the caller's current stockpile so
+    the UI can render all options and grey unaffordable ones.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.owner != current_player:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    improvements = get_valid_improvements(state, unit_id)
+    tile = state.get_tile(unit.loc)
+    return {
+        "game_id": game_id,
+        "unit_id": unit_id,
+        "tile": {"x": unit.loc.x, "y": unit.loc.y} if tile else None,
+        "improvements": improvements,
+    }
+
+
+@router.get("/games/{game_id}/cities/{city_id}/trainable-units", tags=["state"])
+async def get_city_trainable_units(
+    game_id: str,
+    city_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List unit types the caller's city can train, with cost and affordability.
+
+    Costs reflect the city's BARRACKS discount where applicable. Callers
+    can only query their own cities (404 otherwise — matches the unit-
+    owned oracle-prevention pattern so enemy city IDs cannot be probed
+    through this surface).
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    city = state.get_city(city_id)
+    if city is None or city.owner != current_player:
+        raise HTTPException(status_code=404, detail="City not found")
+
+    units = get_trainable_units(state, city_id)
+    return {
+        "game_id": game_id,
+        "city_id": city_id,
+        "units": units,
+    }
+
+
+@router.get("/games/{game_id}/cities/{city_id}/buildable-buildings", tags=["state"])
+async def get_city_buildable_buildings(
+    game_id: str,
+    city_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List buildings the caller's city can construct, with cost and status.
+
+    Exhaustive over building types. ``already_built`` flags the ones the
+    city owns so the UI can hide/grey them; ``affordable`` reflects the
+    caller's current stockpile.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    city = state.get_city(city_id)
+    if city is None or city.owner != current_player:
+        raise HTTPException(status_code=404, detail="City not found")
+
+    buildings = get_buildable_buildings(state, city_id)
+    return {
+        "game_id": game_id,
+        "city_id": city_id,
+        "buildings": buildings,
     }
 
 

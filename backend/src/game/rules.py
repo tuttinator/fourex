@@ -1916,6 +1916,266 @@ def get_valid_moves(
     return results
 
 
+def get_valid_attacks(
+    state: GameState,
+    unit_id: int,
+    visible_coords: set[Coord] | None = None,
+) -> list[dict]:
+    """Compute all hostile targets a unit can legally attack this turn.
+
+    A target (unit or city) is valid if:
+    - Manhattan distance from the attacker <= ``unit.stats.attack_range``
+    - The attacker has nonzero attack
+    - The target is not allied with the attacker (ALLIANCE is forbidden;
+      PEACE is allowed — it flips to WAR via the treacherous-attack path)
+    - The target is not owned by the attacker
+    - The target tile is in ``visible_coords`` (when supplied) so the
+      list cannot leak positions of unexplored enemy units
+
+    Each result dict carries ``target_type`` ("unit" | "city"),
+    ``target_id``, ``x``, ``y``, ``distance``, ``owner``, ``hp``, and
+    ``diplomatic_state`` (the relation between attacker and target
+    before any treacherous-attack transition). The frontend uses this
+    to render the attack highlight layer and to decide whether to warn
+    about breaking peace.
+    """
+    attacker = state.get_unit(unit_id)
+    if attacker is None:
+        return []
+    if attacker.stats.attack <= 0 or attacker.stats.attack_range <= 0:
+        return []
+
+    results: list[dict] = []
+    for target in state.units.values():
+        if target.id == attacker.id or target.owner == attacker.owner:
+            continue
+        distance = attacker.loc.distance_to(target.loc)
+        if distance > attacker.stats.attack_range:
+            continue
+        if visible_coords is not None and target.loc not in visible_coords:
+            continue
+        rel = state.get_diplomatic_state(attacker.owner, target.owner)
+        if rel == DiplomaticState.ALLIANCE:
+            continue
+        results.append(
+            {
+                "target_type": "unit",
+                "target_id": target.id,
+                "x": target.loc.x,
+                "y": target.loc.y,
+                "distance": distance,
+                "owner": target.owner,
+                "hp": target.hp,
+                "diplomatic_state": rel.value,
+            }
+        )
+
+    for city in state.cities.values():
+        if city.owner == attacker.owner:
+            continue
+        distance = attacker.loc.distance_to(city.loc)
+        if distance > attacker.stats.attack_range:
+            continue
+        if visible_coords is not None and city.loc not in visible_coords:
+            continue
+        rel = state.get_diplomatic_state(attacker.owner, city.owner)
+        if rel == DiplomaticState.ALLIANCE:
+            continue
+        results.append(
+            {
+                "target_type": "city",
+                "target_id": city.id,
+                "x": city.loc.x,
+                "y": city.loc.y,
+                "distance": distance,
+                "owner": city.owner,
+                "hp": city.hp,
+                "diplomatic_state": rel.value,
+            }
+        )
+
+    results.sort(key=lambda r: (r["distance"], r["target_type"], r["target_id"]))
+    return results
+
+
+FOUND_CITY_COST = ResourceBag(food=15)
+
+
+def can_found_city_here(state: GameState, worker_id: int) -> dict:
+    """Report whether a worker can Found City on its current tile.
+
+    Returns ``{"can_found": bool, "reason": str | None, "cost": dict}``.
+    ``reason`` is a human-readable explanation when ``can_found`` is
+    False; ``cost`` is the flat FOUND_CITY cost (15 food today) so the
+    frontend can render an affordance without duplicating the constant.
+    """
+    cost_dict = {"food": FOUND_CITY_COST.food}
+    worker = state.get_unit(worker_id)
+    if worker is None:
+        return {"can_found": False, "reason": "Worker not found", "cost": cost_dict}
+    if worker.type != UnitType.WORKER:
+        return {
+            "can_found": False,
+            "reason": f"Unit {worker.id} is not a worker",
+            "cost": cost_dict,
+        }
+    tile = state.get_tile(worker.loc)
+    if tile is None:
+        return {
+            "can_found": False,
+            "reason": "Invalid location for city",
+            "cost": cost_dict,
+        }
+    if tile.city_id is not None:
+        return {
+            "can_found": False,
+            "reason": f"City already exists at {worker.loc}",
+            "cost": cost_dict,
+        }
+    if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
+        return {
+            "can_found": False,
+            "reason": f"Cannot found city on {tile.terrain.value}",
+            "cost": cost_dict,
+        }
+    player_resources = state.stockpiles.get(worker.owner, ResourceBag())
+    if not player_resources.can_afford(FOUND_CITY_COST):
+        return {
+            "can_found": False,
+            "reason": (
+                f"Cannot afford city (need {FOUND_CITY_COST.food} food, "
+                f"have {player_resources.food})"
+            ),
+            "cost": cost_dict,
+        }
+    return {"can_found": True, "reason": None, "cost": cost_dict}
+
+
+def get_valid_improvements(state: GameState, worker_id: int) -> list[dict]:
+    """List improvement types a worker can legally build on its current tile.
+
+    Workers build on the tile they're standing on (see ``execute_build_improvement``).
+    Each returned entry carries ``improvement`` (enum value), ``cost``
+    (ResourceBag as a dict), ``affordable`` (bool given the player's
+    current stockpile), and ``valid`` (always True — a variant is only
+    listed if it passes the terrain/resource/tile-free checks). The
+    frontend uses ``affordable`` to grey out entries the player cannot
+    yet buy without hiding them entirely.
+    """
+    worker = state.get_unit(worker_id)
+    if worker is None or worker.type != UnitType.WORKER:
+        return []
+    tile = state.get_tile(worker.loc)
+    if tile is None or tile.improvement is not None:
+        return []
+    player_resources = state.stockpiles.get(worker.owner, ResourceBag())
+
+    results: list[dict] = []
+    for imp_type, stats in IMPROVEMENT_STATS.items():
+        if tile.terrain not in stats.valid_terrain:
+            continue
+        if (
+            stats.required_resource is not None
+            and tile.resource != stats.required_resource
+        ):
+            continue
+        results.append(
+            {
+                "improvement": imp_type.value,
+                "cost": {
+                    "food": stats.cost.food,
+                    "wood": stats.cost.wood,
+                    "ore": stats.cost.ore,
+                    "crystal": stats.cost.crystal,
+                },
+                "affordable": player_resources.can_afford(stats.cost),
+                "terrain": tile.terrain.value,
+                "resource": tile.resource.value if tile.resource else None,
+            }
+        )
+    results.sort(key=lambda r: r["improvement"])
+    return results
+
+
+def get_trainable_units(state: GameState, city_id: int) -> list[dict]:
+    """List unit types a city can train, with per-item costs and affordability.
+
+    Costs reflect the city's ``unit_cost_multiplier`` (BARRACKS discount).
+    The list is exhaustive over ``UNIT_STATS`` so the UI can render every
+    variant and grey the unaffordable ones; ``affordable`` reflects the
+    city owner's current stockpile.
+    """
+    city = state.get_city(city_id)
+    if city is None:
+        return []
+    player_resources = state.stockpiles.get(city.owner, ResourceBag())
+    cost_multiplier = city.unit_cost_multiplier()
+
+    results: list[dict] = []
+    for unit_type, stats in UNIT_STATS.items():
+        actual_cost = ResourceBag(
+            food=int(stats.cost.food * cost_multiplier),
+            wood=int(stats.cost.wood * cost_multiplier),
+            ore=int(stats.cost.ore * cost_multiplier),
+            crystal=int(stats.cost.crystal * cost_multiplier),
+        )
+        results.append(
+            {
+                "unit_type": unit_type.value,
+                "cost": {
+                    "food": actual_cost.food,
+                    "wood": actual_cost.wood,
+                    "ore": actual_cost.ore,
+                    "crystal": actual_cost.crystal,
+                },
+                "affordable": player_resources.can_afford(actual_cost),
+                "stats": {
+                    "hp": stats.hp,
+                    "moves": stats.moves,
+                    "sight": stats.sight,
+                    "attack": stats.attack,
+                    "attack_range": stats.attack_range,
+                },
+            }
+        )
+    results.sort(key=lambda r: r["unit_type"])
+    return results
+
+
+def get_buildable_buildings(state: GameState, city_id: int) -> list[dict]:
+    """List building types a city can construct, with per-item costs and status.
+
+    Exhaustive over ``BUILDING_STATS``. ``already_built`` flags buildings
+    the city has; the UI hides/greys those. ``affordable`` reflects the
+    city owner's current stockpile against the flat cost (no multipliers
+    apply to buildings today).
+    """
+    city = state.get_city(city_id)
+    if city is None:
+        return []
+    player_resources = state.stockpiles.get(city.owner, ResourceBag())
+
+    results: list[dict] = []
+    for building_type, stats in BUILDING_STATS.items():
+        already = building_type in city.buildings
+        results.append(
+            {
+                "building_type": building_type.value,
+                "cost": {
+                    "food": stats.cost.food,
+                    "wood": stats.cost.wood,
+                    "ore": stats.cost.ore,
+                    "crystal": stats.cost.crystal,
+                },
+                "affordable": player_resources.can_afford(stats.cost),
+                "already_built": already,
+                "effect": stats.effect,
+            }
+        )
+    results.sort(key=lambda r: r["building_type"])
+    return results
+
+
 STARTING_STOCKPILE = ResourceBag(food=50, wood=20, ore=10)
 STARTING_WORKER_HP = 100
 _PASSABLE_TERRAIN = (Terrain.PLAINS, Terrain.FOREST)
