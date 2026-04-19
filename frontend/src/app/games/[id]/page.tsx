@@ -25,6 +25,9 @@ import {
   Clock,
   Link as LinkIcon,
   Check,
+  Bot,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
@@ -58,6 +61,9 @@ export default function GameDetailPage() {
   const queryClient = useQueryClient()
   const [joinPlayerId, setJoinPlayerId] = useState('')
   const [copied, setCopied] = useState(false)
+  const [mcpInviteOpen, setMcpInviteOpen] = useState(false)
+  const [mcpAgentName, setMcpAgentName] = useState('')
+  const [mcpSnippetCopied, setMcpSnippetCopied] = useState(false)
 
   // Per-game player id is stored in localStorage when we create/join.
   // Re-read on every render so a fresh join reflects immediately.
@@ -119,6 +125,30 @@ export default function GameDetailPage() {
       toast({ title: 'Failed to start', description: err.message, variant: 'destructive' })
     },
   })
+
+  const mcpSnippet = (() => {
+    const name = mcpAgentName.trim() || 'agent'
+    return `join_game(game_id="${gameId}", player_name="${name}")`
+  })()
+
+  const copyMcpSnippet = async () => {
+    if (typeof window === 'undefined') return
+    try {
+      await navigator.clipboard.writeText(mcpSnippet)
+      setMcpSnippetCopied(true)
+      toast({
+        title: 'MCP snippet copied',
+        description: 'Paste it into your agent (e.g. Claude Code).',
+      })
+      setTimeout(() => setMcpSnippetCopied(false), 1500)
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Select the snippet manually and copy.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const copyInviteLink = async () => {
     if (typeof window === 'undefined') return
@@ -303,6 +333,66 @@ export default function GameDetailPage() {
               )}
               {copied ? 'Copied!' : 'Copy invite link'}
             </Button>
+
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setMcpInviteOpen((v) => !v)}
+                className="flex w-full items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                aria-expanded={mcpInviteOpen}
+                data-testid="mcp-invite-toggle"
+              >
+                {mcpInviteOpen ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                <Bot className="h-4 w-4" />
+                <span>Invite an MCP agent</span>
+              </button>
+              {mcpInviteOpen && (
+                <div className="mt-3 space-y-3" data-testid="mcp-invite-panel">
+                  <p className="text-xs text-muted-foreground">
+                    Paste this into an MCP-enabled client (e.g. Claude Code with the
+                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">fourex-mcp</code>
+                    server configured) to seat an AI agent at this table.
+                  </p>
+                  <div>
+                    <Label htmlFor="mcpAgentName" className="text-xs">
+                      Agent display name
+                    </Label>
+                    <Input
+                      id="mcpAgentName"
+                      value={mcpAgentName}
+                      onChange={(e) => setMcpAgentName(e.target.value)}
+                      placeholder="agent"
+                      className="mt-1 h-8 text-sm"
+                      maxLength={64}
+                    />
+                  </div>
+                  <pre
+                    className="text-xs rounded border bg-muted px-3 py-2 overflow-x-auto font-mono"
+                    data-testid="mcp-invite-snippet"
+                  >
+                    {mcpSnippet}
+                  </pre>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={copyMcpSnippet}
+                    className="w-full"
+                    data-testid="mcp-invite-copy"
+                  >
+                    {mcpSnippetCopied ? (
+                      <Check className="h-4 w-4 mr-2" />
+                    ) : (
+                      <LinkIcon className="h-4 w-4 mr-2" />
+                    )}
+                    {mcpSnippetCopied ? 'Copied!' : 'Copy MCP tool call'}
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 

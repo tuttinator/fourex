@@ -111,6 +111,7 @@ The initiative ships in three phases so each phase is independently shippable:
 - **AI seating:** Out of this PRD. AI agents must join externally via MCP using the existing `join_game` tool. The lobby does not attempt to spawn or configure AI seats.
 - **Lobby state model:** Unchanged backend-side (`waiting` → `active`). A new "who joined" broadcast is added over WebSocket.
 - **Start authority:** Only the lobby creator can start, and only when all slots are filled.
+- **Unified join path across front doors.** Both the MCP `join_game` tool and the REST lobby-join endpoint must delegate to a single controller method (`persistent_game_controller.join_game`) and accept any lobby in a pre-start status (today: `waiting`). The current MCP tool hard-codes `status == "created"` and runs a bespoke DB path, so lobbies created by the browser are unreachable from MCP — this is the user-story-14/15 parity defect and it blocks the hybrid human+agent table. The lobby UI must also surface an "Invite an MCP agent" affordance with the exact `join_game(game_id=..., player_name=...)` snippet a user can paste into their agent, since there is otherwise no discoverable path from a browser lobby to an MCP-hosted seat.
 
 ### Real-time: WebSocket contract
 

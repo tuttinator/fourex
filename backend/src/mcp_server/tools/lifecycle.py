@@ -8,6 +8,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from ...api.persistent_game_controller import PersistentGameController
 from ...auth import create_player_key
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
@@ -153,9 +154,10 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="join_game",
         description=(
-            "Join an existing game as a new player. Returns an API key for "
-            "the assigned player slot. The game must be in 'created' status "
-            "and must have room for another player."
+            "Join an existing game as a new player. Accepts both legacy "
+            "MCP-created games ('created' status) and lobbies created via "
+            "the human frontend ('waiting' status). Returns an API key for "
+            "the assigned player slot."
         ),
         annotations=ToolAnnotations(
             title="Join Game",
@@ -170,6 +172,13 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Join an existing game.
 
+        Delegates roster mutation, starting-unit placement, and the
+        ``lobby.player_joined`` WebSocket broadcast to
+        ``PersistentGameController.join_game`` so the MCP and REST front
+        doors traverse one code path. Per Phase 4.5, this also lets MCP
+        agents join lobbies created through the human frontend (status
+        ``waiting``) — previously the tool hard-coded ``created``.
+
         Args:
             game_id: The game to join.
             player_name: Display name for the new player.
@@ -178,51 +187,17 @@ def register(mcp: FastMCP) -> None:
             The assigned player name and API key.
         """
         async with async_session_factory() as session:
-            repo = GameRepository(session)
+            controller = PersistentGameController(session)
+            try:
+                await controller.join_game(game_id, player_name)
+            except ValueError as exc:
+                return {"error": str(exc)}
 
-            game = await repo.get_game(game_id)
-            if game is None:
-                return {"error": f"Game {game_id} not found."}
-
-            if game.status != "created":
-                return {
-                    "error": f"Game {game_id} is '{game.status}' — can only join games in 'created' status."
-                }
-
-            if player_name in game.players:
-                return {"error": f"Player '{player_name}' is already in the game."}
-
-            if len(game.players) >= 8:
-                return {"error": "Game is full (max 8 players)."}
-
-            # Add player to the game's player list
-            updated_players = list(game.players) + [player_name]
-            game.players = updated_players
-
-            # Update game state to include the new player
-            state = GameState.model_validate(game.state)
-            state.players.append(player_name)
-            state.stockpiles[player_name] = STARTING_STOCKPILE.model_copy()
-
-            # Ensure next_unit_id doesn't collide with existing units
-            if state.units:
-                state.next_unit_id = max(
-                    state.next_unit_id, max(state.units.keys()) + 1
-                )
-
-            # Place a starting worker + scout for the new player
-            rng = random.Random(game.seed + len(updated_players))
-            place_starting_units(state, player_name, rng)
-
-            # Refresh discovered-players sets so the new player and neighbours
-            # start with any mutually-visible entries already in place.
-            update_discovery(state)
-
-            await repo.update_game_state(game_id, state)
-
-            # Generate API key
+            # Mint an API key for the new seat. ``user_identity_id`` is
+            # left null — MCP callers have no Auth.js JWT to attribute
+            # this key to, which is how MCP-origin keys are distinguished
+            # from human-origin keys.
             key = await create_player_key(session, game_id, player_name)
-
             await session.commit()
 
         return {

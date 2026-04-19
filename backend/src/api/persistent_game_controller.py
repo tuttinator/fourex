@@ -98,27 +98,75 @@ class PersistentGameController:
         self._pending_actions[game_id] = {}
 
     async def join_game(self, game_id: str, player_id: str) -> None:
-        """A player joins a waiting game."""
+        """A player joins a joinable game.
+
+        Accepts both ``waiting`` lobbies (created via the frontend's
+        ``create_lobby`` path) and ``created`` games (the legacy MCP
+        ``create_game`` path, where starting units were placed for every
+        initial player at creation time). Phase 4.5 unifies the two front
+        doors: the MCP ``join_game`` tool now delegates here so roster
+        mutation, starting-unit placement for ``created`` games, and the
+        ``lobby.player_joined`` broadcast all share one implementation.
+
+        ``waiting`` games: only the roster changes — unit placement is
+        deferred to ``start_game`` so the creator can finalise the slate
+        before play begins.
+
+        ``created`` games: legacy MCP semantics — the new player gets
+        stockpiles and a worker+scout pair seeded immediately, since the
+        game has no separate "start" transition.
+        """
         db_game = await self.repo.get_game(game_id)
         if not db_game:
             raise ValueError(f"Game {game_id} not found")
 
-        if db_game.status != "waiting":
-            raise ValueError(f"Game {game_id} is not in waiting status")
+        if db_game.status not in ("waiting", "created"):
+            raise ValueError(
+                f"Game {game_id} is '{db_game.status}' — only 'waiting' or "
+                f"'created' games can be joined"
+            )
 
         players = list(db_game.players)
         if player_id in players:
             raise ValueError(f"Player {player_id} is already in the game")
 
-        if len(players) >= db_game.player_slots:
-            raise ValueError(f"Game {game_id} is full ({db_game.player_slots} slots)")
+        # Legacy MCP-created games don't set a meaningful ``player_slots``
+        # (the repo default is 2) and instead cap at the engine-wide
+        # 8-player maximum. Waiting lobbies enforce the creator's chosen
+        # slate size.
+        max_slots = db_game.player_slots if db_game.status == "waiting" else 8
+        if len(players) >= max_slots:
+            raise ValueError(f"Game {game_id} is full ({max_slots} slots)")
 
         players.append(player_id)
         await self.repo.update_game_players(game_id, players)
 
-        # Update cached state if present
-        if game_id in self._game_cache:
-            self._game_cache[game_id].players = players
+        if db_game.status == "created":
+            state = await self.get_game_state(game_id)
+            if state is None:
+                raise ValueError(f"Game state for {game_id} not found")
+
+            state.players = list(players)
+            state.stockpiles[player_id] = STARTING_STOCKPILE.model_copy()
+
+            # Avoid colliding with pre-placed unit ids from the original
+            # create_game roster.
+            if state.units:
+                state.next_unit_id = max(
+                    state.next_unit_id, max(state.units.keys()) + 1
+                )
+
+            rng = random.Random(db_game.seed + len(players))
+            place_starting_units(state, player_id, rng)
+            update_discovery(state)
+
+            await self.repo.update_game_state(game_id, state)
+            self._game_cache[game_id] = state
+        else:
+            # Update cached state for waiting lobbies (no state mutation
+            # beyond the roster).
+            if game_id in self._game_cache:
+                self._game_cache[game_id].players = players
 
         await broadcast_lobby_player_joined(game_id, player_id, players)
 

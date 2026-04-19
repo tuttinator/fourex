@@ -180,6 +180,38 @@ Non-move action types are out of scope for this phase; the queue data structure 
 
 ---
 
+## Phase 4.5: MCP lobby join + in-lobby agent onboarding
+
+**User stories**: 14, 15
+
+### What to build
+
+Closes a cross-front-door parity gap that Phase 2's backend test nominally covered but that does not hold up in practice: the MCP `join_game` tool (`backend/src/mcp_server/tools/lifecycle.py`) reimplements the join by hand against the repo and hard-gates on `game.status == "created"`. Lobbies created through the human frontend land in `waiting` status, so an agent trying to join a human-created lobby hits a "can only join games in 'created' status" error and cannot seat itself at all.
+
+Two concrete fixes:
+
+1. **Unify the MCP `join_game` tool with the controller's shared join path.** The REST-side `POST /games/:id/join` already routes through `persistent_game_controller.join_game`, which accepts `waiting` lobbies and emits the Phase 3 `lobby.player_joined` broadcast. The MCP tool should delegate to the same controller method (rather than hand-rolling the roster update, starting-unit placement, and API-key mint) so agents and humans traverse one code path. This also means the `waiting` vs `created` status distinction stops mattering at the tool boundary: the controller decides what states are legally joinable.
+
+2. **Add an "Invite an MCP agent" affordance to the lobby page.** Beside the existing "Copy invite link" control, surface a collapsible panel that shows the exact MCP tool call an agent can run — something like `join_game(game_id="<this-game>", player_name="<display-name>")` — with a copy button on the snippet and a one-line note on where to paste it (Claude Code or any MCP-enabled client). The goal is that a human can hand a friend-agent their lobby with zero spoken instructions.
+
+This phase introduces no new agent capability beyond what MCP already exposes; it removes a broken case that blocks the "one game, two front doors" promise in the PRD.
+
+### Acceptance criteria
+
+- [ ] MCP `join_game` accepts games in `waiting` status (lobbies created through the human frontend) in addition to any status the controller already treats as legally joinable.
+- [ ] MCP `join_game` routes through `persistent_game_controller.join_game` so roster mutation, starting-unit placement, and API-key minting share one implementation with the REST path.
+- [ ] Joining a human-created lobby via MCP causes the human's lobby page to update the roster live via `lobby.player_joined` (uses the existing Phase 3 WebSocket broadcast — no new event type).
+- [ ] MCP agents still successfully join the legacy `created`-status games produced by the existing `create_game` MCP tool (no regression on the MCP-only flow).
+- [ ] The lobby page surfaces an "Invite an MCP agent" affordance with a copyable tool-call snippet containing the current `game_id`, discoverable without leaving the lobby page.
+- [ ] Backend regression test: a human creates a lobby through the BFF, an MCP agent calls `join_game` with that game id, both seats appear in the roster, `lobby.player_joined` fires on the game's WebSocket fan-out, and the agent receives a valid per-game API key attributable to an MCP-origin mint (`user_identity_id` null).
+
+### Notes
+
+- The MCP `create_game` tool continues to seed games in `created` status; unifying it with the frontend's `create_lobby` path is out of scope here. That would require `user_identity_id` plumbing through the MCP auth shell, which intentionally leaves the column null for agent-minted keys today.
+- Phase 5's action-queue work is unaffected by this slice; the queue pipeline is oblivious to how a seat was taken.
+
+---
+
 ## Phase 5: Remaining gameplay action types
 
 **User stories**: 21, 22, 23, 24, 25, 28
