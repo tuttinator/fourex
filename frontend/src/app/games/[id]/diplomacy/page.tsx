@@ -591,7 +591,7 @@ export default function DiplomacyPage() {
       ...prev,
       {
         clause_type: 'recurring_tribute',
-        payer: effectiveTributePayer || currentPlayer,
+        payer: effectiveTributePayer || currentPlayer || undefined,
         amount: { ...tributeAmount },
         duration_turns: tributeDuration,
         turns_remaining: tributeDuration,
@@ -622,7 +622,7 @@ export default function DiplomacyPage() {
       }
       return {
         clause_type: 'recurring_tribute',
-        payer: c.payer ?? currentPlayer,
+        payer: c.payer ?? currentPlayer ?? undefined,
         amount: c.amount ?? emptyBag(),
         duration_turns: c.duration_turns,
       }

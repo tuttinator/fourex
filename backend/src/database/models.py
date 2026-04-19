@@ -355,6 +355,28 @@ class UserIdentity(Base):
     )
 
 
+class AuthVerificationToken(Base):
+    """Auth.js magic-link verification tokens.
+
+    Written by the Next.js Auth.js adapter when the Resend provider issues a
+    magic link; consumed (atomically read + delete) when the user clicks it.
+    A composite (identifier, token) primary key matches the Auth.js adapter
+    contract where ``useVerificationToken({identifier, token})`` looks the
+    row up by both.
+    """
+
+    __tablename__ = "auth_verification_tokens"
+
+    identifier: Mapped[str] = mapped_column(String(320), primary_key=True)
+    token: Mapped[str] = mapped_column(String(255), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("idx_auth_verification_tokens_expiry", "expires_at"),)
+
+
 class GameSnapshot(Base):
     """Periodic snapshots of complete game state for recovery."""
 

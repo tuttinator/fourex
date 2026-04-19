@@ -14,6 +14,7 @@ from ..game.models import Action, GameState, TurnResult
 from ..game.models import PromptLog as GamePromptLog
 from .models import (
     AgentMemory,
+    AuthVerificationToken,
     Game,
     GameSnapshot,
     GameTurn,
@@ -257,6 +258,66 @@ class GameRepository:
         self.session.add(db_prompt_log)
         await self.session.flush()
         return db_prompt_log
+
+    async def get_user_identity_by_email(self, email: str) -> UserIdentity | None:
+        """Look up a UserIdentity by normalised email, or return None."""
+        normalised = email.strip().lower()
+        if not normalised:
+            return None
+        result = await self.session.execute(
+            select(UserIdentity).where(UserIdentity.email == normalised)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_user_identity_by_id(self, identity_id: int) -> UserIdentity | None:
+        """Look up a UserIdentity by primary-key id, or return None."""
+        result = await self.session.execute(
+            select(UserIdentity).where(UserIdentity.id == identity_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_verification_token(
+        self, identifier: str, token: str, expires_at: datetime
+    ) -> AuthVerificationToken:
+        """Store an Auth.js magic-link verification token."""
+        normalised = identifier.strip().lower()
+        if not normalised:
+            raise ValueError("identifier is required")
+        row = AuthVerificationToken(
+            identifier=normalised,
+            token=token,
+            expires_at=expires_at,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def consume_verification_token(
+        self, identifier: str, token: str
+    ) -> AuthVerificationToken | None:
+        """Atomically look up and delete the (identifier, token) row.
+
+        Returns the deleted row if it existed, otherwise None. Callers check
+        ``expires_at`` themselves so a single round-trip resolves both the
+        existence check and the one-time-use contract Auth.js requires.
+        """
+        normalised = identifier.strip().lower()
+        if not normalised:
+            return None
+        result = await self.session.execute(
+            select(AuthVerificationToken).where(
+                and_(
+                    AuthVerificationToken.identifier == normalised,
+                    AuthVerificationToken.token == token,
+                )
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        await self.session.delete(row)
+        await self.session.flush()
+        return row
 
     async def upsert_user_identity_by_email(self, email: str) -> UserIdentity:
         """Return the UserIdentity for an email, creating it if missing.

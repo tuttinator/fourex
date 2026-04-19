@@ -42,6 +42,14 @@ mise run lint                  # black --check + ruff + mypy
 # Database (requires docker-compose up -d postgres)
 mise run db-reset              # drop + recreate tables
 mise run db-check              # verify connection
+
+# Frontend feedback loops (run all four before committing any frontend
+# change — vitest/tsc/eslint don't exercise the Auth.js request pipeline,
+# so runtime config errors like MissingAdapter only surface in `build`)
+cd frontend && npm run type-check
+cd frontend && npm run lint
+cd frontend && npm run test -- --run
+cd frontend && npm run build
 ```
 
 ## Architecture
