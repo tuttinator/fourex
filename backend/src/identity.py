@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import (
     ExpiredSignatureError,
     InvalidSignatureError,
@@ -97,3 +99,32 @@ def verify_auth_jwt(token: str) -> UserIdentityContext:
         raise JwtAuthError("JWT `email` claim must be a string")
 
     return UserIdentityContext(user_identity_id=user_identity_id, email=email)
+
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def require_user_identity(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> UserIdentityContext:
+    """FastAPI dependency: require a valid Auth.js JWT on the request.
+
+    Returns the resolved ``UserIdentityContext``. Missing, malformed, or
+    expired tokens produce 401. Used by lobby-lifecycle endpoints and the
+    API-key renewal endpoint; orthogonal to the per-game API-key
+    dependency that authorises gameplay/diplomacy.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        return verify_auth_jwt(credentials.credentials)
+    except JwtAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc

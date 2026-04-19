@@ -576,6 +576,41 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_player_api_key_by_user_identity(
+        self, game_id: str, user_identity_id: int
+    ) -> PlayerApiKey | None:
+        """Read the API key row a given UserIdentity owns in a game, if any.
+
+        MCP-minted keys leave user_identity_id null, so this only resolves
+        keys minted through the human/Auth.js path.
+        """
+        result = await self.session.execute(
+            select(PlayerApiKey).where(
+                and_(
+                    PlayerApiKey.game_id == game_id,
+                    PlayerApiKey.user_identity_id == user_identity_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def rotate_player_api_key(
+        self,
+        api_key: PlayerApiKey,
+        plaintext_key: str,
+        expires_at: datetime | None,
+    ) -> PlayerApiKey:
+        """Replace the hash and expiry on an existing PlayerApiKey row.
+
+        Used by the renewal endpoint: keeps the same (game_id, player_id,
+        user_identity_id) tuple so nothing else needs re-binding, and just
+        swaps the plaintext binding and TTL.
+        """
+        api_key.key_hash = hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
+        api_key.expires_at = expires_at
+        await self.session.flush()
+        return api_key
+
     async def validate_player_api_key(
         self, plaintext_key: str, now: datetime | None = None
     ) -> PlayerApiKey | None:

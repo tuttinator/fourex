@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.api_keys import router as api_keys_router
 from .api.identities import router as identities_router
 from .api.rest import router as rest_router
 from .api.websocket import router as websocket_router
@@ -89,6 +90,7 @@ app.add_middleware(
 app.include_router(rest_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
 app.include_router(identities_router, prefix="/api/v1")
+app.include_router(api_keys_router, prefix="/api/v1")
 
 
 # Mount MCP streamable-http server — shares DB, CORS, and autoreload.
