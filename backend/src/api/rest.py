@@ -39,7 +39,7 @@ from ..game.models import (
     SendMessageAction,
     WithdrawTreatyAction,
 )
-from ..game.rules import redact_state
+from ..game.rules import get_valid_moves, get_visible_tiles, redact_state
 from ..identity import UserIdentityContext, require_user_identity
 from .persistent_game_controller import get_persistent_game_controller
 
@@ -119,6 +119,46 @@ async def submit_actions(
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/games/{game_id}/units/{unit_id}/valid-moves", tags=["state"])
+async def get_unit_valid_moves(
+    game_id: str,
+    unit_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List the tiles a friendly unit can legally move to this turn.
+
+    Backs the Phase 4 frontend gameplay tracer's "click a unit, see its
+    moves" highlight. Re-uses the canonical ``rules.get_valid_moves``
+    helper so client-side highlighting and server-side validation share
+    one source of truth — the queue submission to ``POST /actions`` is
+    still authoritative on rejection.
+
+    Visibility: results are filtered by the caller's fog-of-war so the
+    list cannot leak occupancy of unexplored tiles. Ownership: callers
+    can only query their own units (404 otherwise — same shape as
+    "unit not found" so we don't accidentally confirm an enemy unit's
+    existence).
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.owner != current_player:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    visible = get_visible_tiles(state, current_player)
+    moves = get_valid_moves(state, unit_id, visible_coords=visible)
+    return {
+        "game_id": game_id,
+        "unit_id": unit_id,
+        "moves_left": unit.moves_left,
+        "moves": moves,
+    }
 
 
 @router.post("/prompts", tags=["state"])

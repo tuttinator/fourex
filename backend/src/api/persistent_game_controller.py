@@ -29,6 +29,7 @@ from .websocket import (
     broadcast_lobby_started,
     broadcast_player_action,
     broadcast_turn_end,
+    broadcast_turn_resolved,
     broadcast_turn_start,
 )
 
@@ -470,8 +471,11 @@ class PersistentGameController:
         self._game_cache[game_id] = state
         print(f"DEBUG: Updated cache with turn {state.turn}")
 
-        # Broadcast turn end
+        # Broadcast turn end (legacy event, retained until consumers move
+        # off it) and the dot-namespaced ``turn.resolved`` the Phase 4
+        # frontend gameplay tracer subscribes to.
         await broadcast_turn_end(game_id, state.turn)
+        await broadcast_turn_resolved(game_id, state.turn)
 
         # Clear pending actions for next turn
         self._pending_actions[game_id] = {}

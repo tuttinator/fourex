@@ -218,6 +218,21 @@ async def broadcast_turn_end(game_id: str, turn: int) -> None:
     )
 
 
+async def broadcast_turn_resolved(game_id: str, turn: int) -> None:
+    """Emit when ``resolve_turn()`` finishes and the canonical state has advanced.
+
+    The frontend gameplay tracer (Phase 4) listens for this to invalidate
+    its game-state query and surface the new turn — including a clear of
+    any locally-queued actions and the "waiting" indicator. Payload is
+    deliberately minimal: subscribers re-fetch ``GET /state`` to pick up
+    the redacted post-resolution snapshot, sidestepping any concern about
+    payload-vs-snapshot consistency.
+    """
+    await manager.broadcast_to_game(
+        game_id, {"type": "turn.resolved", "game_id": game_id, "turn": turn}
+    )
+
+
 async def broadcast_player_action(game_id: str, player_id: str, action: dict) -> None:
     await manager.broadcast_to_game(
         game_id,
