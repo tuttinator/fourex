@@ -26,6 +26,7 @@ import {
   Check,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useLobbyEvents } from '@/hooks/use-lobby-events'
 import {
   clearGameCredentials,
   getGamePlayerId,
@@ -62,10 +63,17 @@ export default function GameDetailPage() {
   const currentPlayer =
     typeof window !== 'undefined' ? getGamePlayerId(gameId) : null
 
+  // Live lobby events: the hook invalidates the game-detail query on
+  // every lobby.* broadcast. We keep a polling fallback so observers
+  // without an API key (invite recipients who haven't joined yet) still
+  // see the roster update, and so a WS drop degrades gracefully.
+  const { status: wsStatus } = useLobbyEvents(gameId)
+  const pollingInterval = wsStatus === 'open' ? 15000 : 5000
+
   const { data: game, isLoading, error, refetch } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),
     queryFn: () => api.getGameDetail(gameId),
-    refetchInterval: 5000,
+    refetchInterval: pollingInterval,
   })
 
   const joinMutation = useMutation({

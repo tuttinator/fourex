@@ -23,7 +23,14 @@ from ..game.rules import (
     resolve_turn,
     update_discovery,
 )
-from .websocket import broadcast_player_action, broadcast_turn_end, broadcast_turn_start
+from .websocket import (
+    broadcast_lobby_player_joined,
+    broadcast_lobby_player_left,
+    broadcast_lobby_started,
+    broadcast_player_action,
+    broadcast_turn_end,
+    broadcast_turn_start,
+)
 
 
 class PersistentGameController:
@@ -112,6 +119,8 @@ class PersistentGameController:
         if game_id in self._game_cache:
             self._game_cache[game_id].players = players
 
+        await broadcast_lobby_player_joined(game_id, player_id, players)
+
     async def leave_game(self, game_id: str, player_id: str) -> None:
         """A player leaves a waiting game."""
         db_game = await self.repo.get_game(game_id)
@@ -131,6 +140,8 @@ class PersistentGameController:
         # Update cached state if present
         if game_id in self._game_cache:
             self._game_cache[game_id].players = players
+
+        await broadcast_lobby_player_left(game_id, player_id, players)
 
     async def start_game(self, game_id: str, creator: str) -> None:
         """Creator starts a waiting game. Validates slots are full, places units, transitions to active."""
@@ -178,6 +189,9 @@ class PersistentGameController:
         await self.repo.create_game_snapshot(
             game_id=game_id, turn_number=0, state=state, snapshot_type="initial"
         )
+
+        # Notify every subscribed client that the lobby has gone live.
+        await broadcast_lobby_started(game_id)
 
     @staticmethod
     def _place_starting_units(
