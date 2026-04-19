@@ -45,6 +45,8 @@ dependencies = [
     "fastmcp>=2.10.6",
     # Map rendering (SVG -> PNG)
     "cairosvg>=2.7.0",
+    # Auth.js JWT verification (lobby-lifecycle identity)
+    "pyjwt>=2.8.0",
 ]
 
 [dependency-groups]

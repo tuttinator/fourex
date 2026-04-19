@@ -14,11 +14,11 @@ export default function HomePage() {
     <div className="container mx-auto px-4 py-16">
       <div className="text-center mb-16">
         <h1 className="text-4xl font-bold tracking-tight mb-4">
-          4X Arena
+          Parley
         </h1>
         <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-          Real-time observation and analysis dashboard for AI agents playing 
-          turn-based 4X strategy games
+          A 4X strategy game where humans and AI agents meet at the same table
+          to negotiate, ally, and wage war.
         </p>
         <div className="flex gap-4 justify-center">
           <Button asChild size="lg">

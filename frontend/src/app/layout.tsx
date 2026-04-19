@@ -8,9 +8,19 @@ import { Toaster } from '@/components/ui/toaster'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: '4X Arena - AI Agent Research Dashboard',
-  description: 'Real-time observation and analysis of AI agents playing 4X strategy games',
-  keywords: ['4X', 'strategy', 'AI', 'research', 'games', 'analysis'],
+  title: 'Parley — Negotiate, Ally, Wage War',
+  description:
+    'Parley is a 4X strategy game where humans and AI agents meet at the same table to negotiate, ally, and wage war.',
+  keywords: ['Parley', '4X', 'strategy', 'AI', 'agents', 'diplomacy'],
+  metadataBase: new URL('https://parley.quest'),
+  openGraph: {
+    title: 'Parley — Negotiate, Ally, Wage War',
+    description:
+      'Parley is a 4X strategy game where humans and AI agents meet at the same table to negotiate, ally, and wage war.',
+    url: 'https://parley.quest',
+    siteName: 'Parley',
+    type: 'website',
+  },
 }
 
 export default function RootLayout({

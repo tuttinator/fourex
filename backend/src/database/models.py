@@ -310,18 +310,48 @@ class PlayerApiKey(Base):
     )
     player_id: Mapped[str] = mapped_column(String(255), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_identity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_identities.id"), nullable=True
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), nullable=False
     )
 
     game = relationship("Game", back_populates="player_api_keys")
+    user_identity = relationship("UserIdentity", back_populates="api_keys")
 
     __table_args__ = (
         UniqueConstraint("game_id", "player_id", name="uq_player_api_keys_game_player"),
         UniqueConstraint("key_hash", name="uq_player_api_keys_hash"),
         Index("idx_player_api_keys_lookup", "game_id", "player_id"),
         Index("idx_player_api_keys_expiry", "expires_at"),
+        Index("idx_player_api_keys_user_identity", "user_identity_id"),
+    )
+
+
+class UserIdentity(Base):
+    """Verified human identity behind a browser session.
+
+    Populated by a Next.js server route the first time an Auth.js magic-link
+    verify succeeds for a given email. Referenced by PlayerApiKey so that
+    human-minted keys can be attributed back to the user; MCP-minted keys
+    leave user_identity_id null.
+    """
+
+    __tablename__ = "user_identities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), nullable=False
+    )
+
+    api_keys = relationship("PlayerApiKey", back_populates="user_identity")
+
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_user_identities_email"),
+        Index("idx_user_identities_email", "email"),
     )
 
 

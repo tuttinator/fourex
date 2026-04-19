@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     max_concurrent_games: int = 20
     turn_timeout_seconds: int = 60
 
+    # Shared secret used to verify Auth.js JWTs issued by the Next.js frontend.
+    # Must match `AUTH_SECRET` set on the Next.js side. Rotating requires a
+    # coordinated redeploy of both services.
+    auth_secret: str = "dev-auth-secret-change-me-min-32-bytes-long"
+    # Expected `iss` claim on incoming Auth.js JWTs. Auth.js omits `iss` by
+    # default; leave empty to skip issuer verification.
+    auth_jwt_issuer: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
