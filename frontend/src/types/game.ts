@@ -430,6 +430,28 @@ export interface SendMessageActionPayload {
 	body: string;
 }
 
+export interface ProposeTreatyActionPayload {
+	type: "PROPOSE_TREATY";
+	recipient: PlayerId;
+	clauses: TreatyClause[];
+}
+
+export interface RespondToTreatyActionPayload {
+	type: "RESPOND_TO_TREATY";
+	proposal_id: number;
+	accept: boolean;
+}
+
+export interface WithdrawTreatyActionPayload {
+	type: "WITHDRAW_TREATY";
+	proposal_id: number;
+}
+
+export interface CancelTreatyActionPayload {
+	type: "CANCEL_TREATY";
+	treaty_id: number;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -437,7 +459,11 @@ export type GameAction =
 	| BuildImprovementActionPayload
 	| TrainUnitActionPayload
 	| BuildBuildingActionPayload
-	| SendMessageActionPayload;
+	| SendMessageActionPayload
+	| ProposeTreatyActionPayload
+	| RespondToTreatyActionPayload
+	| WithdrawTreatyActionPayload
+	| CancelTreatyActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

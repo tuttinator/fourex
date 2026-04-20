@@ -39,6 +39,7 @@ import {
   ChevronLeft,
   Check,
   Clock,
+  FileSignature,
   Hammer,
   Handshake,
   Landmark,
@@ -49,6 +50,7 @@ import {
   Sparkles,
   Swords,
   Trash2,
+  X,
 } from 'lucide-react'
 import { api, ApiError, queryKeys } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
@@ -84,6 +86,8 @@ import type {
   Tile,
   TrainableUnit,
   TrainableUnitsResponse,
+  TreatyClause,
+  TreatyProposalRecord,
   TreatyRecord,
   TurnSubmissionsResponse,
   Unit,
@@ -92,7 +96,11 @@ import type {
   ValidImprovementsResponse,
   ValidMovesResponse,
 } from '@/types/game'
-import { MESSAGE_BODY_MAX_LENGTH } from '@/types/game'
+import {
+  FREE_TEXT_CLAUSE_MAX_LENGTH,
+  MESSAGE_BODY_MAX_LENGTH,
+  PEACE_CLAUSE_MAX_DURATION,
+} from '@/types/game'
 
 const ACTIVE_POLL_INTERVAL = 5000
 
@@ -131,6 +139,18 @@ function describeAction(action: GameAction): string {
           : action.body
       return `Message → ${action.recipient}: ${preview}`
     }
+    case 'PROPOSE_TREATY': {
+      const kinds = action.clauses
+        .map((c) => c.clause_type.replace(/_/g, ' '))
+        .join(', ')
+      return `Propose treaty → ${action.recipient} (${kinds || 'empty'})`
+    }
+    case 'RESPOND_TO_TREATY':
+      return `${action.accept ? 'Accept' : 'Decline'} proposal #${action.proposal_id}`
+    case 'WITHDRAW_TREATY':
+      return `Withdraw proposal #${action.proposal_id}`
+    case 'CANCEL_TREATY':
+      return `Cancel treaty #${action.treaty_id}`
   }
 }
 
@@ -721,6 +741,24 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     selectedOpponent,
   ])
 
+  // Phase 8: treaty-lifecycle live updates. Any of the three new
+  // lifecycle events invalidates the diplomacy query so the panel
+  // reflects the post-resolution pending/active lists — the events are
+  // already scoped to the parties on the server so receiving a frame is
+  // itself enough evidence we need to refetch.
+  useEffect(() => {
+    if (!lastEvent) return
+    const t = lastEvent.type
+    if (
+      t !== 'diplomacy.proposal_received' &&
+      t !== 'diplomacy.proposal_responded' &&
+      t !== 'diplomacy.treaty_cancelled'
+    ) {
+      return
+    }
+    queryClient.invalidateQueries({ queryKey: diplomacyQueryKey })
+  }, [lastEvent, queryClient, diplomacyQueryKey])
+
   // Phase 6: fold turn.submitted deltas into the roster set. The event
   // payload carries the full snapshot ("submitted_players") so we trust
   // it verbatim rather than accumulating — resubmissions are idempotent
@@ -936,14 +974,21 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               }
             }}
             lastSeenMessageIds={lastSeenMessageIds}
-            pendingQueuedForOpponent={queue
-              .map((q) => q.action)
-              .filter(
-                (a): a is Extract<GameAction, { type: 'SEND_MESSAGE' }> =>
-                  a.type === 'SEND_MESSAGE',
-              )}
+            queuedActions={queue.map((q) => q.action)}
             onQueueMessage={(recipient, body) =>
               appendToQueue({ type: 'SEND_MESSAGE', recipient, body })
+            }
+            onQueueProposeTreaty={(recipient, clauses) =>
+              appendToQueue({ type: 'PROPOSE_TREATY', recipient, clauses })
+            }
+            onQueueRespondToTreaty={(proposal_id, accept) =>
+              appendToQueue({ type: 'RESPOND_TO_TREATY', proposal_id, accept })
+            }
+            onQueueWithdrawTreaty={(proposal_id) =>
+              appendToQueue({ type: 'WITHDRAW_TREATY', proposal_id })
+            }
+            onQueueCancelTreaty={(treaty_id) =>
+              appendToQueue({ type: 'CANCEL_TREATY', treaty_id })
             }
           />
 
@@ -1259,34 +1304,51 @@ interface DiplomacyPanelProps {
   selectedOpponent: PlayerId | null
   onSelectOpponent: (opponent: PlayerId | null) => void
   lastSeenMessageIds: Record<PlayerId, number>
-  pendingQueuedForOpponent: Array<{
-    type: 'SEND_MESSAGE'
-    recipient: PlayerId
-    body: string
-  }>
+  queuedActions: GameAction[]
   onQueueMessage: (recipient: PlayerId, body: string) => void
+  onQueueProposeTreaty: (recipient: PlayerId, clauses: TreatyClause[]) => void
+  onQueueRespondToTreaty: (proposalId: number, accept: boolean) => void
+  onQueueWithdrawTreaty: (proposalId: number) => void
+  onQueueCancelTreaty: (treatyId: number) => void
 }
 
 interface DiplomacyThreadViewProps {
   currentPlayer: PlayerId
   diplomacy: DiplomacyStateResponse
   opponent: PlayerId
-  pendingQueuedForOpponent: Array<{
-    type: 'SEND_MESSAGE'
-    recipient: PlayerId
-    body: string
-  }>
+  queuedActions: GameAction[]
   onSelectOpponent: (opponent: PlayerId | null) => void
   onQueueMessage: (recipient: PlayerId, body: string) => void
+  onQueueProposeTreaty: (recipient: PlayerId, clauses: TreatyClause[]) => void
+  onQueueRespondToTreaty: (proposalId: number, accept: boolean) => void
+  onQueueWithdrawTreaty: (proposalId: number) => void
+  onQueueCancelTreaty: (treatyId: number) => void
+}
+
+function describeClause(clause: TreatyClause): string {
+  switch (clause.clause_type) {
+    case 'peace':
+      return `peace · ${clause.duration_turns ?? '?'}t`
+    case 'free_text':
+      return `free text · "${(clause.text ?? '').slice(0, 30)}${(clause.text ?? '').length > 30 ? '…' : ''}"`
+    case 'resource_swap':
+      return `swap · ${formatCost(clause.proposer_gives ?? ({} as ResourceBag))} ↔ ${formatCost(clause.recipient_gives ?? ({} as ResourceBag))}`
+    case 'recurring_tribute':
+      return `tribute · ${clause.payer} pays ${formatCost(clause.amount ?? ({} as ResourceBag))}/turn × ${clause.duration_turns ?? '?'}`
+  }
 }
 
 function DiplomacyThreadView({
   currentPlayer,
   diplomacy,
   opponent,
-  pendingQueuedForOpponent,
+  queuedActions,
   onSelectOpponent,
   onQueueMessage,
+  onQueueProposeTreaty,
+  onQueueRespondToTreaty,
+  onQueueWithdrawTreaty,
+  onQueueCancelTreaty,
 }: DiplomacyThreadViewProps) {
   const [draft, setDraft] = useState('')
   const thread: DiplomacyMessage[] = diplomacy.messages
@@ -1296,13 +1358,58 @@ function DiplomacyThreadView({
         (m.sender === opponent && m.recipient === currentPlayer),
     )
     .sort((a, b) => a.id - b.id)
-  const queuedOutbound = pendingQueuedForOpponent.filter(
-    (a) => a.recipient === opponent,
+  const queuedOutboundMessages = queuedActions.filter(
+    (a): a is Extract<GameAction, { type: 'SEND_MESSAGE' }> =>
+      a.type === 'SEND_MESSAGE' && a.recipient === opponent,
   )
   const relation = findRelation(diplomacy.relations, currentPlayer, opponent)
   const rel = relationLabel(relation)
   const overLimit = draft.length > MESSAGE_BODY_MAX_LENGTH
   const canSend = draft.trim().length > 0 && !overLimit
+
+  const bilateralProposals = diplomacy.pending_proposals.filter(
+    (p) =>
+      (p.proposer === currentPlayer && p.recipient === opponent) ||
+      (p.proposer === opponent && p.recipient === currentPlayer),
+  )
+  const inbound = bilateralProposals.filter((p) => p.recipient === currentPlayer)
+  const outbound = bilateralProposals.filter((p) => p.proposer === currentPlayer)
+  const activeTreaties = treatiesFor(
+    diplomacy.active_treaties,
+    currentPlayer,
+    opponent,
+  )
+
+  // Has the player already queued a terminal action against a specific
+  // proposal/treaty id? Used to disable duplicate queue entries.
+  const queuedProposalResponses = new Set(
+    queuedActions
+      .filter(
+        (a): a is Extract<GameAction, { type: 'RESPOND_TO_TREATY' }> =>
+          a.type === 'RESPOND_TO_TREATY',
+      )
+      .map((a) => a.proposal_id),
+  )
+  const queuedProposalWithdrawals = new Set(
+    queuedActions
+      .filter(
+        (a): a is Extract<GameAction, { type: 'WITHDRAW_TREATY' }> =>
+          a.type === 'WITHDRAW_TREATY',
+      )
+      .map((a) => a.proposal_id),
+  )
+  const queuedTreatyCancellations = new Set(
+    queuedActions
+      .filter(
+        (a): a is Extract<GameAction, { type: 'CANCEL_TREATY' }> =>
+          a.type === 'CANCEL_TREATY',
+      )
+      .map((a) => a.treaty_id),
+  )
+  const queuedProposalsForOpponent = queuedActions.filter(
+    (a): a is Extract<GameAction, { type: 'PROPOSE_TREATY' }> =>
+      a.type === 'PROPOSE_TREATY' && a.recipient === opponent,
+  )
 
   return (
     <Card className="rounded-none border-0 border-b">
@@ -1325,7 +1432,7 @@ function DiplomacyThreadView({
           className="max-h-52 overflow-y-auto space-y-1 rounded border bg-muted/20 p-2"
           data-testid="diplomacy-thread"
         >
-          {thread.length === 0 && queuedOutbound.length === 0 ? (
+          {thread.length === 0 && queuedOutboundMessages.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No messages yet. Send the first line to open the channel.
             </p>
@@ -1354,7 +1461,7 @@ function DiplomacyThreadView({
                   </div>
                 )
               })}
-              {queuedOutbound.map((q, idx) => (
+              {queuedOutboundMessages.map((q, idx) => (
                 <div
                   key={`queued-${idx}`}
                   className="text-xs text-right opacity-60"
@@ -1404,8 +1511,487 @@ function DiplomacyThreadView({
             </p>
           )}
         </div>
+
+        {/* Phase 8: treaty lifecycle --------------------------------- */}
+        {inbound.length > 0 && (
+          <div
+            className="space-y-1 rounded border bg-muted/20 p-2"
+            data-testid="diplomacy-inbound-proposals"
+          >
+            <p className="text-[10px] font-medium uppercase text-muted-foreground">
+              Inbound proposals
+            </p>
+            {inbound.map((p) => (
+              <ProposalCard
+                key={p.id}
+                proposal={p}
+                variant="inbound"
+                disabled={queuedProposalResponses.has(p.id)}
+                onAccept={() => onQueueRespondToTreaty(p.id, true)}
+                onReject={() => onQueueRespondToTreaty(p.id, false)}
+              />
+            ))}
+          </div>
+        )}
+
+        {outbound.length > 0 && (
+          <div
+            className="space-y-1 rounded border bg-muted/20 p-2"
+            data-testid="diplomacy-outbound-proposals"
+          >
+            <p className="text-[10px] font-medium uppercase text-muted-foreground">
+              Outbound proposals
+            </p>
+            {outbound.map((p) => (
+              <ProposalCard
+                key={p.id}
+                proposal={p}
+                variant="outbound"
+                disabled={queuedProposalWithdrawals.has(p.id)}
+                onWithdraw={() => onQueueWithdrawTreaty(p.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        {activeTreaties.length > 0 && (
+          <div
+            className="space-y-1 rounded border bg-muted/20 p-2"
+            data-testid="diplomacy-active-treaties"
+          >
+            <p className="text-[10px] font-medium uppercase text-muted-foreground">
+              Active treaties
+            </p>
+            {activeTreaties.map((t) => (
+              <div
+                key={t.id}
+                className="flex items-start justify-between gap-2 text-xs"
+                data-testid={`diplomacy-treaty-${t.id}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">
+                    Treaty #{t.id}
+                    <span className="ml-1 text-muted-foreground">
+                      · ratified t{t.turn_ratified}
+                    </span>
+                  </p>
+                  <ul className="list-disc pl-4 text-[11px] text-muted-foreground">
+                    {t.clauses.map((c, i) => (
+                      <li key={i}>{describeClause(c)}</li>
+                    ))}
+                  </ul>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={queuedTreatyCancellations.has(t.id)}
+                  onClick={() => onQueueCancelTreaty(t.id)}
+                  data-testid={`diplomacy-cancel-treaty-${t.id}`}
+                  className="shrink-0 text-xs"
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  {queuedTreatyCancellations.has(t.id) ? 'Queued' : 'Cancel'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <ProposeTreatyForm
+          currentPlayer={currentPlayer}
+          opponent={opponent}
+          queuedProposalsCount={queuedProposalsForOpponent.length}
+          onQueueProposeTreaty={onQueueProposeTreaty}
+        />
       </CardContent>
     </Card>
+  )
+}
+
+interface ProposalCardProps {
+  proposal: TreatyProposalRecord
+  variant: 'inbound' | 'outbound'
+  disabled: boolean
+  onAccept?: () => void
+  onReject?: () => void
+  onWithdraw?: () => void
+}
+
+function ProposalCard({
+  proposal,
+  variant,
+  disabled,
+  onAccept,
+  onReject,
+  onWithdraw,
+}: ProposalCardProps) {
+  return (
+    <div
+      className="flex items-start justify-between gap-2 text-xs"
+      data-testid={`diplomacy-proposal-${proposal.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">
+          Proposal #{proposal.id}
+          <span className="ml-1 text-muted-foreground">
+            · expires t{proposal.expires_on_turn}
+          </span>
+        </p>
+        <ul className="list-disc pl-4 text-[11px] text-muted-foreground">
+          {proposal.clauses.map((c, i) => (
+            <li key={i}>{describeClause(c)}</li>
+          ))}
+        </ul>
+      </div>
+      <div className="flex shrink-0 flex-col gap-1">
+        {variant === 'inbound' ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              onClick={onAccept}
+              data-testid={`diplomacy-accept-${proposal.id}`}
+              className="text-xs"
+            >
+              <Check className="h-3.5 w-3.5 mr-1" />
+              {disabled ? 'Queued' : 'Accept'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              onClick={onReject}
+              data-testid={`diplomacy-reject-${proposal.id}`}
+              className="text-xs"
+            >
+              <X className="h-3.5 w-3.5 mr-1" />
+              Reject
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={onWithdraw}
+            data-testid={`diplomacy-withdraw-${proposal.id}`}
+            className="text-xs"
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            {disabled ? 'Queued' : 'Withdraw'}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+type ClauseKind = TreatyClause['clause_type']
+
+interface ProposeTreatyFormProps {
+  currentPlayer: PlayerId
+  opponent: PlayerId
+  queuedProposalsCount: number
+  onQueueProposeTreaty: (recipient: PlayerId, clauses: TreatyClause[]) => void
+}
+
+function ProposeTreatyForm({
+  currentPlayer,
+  opponent,
+  queuedProposalsCount,
+  onQueueProposeTreaty,
+}: ProposeTreatyFormProps) {
+  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState<ClauseKind>('peace')
+
+  // One state bag shared across kinds — only the subset relevant to the
+  // currently-selected kind is read when building the clause, so mixing
+  // is harmless and keeping it in one place avoids four sets of handlers.
+  const [duration, setDuration] = useState<number>(10)
+  const [freeText, setFreeText] = useState<string>('')
+  const [proposerFood, setProposerFood] = useState<number>(0)
+  const [proposerWood, setProposerWood] = useState<number>(0)
+  const [proposerOre, setProposerOre] = useState<number>(0)
+  const [proposerCrystal, setProposerCrystal] = useState<number>(0)
+  const [recipientFood, setRecipientFood] = useState<number>(0)
+  const [recipientWood, setRecipientWood] = useState<number>(0)
+  const [recipientOre, setRecipientOre] = useState<number>(0)
+  const [recipientCrystal, setRecipientCrystal] = useState<number>(0)
+  const [tributePayer, setTributePayer] = useState<PlayerId>(currentPlayer)
+
+  const clampedDuration = Math.min(
+    Math.max(1, Math.floor(duration || 0)),
+    PEACE_CLAUSE_MAX_DURATION,
+  )
+
+  const buildClause = (): TreatyClause | null => {
+    switch (kind) {
+      case 'peace':
+        return {
+          clause_type: 'peace',
+          duration_turns: clampedDuration,
+          turns_remaining: clampedDuration,
+        }
+      case 'free_text': {
+        const text = freeText.trim()
+        if (!text) return null
+        if (text.length > FREE_TEXT_CLAUSE_MAX_LENGTH) return null
+        return { clause_type: 'free_text', text }
+      }
+      case 'resource_swap':
+        return {
+          clause_type: 'resource_swap',
+          proposer_gives: {
+            food: Math.max(0, Math.floor(proposerFood)),
+            wood: Math.max(0, Math.floor(proposerWood)),
+            ore: Math.max(0, Math.floor(proposerOre)),
+            crystal: Math.max(0, Math.floor(proposerCrystal)),
+          },
+          recipient_gives: {
+            food: Math.max(0, Math.floor(recipientFood)),
+            wood: Math.max(0, Math.floor(recipientWood)),
+            ore: Math.max(0, Math.floor(recipientOre)),
+            crystal: Math.max(0, Math.floor(recipientCrystal)),
+          },
+        }
+      case 'recurring_tribute':
+        return {
+          clause_type: 'recurring_tribute',
+          payer: tributePayer,
+          amount: {
+            food: Math.max(0, Math.floor(proposerFood)),
+            wood: Math.max(0, Math.floor(proposerWood)),
+            ore: Math.max(0, Math.floor(proposerOre)),
+            crystal: Math.max(0, Math.floor(proposerCrystal)),
+          },
+          duration_turns: clampedDuration,
+          turns_remaining: clampedDuration,
+        }
+    }
+  }
+
+  const clause = buildClause()
+  const canQueue = clause !== null
+
+  return (
+    <div className="rounded border bg-muted/20 p-2" data-testid="diplomacy-propose-root">
+      <button
+        className="flex w-full items-center justify-between text-xs font-medium"
+        onClick={() => setOpen((v) => !v)}
+        data-testid="diplomacy-propose-toggle"
+      >
+        <span className="flex items-center gap-1">
+          <FileSignature className="h-3.5 w-3.5" />
+          Propose treaty
+          {queuedProposalsCount > 0 && (
+            <span className="ml-1 text-muted-foreground">
+              · {queuedProposalsCount} queued
+            </span>
+          )}
+        </span>
+        <span className="text-muted-foreground">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {(
+              [
+                'peace',
+                'free_text',
+                'resource_swap',
+                'recurring_tribute',
+              ] as ClauseKind[]
+            ).map((k) => (
+              <button
+                key={k}
+                onClick={() => setKind(k)}
+                className={`rounded border px-2 py-0.5 text-[11px] ${
+                  kind === k ? 'bg-primary/10' : ''
+                }`}
+                data-testid={`diplomacy-propose-kind-${k}`}
+              >
+                {k.replace(/_/g, ' ')}
+              </button>
+            ))}
+          </div>
+
+          {kind === 'peace' && (
+            <label className="flex items-center gap-2 text-[11px]">
+              Duration (turns)
+              <input
+                type="number"
+                min={1}
+                max={PEACE_CLAUSE_MAX_DURATION}
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                className="w-20 rounded border bg-background px-1 py-0.5"
+                data-testid="diplomacy-propose-duration"
+              />
+            </label>
+          )}
+
+          {kind === 'free_text' && (
+            <textarea
+              value={freeText}
+              onChange={(e) => setFreeText(e.target.value)}
+              maxLength={FREE_TEXT_CLAUSE_MAX_LENGTH + 1}
+              className="min-h-14 w-full resize-none rounded border bg-background px-2 py-1 text-[11px]"
+              placeholder={`Clause text (max ${FREE_TEXT_CLAUSE_MAX_LENGTH} chars)`}
+              data-testid="diplomacy-propose-free-text"
+            />
+          )}
+
+          {kind === 'resource_swap' && (
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <fieldset className="space-y-1 rounded border p-1">
+                <legend className="px-1">you give</legend>
+                <ResourceInputs
+                  food={proposerFood}
+                  wood={proposerWood}
+                  ore={proposerOre}
+                  crystal={proposerCrystal}
+                  onChange={{
+                    food: setProposerFood,
+                    wood: setProposerWood,
+                    ore: setProposerOre,
+                    crystal: setProposerCrystal,
+                  }}
+                  testPrefix="diplomacy-propose-swap-give"
+                />
+              </fieldset>
+              <fieldset className="space-y-1 rounded border p-1">
+                <legend className="px-1">{opponent} gives</legend>
+                <ResourceInputs
+                  food={recipientFood}
+                  wood={recipientWood}
+                  ore={recipientOre}
+                  crystal={recipientCrystal}
+                  onChange={{
+                    food: setRecipientFood,
+                    wood: setRecipientWood,
+                    ore: setRecipientOre,
+                    crystal: setRecipientCrystal,
+                  }}
+                  testPrefix="diplomacy-propose-swap-receive"
+                />
+              </fieldset>
+            </div>
+          )}
+
+          {kind === 'recurring_tribute' && (
+            <div className="space-y-2 text-[11px]">
+              <label className="flex items-center gap-2">
+                Payer
+                <select
+                  value={tributePayer}
+                  onChange={(e) => setTributePayer(e.target.value)}
+                  className="rounded border bg-background px-1 py-0.5"
+                  data-testid="diplomacy-propose-tribute-payer"
+                >
+                  <option value={currentPlayer}>{currentPlayer} (you)</option>
+                  <option value={opponent}>{opponent}</option>
+                </select>
+              </label>
+              <fieldset className="space-y-1 rounded border p-1">
+                <legend className="px-1">per-turn amount</legend>
+                <ResourceInputs
+                  food={proposerFood}
+                  wood={proposerWood}
+                  ore={proposerOre}
+                  crystal={proposerCrystal}
+                  onChange={{
+                    food: setProposerFood,
+                    wood: setProposerWood,
+                    ore: setProposerOre,
+                    crystal: setProposerCrystal,
+                  }}
+                  testPrefix="diplomacy-propose-tribute-amount"
+                />
+              </fieldset>
+              <label className="flex items-center gap-2">
+                Duration (turns)
+                <input
+                  type="number"
+                  min={1}
+                  max={PEACE_CLAUSE_MAX_DURATION}
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                  className="w-20 rounded border bg-background px-1 py-0.5"
+                  data-testid="diplomacy-propose-duration"
+                />
+              </label>
+            </div>
+          )}
+
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canQueue}
+            onClick={() => {
+              if (!clause) return
+              onQueueProposeTreaty(opponent, [clause])
+            }}
+            data-testid="diplomacy-propose-submit"
+            className="w-full text-xs"
+          >
+            <Send className="h-3.5 w-3.5 mr-1" />
+            Queue proposal
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface ResourceInputsProps {
+  food: number
+  wood: number
+  ore: number
+  crystal: number
+  onChange: {
+    food: (n: number) => void
+    wood: (n: number) => void
+    ore: (n: number) => void
+    crystal: (n: number) => void
+  }
+  testPrefix: string
+}
+
+function ResourceInputs({
+  food,
+  wood,
+  ore,
+  crystal,
+  onChange,
+  testPrefix,
+}: ResourceInputsProps) {
+  const rows: Array<{
+    key: keyof ResourceBag
+    value: number
+    setter: (n: number) => void
+  }> = [
+    { key: 'food', value: food, setter: onChange.food },
+    { key: 'wood', value: wood, setter: onChange.wood },
+    { key: 'ore', value: ore, setter: onChange.ore },
+    { key: 'crystal', value: crystal, setter: onChange.crystal },
+  ]
+  return (
+    <div className="grid grid-cols-2 gap-1">
+      {rows.map(({ key, value, setter }) => (
+        <label key={key} className="flex items-center gap-1 text-[11px]">
+          <span className="capitalize">{key}</span>
+          <input
+            type="number"
+            min={0}
+            value={value}
+            onChange={(e) => setter(Number(e.target.value))}
+            className="w-full rounded border bg-background px-1 py-0.5"
+            data-testid={`${testPrefix}-${key}`}
+          />
+        </label>
+      ))}
+    </div>
   )
 }
 
@@ -1466,8 +2052,12 @@ function DiplomacyPanel({
   selectedOpponent,
   onSelectOpponent,
   lastSeenMessageIds,
-  pendingQueuedForOpponent,
+  queuedActions,
   onQueueMessage,
+  onQueueProposeTreaty,
+  onQueueRespondToTreaty,
+  onQueueWithdrawTreaty,
+  onQueueCancelTreaty,
 }: DiplomacyPanelProps) {
   if (!diplomacy) {
     return (
@@ -1494,9 +2084,13 @@ function DiplomacyPanel({
         currentPlayer={currentPlayer}
         diplomacy={diplomacy}
         opponent={selectedOpponent}
-        pendingQueuedForOpponent={pendingQueuedForOpponent}
+        queuedActions={queuedActions}
         onSelectOpponent={onSelectOpponent}
         onQueueMessage={onQueueMessage}
+        onQueueProposeTreaty={onQueueProposeTreaty}
+        onQueueRespondToTreaty={onQueueRespondToTreaty}
+        onQueueWithdrawTreaty={onQueueWithdrawTreaty}
+        onQueueCancelTreaty={onQueueCancelTreaty}
       />
     )
   }

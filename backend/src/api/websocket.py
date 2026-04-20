@@ -310,3 +310,101 @@ async def broadcast_diplomacy_message_received(
     for conn in manager.connections_for_game(game_id):
         if conn.player_id in audience:
             await manager._send(conn, payload)
+
+
+async def _send_scoped(game_id: str, payload: dict, visible_to: Iterable[str]) -> None:
+    """Fan a payload to the subset of this game's connections in ``visible_to``."""
+    audience = {p for p in visible_to if p}
+    if not audience:
+        return
+    for conn in manager.connections_for_game(game_id):
+        if conn.player_id in audience:
+            await manager._send(conn, payload)
+
+
+async def broadcast_diplomacy_proposal_received(
+    game_id: str,
+    proposal: dict,
+    visible_to: Iterable[str],
+) -> None:
+    """Fan a newly-created treaty proposal to proposer + recipient only.
+
+    Phase 8 treaty-lifecycle live updates: when ``resolve_turn`` accepts a
+    ``PROPOSE_TREATY`` action a ``TreatyProposal`` is appended to
+    ``state.pending_proposals``. Proposals are private to the two parties
+    (``redact_state`` enforces this), so the broadcast scopes to the
+    proposer + recipient identically to ``message_received``. The frontend
+    uses this to pop the inbound-proposals list for the recipient and the
+    outbound-proposals list for the proposer without waiting for a full
+    polling cycle.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "diplomacy.proposal_received",
+            "game_id": game_id,
+            "proposal": proposal,
+        },
+        visible_to,
+    )
+
+
+async def broadcast_diplomacy_proposal_responded(
+    game_id: str,
+    proposal_id: int,
+    proposer: str,
+    recipient: str,
+    outcome: str,
+    treaty_id: int | None,
+    visible_to: Iterable[str],
+) -> None:
+    """Fan a proposal terminal-state event to proposer + recipient only.
+
+    ``outcome`` is one of ``accepted`` / ``declined`` / ``withdrawn`` /
+    ``expired`` / ``failed_unfundable``. On ``accepted`` the ``treaty_id``
+    of the newly-ratified treaty is included so the recipient's UI can
+    jump straight to the active-treaty entry without a round trip.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "diplomacy.proposal_responded",
+            "game_id": game_id,
+            "proposal_id": proposal_id,
+            "proposer": proposer,
+            "recipient": recipient,
+            "outcome": outcome,
+            "treaty_id": treaty_id,
+        },
+        visible_to,
+    )
+
+
+async def broadcast_diplomacy_treaty_cancelled(
+    game_id: str,
+    treaty_id: int,
+    parties: tuple[str, str],
+    cause: str,
+    actor: str | None,
+) -> None:
+    """Fan a treaty-termination event to the two parties only.
+
+    ``cause`` is one of ``cancelled`` / ``violated`` / ``expired``. Active
+    treaties are technically public in ``redact_state`` (third parties who
+    have discovered both parties can see them on a ``turn.resolved``
+    refetch), but the live delta is only relevant to the two parties —
+    keeping the scope tight here avoids reintroducing a third-party
+    polling signal that the state refetch already covers.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "diplomacy.treaty_cancelled",
+            "game_id": game_id,
+            "treaty_id": treaty_id,
+            "parties": list(parties),
+            "cause": cause,
+            "actor": actor,
+        },
+        visible_to=parties,
+    )

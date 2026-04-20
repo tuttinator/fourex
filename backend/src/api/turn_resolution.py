@@ -28,6 +28,7 @@ from ..game.models import (
     BuildImprovementAction,
     CancelTreatyAction,
     DeclareWarAction,
+    DiplomaticEventType,
     FoundCityAction,
     GameState,
     MoveAction,
@@ -40,6 +41,9 @@ from ..game.models import (
 from ..game.rules import redact_state, resolve_turn
 from .websocket import (
     broadcast_diplomacy_message_received,
+    broadcast_diplomacy_proposal_received,
+    broadcast_diplomacy_proposal_responded,
+    broadcast_diplomacy_treaty_cancelled,
     broadcast_player_action,
     broadcast_turn_end,
     broadcast_turn_resolved,
@@ -142,6 +146,19 @@ async def check_and_resolve_turn(
     # resolver appended and fan them out to sender+recipient only (Phase 7).
     existing_message_ids = {m.id for m in state.messages}
 
+    # Phase 8: snapshot treaty-lifecycle state before the resolver mutates
+    # it so the diff-based WS broadcasts know the parties of proposals or
+    # treaties that get *removed* during resolution (at which point they
+    # are gone from ``state`` and the event-payload alone would not tell
+    # us who to fan out to).
+    pre_proposals: dict[int, tuple[str, str]] = {
+        p.id: (p.proposer, p.recipient) for p in state.pending_proposals
+    }
+    pre_treaties: dict[int, tuple[str, str]] = {
+        t.id: (t.parties[0], t.parties[1]) for t in state.active_treaties
+    }
+    pre_event_next_id = state.next_event_id
+
     turn_result = resolve_turn(state, player_actions)
 
     for player in game.players:
@@ -194,6 +211,117 @@ async def check_and_resolve_turn(
             },
             visible_to=(message.sender, message.recipient),
         )
+
+    # Phase 8: fan out treaty-lifecycle WS events. Walk the diplomatic
+    # events the resolver appended this turn (anything with an id at or
+    # above our pre-resolve snapshot of ``next_event_id``) and translate
+    # each lifecycle-relevant event into one of three scoped broadcasts:
+    # proposal_received, proposal_responded, treaty_cancelled.
+    #
+    # Same ordering invariant as message_received: fired *after*
+    # ``turn.resolved`` so a client that refetches diplomacy state on the
+    # resolved event still picks up the per-lifecycle deltas to trigger
+    # UI transitions (e.g. move a proposal from pending to active, drop
+    # a cancelled treaty from the list).
+    _post_proposals = {p.id: p for p in state.pending_proposals}
+    for event in state.diplomatic_events:
+        if event.id < pre_event_next_id:
+            continue
+        etype = event.type
+        if etype == DiplomaticEventType.TREATY_PROPOSED:
+            proposal_id_raw = event.payload.get("proposal_id")
+            try:
+                proposal_id = int(proposal_id_raw) if proposal_id_raw else None
+            except (TypeError, ValueError):
+                proposal_id = None
+            if proposal_id is None:
+                continue
+            proposal = _post_proposals.get(proposal_id)
+            # Proposal might have been accepted/declined/withdrawn in the
+            # same turn (impossible in practice — the recipient would need
+            # to know an id that hadn't been minted yet — but defensive).
+            if proposal is None:
+                continue
+            await broadcast_diplomacy_proposal_received(
+                game_id,
+                {
+                    "id": proposal.id,
+                    "proposer": proposal.proposer,
+                    "recipient": proposal.recipient,
+                    "clauses": [c.model_dump(mode="json") for c in proposal.clauses],
+                    "turn_proposed": proposal.turn_proposed,
+                    "expires_on_turn": proposal.expires_on_turn,
+                },
+                visible_to=(proposal.proposer, proposal.recipient),
+            )
+        elif etype in (
+            DiplomaticEventType.PROPOSAL_ACCEPTED,
+            DiplomaticEventType.PROPOSAL_DECLINED,
+            DiplomaticEventType.PROPOSAL_WITHDRAWN,
+            DiplomaticEventType.PROPOSAL_EXPIRED,
+            DiplomaticEventType.PROPOSAL_FAILED_UNFUNDABLE,
+        ):
+            proposal_id_raw = event.payload.get("proposal_id")
+            try:
+                proposal_id = int(proposal_id_raw) if proposal_id_raw else None
+            except (TypeError, ValueError):
+                proposal_id = None
+            if proposal_id is None:
+                continue
+            parties = pre_proposals.get(proposal_id)
+            if parties is None:
+                continue
+            proposer, recipient = parties
+            outcome_map = {
+                DiplomaticEventType.PROPOSAL_ACCEPTED: "accepted",
+                DiplomaticEventType.PROPOSAL_DECLINED: "declined",
+                DiplomaticEventType.PROPOSAL_WITHDRAWN: "withdrawn",
+                DiplomaticEventType.PROPOSAL_EXPIRED: "expired",
+                DiplomaticEventType.PROPOSAL_FAILED_UNFUNDABLE: "failed_unfundable",
+            }
+            treaty_id: int | None = None
+            if etype == DiplomaticEventType.PROPOSAL_ACCEPTED:
+                treaty_id_raw = event.payload.get("treaty_id")
+                try:
+                    treaty_id = int(treaty_id_raw) if treaty_id_raw else None
+                except (TypeError, ValueError):
+                    treaty_id = None
+            await broadcast_diplomacy_proposal_responded(
+                game_id,
+                proposal_id=proposal_id,
+                proposer=proposer,
+                recipient=recipient,
+                outcome=outcome_map[etype],
+                treaty_id=treaty_id,
+                visible_to=(proposer, recipient),
+            )
+        elif etype in (
+            DiplomaticEventType.TREATY_CANCELLED,
+            DiplomaticEventType.TREATY_VIOLATED,
+            DiplomaticEventType.TREATY_EXPIRED,
+        ):
+            treaty_id_raw = event.payload.get("treaty_id")
+            try:
+                treaty_id = int(treaty_id_raw) if treaty_id_raw else None
+            except (TypeError, ValueError):
+                treaty_id = None
+            if treaty_id is None:
+                continue
+            parties = pre_treaties.get(treaty_id)
+            if parties is None:
+                continue
+            cause_map = {
+                DiplomaticEventType.TREATY_CANCELLED: "cancelled",
+                DiplomaticEventType.TREATY_VIOLATED: "violated",
+                DiplomaticEventType.TREATY_EXPIRED: "expired",
+            }
+            await broadcast_diplomacy_treaty_cancelled(
+                game_id,
+                treaty_id=treaty_id,
+                parties=parties,
+                cause=cause_map[etype],
+                actor=event.actor,
+            )
 
     # Game-end check: match the MCP-path behaviour — only score-by-max-turns
     # triggers here. Domination / economic / elimination victory detection

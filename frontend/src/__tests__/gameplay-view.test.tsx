@@ -220,10 +220,18 @@ function stubDiplomacy(
 			player_b: string;
 			state: "peace" | "alliance" | "war";
 		}>;
+		pending_proposals: Array<{
+			id: number;
+			proposer: string;
+			recipient: string;
+			clauses: Array<Record<string, unknown>>;
+			turn_proposed: number;
+			expires_on_turn: number;
+		}>;
 		active_treaties: Array<{
 			id: number;
 			parties: [string, string];
-			clauses: [];
+			clauses: Array<Record<string, unknown>>;
 			turn_ratified: number;
 		}>;
 	}> = {},
@@ -238,7 +246,9 @@ function stubDiplomacy(
 		],
 		events: [],
 		messages: overrides.messages ?? [],
-		pending_proposals: [],
+		// @ts-expect-error — test fixture uses open shape for clause dicts
+		pending_proposals: overrides.pending_proposals ?? [],
+		// @ts-expect-error — test fixture uses open shape for clause dicts
 		active_treaties: overrides.active_treaties ?? [],
 	});
 }
@@ -957,5 +967,148 @@ describe("GameplayView", () => {
 			).toHaveAttribute("data-unread", "true"),
 		);
 		expect(screen.getByTestId("diplomacy-unread-bob")).toHaveTextContent("1");
+	});
+
+	// --- Phase 8: treaty lifecycle ---------------------------------------
+
+	it("accepting an inbound proposal queues RESPOND_TO_TREATY(accept=true)", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy({
+			pending_proposals: [
+				{
+					id: 42,
+					proposer: "bob",
+					recipient: "alice",
+					clauses: [{ clause_type: "free_text", text: "friends?" }],
+					turn_proposed: sampleState.turn,
+					expires_on_turn: sampleState.turn + 3,
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-opponent-bob")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-accept-42")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("diplomacy-accept-42"));
+		expect(
+			screen.getByText(/Accept proposal #42/),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{ type: "RESPOND_TO_TREATY", proposal_id: 42, accept: true },
+		]);
+	});
+
+	it("proposing a free-text treaty queues PROPOSE_TREATY on End Turn", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy();
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-opponent-bob")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-propose-toggle")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("diplomacy-propose-toggle"));
+		fireEvent.click(screen.getByTestId("diplomacy-propose-kind-free_text"));
+		fireEvent.change(screen.getByTestId("diplomacy-propose-free-text"), {
+			target: { value: "let us be friends" },
+		});
+		fireEvent.click(screen.getByTestId("diplomacy-propose-submit"));
+
+		expect(
+			screen.getByText(/Propose treaty → bob \(free text\)/),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{
+				type: "PROPOSE_TREATY",
+				recipient: "bob",
+				clauses: [{ clause_type: "free_text", text: "let us be friends" }],
+			},
+		]);
+	});
+
+	it("cancelling an active treaty queues CANCEL_TREATY on End Turn", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy({
+			active_treaties: [
+				{
+					id: 7,
+					parties: ["alice", "bob"],
+					clauses: [{ clause_type: "free_text", text: "nap" }],
+					turn_ratified: 1,
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-opponent-bob")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-cancel-treaty-7"),
+			).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("diplomacy-cancel-treaty-7"));
+		expect(screen.getByText(/Cancel treaty #7/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{ type: "CANCEL_TREATY", treaty_id: 7 },
+		]);
 	});
 });
