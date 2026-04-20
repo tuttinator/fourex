@@ -424,13 +424,20 @@ export interface BuildBuildingActionPayload {
 	building_type: BuildingType;
 }
 
+export interface SendMessageActionPayload {
+	type: "SEND_MESSAGE";
+	recipient: PlayerId;
+	body: string;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
 	| FoundCityActionPayload
 	| BuildImprovementActionPayload
 	| TrainUnitActionPayload
-	| BuildBuildingActionPayload;
+	| BuildBuildingActionPayload
+	| SendMessageActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

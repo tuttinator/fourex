@@ -36,11 +36,14 @@ import {
 import {
   AlertCircle,
   Building2,
+  ChevronLeft,
   Check,
   Clock,
   Hammer,
+  Handshake,
   Landmark,
   Loader2,
+  MessageSquare,
   RefreshCw,
   Send,
   Sparkles,
@@ -70,6 +73,9 @@ import type {
   BuildableBuildingsResponse,
   CanFoundCityResponse,
   Coord,
+  DiplomacyMessage,
+  DiplomacyRelation,
+  DiplomacyStateResponse,
   GameAction,
   GameState,
   PlayerId,
@@ -78,6 +84,7 @@ import type {
   Tile,
   TrainableUnit,
   TrainableUnitsResponse,
+  TreatyRecord,
   TurnSubmissionsResponse,
   Unit,
   ValidAttacksResponse,
@@ -85,6 +92,7 @@ import type {
   ValidImprovementsResponse,
   ValidMovesResponse,
 } from '@/types/game'
+import { MESSAGE_BODY_MAX_LENGTH } from '@/types/game'
 
 const ACTIVE_POLL_INTERVAL = 5000
 
@@ -116,6 +124,13 @@ function describeAction(action: GameAction): string {
       return `Train ${action.unit_type} @ city #${action.city_id}`
     case 'BUILD_BUILDING':
       return `Build ${action.building_type} @ city #${action.city_id}`
+    case 'SEND_MESSAGE': {
+      const preview =
+        action.body.length > 40
+          ? `${action.body.slice(0, 37)}…`
+          : action.body
+      return `Message → ${action.recipient}: ${preview}`
+    }
   }
 }
 
@@ -267,6 +282,16 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const [submittedPlayers, setSubmittedPlayers] = useState<Set<PlayerId>>(
     () => new Set(),
   )
+  // Phase 7: diplomacy thread selection and per-opponent unread counter.
+  // ``lastSeenMessageIds[opponent]`` is the highest message id the local
+  // user has already seen in the thread with that opponent; anything
+  // above it contributes to the unread badge. Opening a thread bumps
+  // the high-water mark to the latest id in that thread.
+  const [selectedOpponent, setSelectedOpponent] =
+    useState<PlayerId | null>(null)
+  const [lastSeenMessageIds, setLastSeenMessageIds] = useState<
+    Record<PlayerId, number>
+  >({})
 
   const { lastEvent } = useLobbyEvents(gameId)
 
@@ -326,6 +351,21 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     const next = new Set(turnSubmissions.submitted_players)
     queueMicrotask(() => setSubmittedPlayers(next))
   }, [turnSubmissions])
+
+  // ---- Diplomacy state (Phase 7) -----------------------------------------
+  //
+  // The full diplomacy slice (relations, treaties, messages) is fetched
+  // off the shared ``/diplomacy`` endpoint. Refetches are driven by
+  // ``turn.resolved`` (below, in the existing handler) and by a
+  // ``diplomacy.message_received`` live event. The stale poll is off —
+  // the event surface is authoritative here.
+
+  const diplomacyQueryKey = queryKeys.diplomacy(gameId)
+  const { data: diplomacyState } = useQuery<DiplomacyStateResponse | null>({
+    queryKey: diplomacyQueryKey,
+    queryFn: () => api.getDiplomacy(gameId),
+    enabled: gameState != null,
+  })
 
   // ---- Per-unit affordance queries ---------------------------------------
 
@@ -639,7 +679,47 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     queryClient.invalidateQueries({
       queryKey: queryKeys.gameDetail(gameId),
     })
-  }, [lastEvent, queryClient, stateQueryKey, gameId])
+    queryClient.invalidateQueries({ queryKey: diplomacyQueryKey })
+  }, [lastEvent, queryClient, stateQueryKey, gameId, diplomacyQueryKey])
+
+  // Phase 7: diplomacy.message_received. The backend scopes this event
+  // to sender+recipient connections only, so we can invalidate the
+  // diplomacy query on any frame we see and bump the unread counter for
+  // the *other* party in that thread (i.e. the sender, from our vantage
+  // point — our own echoes don't count as unread).
+  useEffect(() => {
+    if (!lastEvent || lastEvent.type !== 'diplomacy.message_received') return
+    const payload = lastEvent as unknown as {
+      message?: {
+        id: number
+        sender: PlayerId
+        recipient: PlayerId
+        body: string
+        turn_sent: number
+      }
+    }
+    const msg = payload.message
+    if (!msg) return
+    queryClient.invalidateQueries({ queryKey: diplomacyQueryKey })
+    // If we're already looking at the thread with this counterparty,
+    // mark the new message as seen so the badge doesn't tick up only to
+    // be cleared on the next render.
+    const counterparty = msg.sender === currentPlayer ? msg.recipient : msg.sender
+    if (counterparty === selectedOpponent) {
+      queueMicrotask(() =>
+        setLastSeenMessageIds((prev) => ({
+          ...prev,
+          [counterparty]: Math.max(prev[counterparty] ?? 0, msg.id),
+        })),
+      )
+    }
+  }, [
+    lastEvent,
+    queryClient,
+    diplomacyQueryKey,
+    currentPlayer,
+    selectedOpponent,
+  ])
 
   // Phase 6: fold turn.submitted deltas into the roster set. The event
   // payload carries the full snapshot ("submitted_players") so we trust
@@ -827,6 +907,44 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             players={gameState.players}
             currentPlayer={currentPlayer}
             submittedPlayers={submittedPlayers}
+          />
+
+          {/* Diplomacy panel (Phase 7) */}
+          <DiplomacyPanel
+            currentPlayer={currentPlayer}
+            diplomacy={diplomacyState ?? null}
+            selectedOpponent={selectedOpponent}
+            onSelectOpponent={(opponent) => {
+              setSelectedOpponent(opponent)
+              // Viewing the thread clears unread: advance the high-water
+              // mark to the latest message id visible between us and
+              // ``opponent``.
+              if (opponent && diplomacyState) {
+                const maxId = diplomacyState.messages.reduce((acc, m) => {
+                  if (
+                    (m.sender === currentPlayer && m.recipient === opponent) ||
+                    (m.sender === opponent && m.recipient === currentPlayer)
+                  ) {
+                    return Math.max(acc, m.id)
+                  }
+                  return acc
+                }, lastSeenMessageIds[opponent] ?? 0)
+                setLastSeenMessageIds((prev) => ({
+                  ...prev,
+                  [opponent]: maxId,
+                }))
+              }
+            }}
+            lastSeenMessageIds={lastSeenMessageIds}
+            pendingQueuedForOpponent={queue
+              .map((q) => q.action)
+              .filter(
+                (a): a is Extract<GameAction, { type: 'SEND_MESSAGE' }> =>
+                  a.type === 'SEND_MESSAGE',
+              )}
+            onQueueMessage={(recipient, body) =>
+              appendToQueue({ type: 'SEND_MESSAGE', recipient, body })
+            }
           />
 
           {/* Queue panel */}
@@ -1130,6 +1248,324 @@ function CityPanel({
             )}
           </TabsContent>
         </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface DiplomacyPanelProps {
+  currentPlayer: PlayerId
+  diplomacy: DiplomacyStateResponse | null
+  selectedOpponent: PlayerId | null
+  onSelectOpponent: (opponent: PlayerId | null) => void
+  lastSeenMessageIds: Record<PlayerId, number>
+  pendingQueuedForOpponent: Array<{
+    type: 'SEND_MESSAGE'
+    recipient: PlayerId
+    body: string
+  }>
+  onQueueMessage: (recipient: PlayerId, body: string) => void
+}
+
+interface DiplomacyThreadViewProps {
+  currentPlayer: PlayerId
+  diplomacy: DiplomacyStateResponse
+  opponent: PlayerId
+  pendingQueuedForOpponent: Array<{
+    type: 'SEND_MESSAGE'
+    recipient: PlayerId
+    body: string
+  }>
+  onSelectOpponent: (opponent: PlayerId | null) => void
+  onQueueMessage: (recipient: PlayerId, body: string) => void
+}
+
+function DiplomacyThreadView({
+  currentPlayer,
+  diplomacy,
+  opponent,
+  pendingQueuedForOpponent,
+  onSelectOpponent,
+  onQueueMessage,
+}: DiplomacyThreadViewProps) {
+  const [draft, setDraft] = useState('')
+  const thread: DiplomacyMessage[] = diplomacy.messages
+    .filter(
+      (m) =>
+        (m.sender === currentPlayer && m.recipient === opponent) ||
+        (m.sender === opponent && m.recipient === currentPlayer),
+    )
+    .sort((a, b) => a.id - b.id)
+  const queuedOutbound = pendingQueuedForOpponent.filter(
+    (a) => a.recipient === opponent,
+  )
+  const relation = findRelation(diplomacy.relations, currentPlayer, opponent)
+  const rel = relationLabel(relation)
+  const overLimit = draft.length > MESSAGE_BODY_MAX_LENGTH
+  const canSend = draft.trim().length > 0 && !overLimit
+
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm flex items-center justify-between gap-2">
+          <button
+            className="flex items-center gap-1 hover:underline"
+            onClick={() => onSelectOpponent(null)}
+            aria-label="Back to diplomacy overview"
+            data-testid="diplomacy-back"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="truncate">{opponent}</span>
+          </button>
+          <span className={`text-xs ${rel.className}`}>{rel.label}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-0">
+        <div
+          className="max-h-52 overflow-y-auto space-y-1 rounded border bg-muted/20 p-2"
+          data-testid="diplomacy-thread"
+        >
+          {thread.length === 0 && queuedOutbound.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No messages yet. Send the first line to open the channel.
+            </p>
+          ) : (
+            <>
+              {thread.map((m) => {
+                const mine = m.sender === currentPlayer
+                return (
+                  <div
+                    key={m.id}
+                    className={`text-xs ${mine ? 'text-right' : 'text-left'}`}
+                    data-testid={`diplomacy-message-${m.id}`}
+                  >
+                    <div
+                      className={`inline-block rounded px-2 py-1 ${
+                        mine
+                          ? 'bg-primary/10 text-primary-foreground/90'
+                          : 'bg-background border'
+                      }`}
+                    >
+                      <span className="block font-medium text-[10px] text-muted-foreground">
+                        {mine ? 'you' : m.sender} · turn {m.turn_sent}
+                      </span>
+                      <span className="whitespace-pre-wrap">{m.body}</span>
+                    </div>
+                  </div>
+                )
+              })}
+              {queuedOutbound.map((q, idx) => (
+                <div
+                  key={`queued-${idx}`}
+                  className="text-xs text-right opacity-60"
+                  data-testid="diplomacy-message-queued"
+                >
+                  <div className="inline-block rounded border border-dashed px-2 py-1">
+                    <span className="block font-medium text-[10px] text-muted-foreground">
+                      queued · sends on End Turn
+                    </span>
+                    <span className="whitespace-pre-wrap">{q.body}</span>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        <div className="space-y-1">
+          <textarea
+            className="w-full min-h-16 resize-none rounded border bg-background px-2 py-1 text-xs"
+            placeholder="Compose a private message…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            data-testid="diplomacy-compose"
+            maxLength={MESSAGE_BODY_MAX_LENGTH + 1}
+          />
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>
+              {draft.length}/{MESSAGE_BODY_MAX_LENGTH}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canSend}
+              onClick={() => {
+                onQueueMessage(opponent, draft.trim())
+                setDraft('')
+              }}
+              data-testid="diplomacy-send"
+            >
+              <Send className="h-3.5 w-3.5 mr-1" />
+              Queue message
+            </Button>
+          </div>
+          {overLimit && (
+            <p className="text-[10px] text-destructive">
+              Message exceeds the {MESSAGE_BODY_MAX_LENGTH}-character limit.
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function relationLabel(
+  relation: 'peace' | 'alliance' | 'war',
+): { label: string; className: string } {
+  switch (relation) {
+    case 'war':
+      return { label: 'at war', className: 'text-destructive' }
+    case 'alliance':
+      return { label: 'allied', className: 'text-emerald-600' }
+    default:
+      return { label: 'peace', className: 'text-muted-foreground' }
+  }
+}
+
+function findRelation(
+  relations: DiplomacyRelation[],
+  a: PlayerId,
+  b: PlayerId,
+): 'peace' | 'alliance' | 'war' {
+  for (const r of relations) {
+    if (
+      (r.player_a === a && r.player_b === b) ||
+      (r.player_a === b && r.player_b === a)
+    ) {
+      return r.state
+    }
+  }
+  return 'peace'
+}
+
+function treatiesFor(
+  treaties: TreatyRecord[],
+  a: PlayerId,
+  b: PlayerId,
+): TreatyRecord[] {
+  return treaties.filter(
+    (t) =>
+      (t.parties[0] === a && t.parties[1] === b) ||
+      (t.parties[0] === b && t.parties[1] === a),
+  )
+}
+
+/** Phase 7 diplomacy sidebar panel.
+ *
+ * Top view: list of every *other* discovered player with their relation
+ * state, treaty count, and an unread-message badge derived from
+ * ``diplomacy.message_received`` events that arrived while a thread was
+ * closed. Clicking an opponent drills into the thread view — a scrolling
+ * message log plus a compose form that queues a ``SEND_MESSAGE`` action
+ * into the shared End-Turn queue (not a fire-and-forget REST call), so
+ * the PRD's "queued-until-End-Turn" invariant holds for diplomacy too.
+ */
+function DiplomacyPanel({
+  currentPlayer,
+  diplomacy,
+  selectedOpponent,
+  onSelectOpponent,
+  lastSeenMessageIds,
+  pendingQueuedForOpponent,
+  onQueueMessage,
+}: DiplomacyPanelProps) {
+  if (!diplomacy) {
+    return (
+      <Card className="rounded-none border-0 border-b">
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Handshake className="h-4 w-4" />
+            Diplomacy
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const opponents = diplomacy.discovered.filter((p) => p !== currentPlayer)
+
+  if (selectedOpponent) {
+    return (
+      <DiplomacyThreadView
+        key={selectedOpponent}
+        currentPlayer={currentPlayer}
+        diplomacy={diplomacy}
+        opponent={selectedOpponent}
+        pendingQueuedForOpponent={pendingQueuedForOpponent}
+        onSelectOpponent={onSelectOpponent}
+        onQueueMessage={onQueueMessage}
+      />
+    )
+  }
+
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Handshake className="h-4 w-4" />
+          Diplomacy
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1 pt-0">
+        {opponents.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No other players discovered yet.
+          </p>
+        ) : (
+          opponents.map((opponent) => {
+            const relation = findRelation(
+              diplomacy.relations,
+              currentPlayer,
+              opponent,
+            )
+            const rel = relationLabel(relation)
+            const treaties = treatiesFor(
+              diplomacy.active_treaties,
+              currentPlayer,
+              opponent,
+            )
+            const lastSeen = lastSeenMessageIds[opponent] ?? 0
+            const unread = diplomacy.messages.filter(
+              (m) =>
+                m.sender === opponent &&
+                m.recipient === currentPlayer &&
+                m.id > lastSeen,
+            ).length
+            return (
+              <button
+                key={opponent}
+                onClick={() => onSelectOpponent(opponent)}
+                className="w-full flex items-center justify-between text-xs rounded px-2 py-1.5 hover:bg-muted/50 border"
+                data-testid={`diplomacy-opponent-${opponent}`}
+                data-unread={unread > 0 ? 'true' : 'false'}
+              >
+                <span className="flex flex-col items-start">
+                  <span className="font-medium truncate">{opponent}</span>
+                  <span className={`text-[10px] ${rel.className}`}>
+                    {rel.label}
+                    {treaties.length > 0 &&
+                      ` · ${treaties.length} treat${treaties.length === 1 ? 'y' : 'ies'}`}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1">
+                  {unread > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-4 px-1 text-[10px]"
+                      data-testid={`diplomacy-unread-${opponent}`}
+                    >
+                      {unread}
+                    </Badge>
+                  )}
+                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                </span>
+              </button>
+            )
+          })
+        )}
       </CardContent>
     </Card>
   )

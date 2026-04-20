@@ -205,9 +205,48 @@ function stubMySubmission(submitted = false) {
 	});
 }
 
+function stubDiplomacy(
+	overrides: Partial<{
+		discovered: string[];
+		messages: Array<{
+			id: number;
+			sender: string;
+			recipient: string;
+			body: string;
+			turn_sent: number;
+		}>;
+		relations: Array<{
+			player_a: string;
+			player_b: string;
+			state: "peace" | "alliance" | "war";
+		}>;
+		active_treaties: Array<{
+			id: number;
+			parties: [string, string];
+			clauses: [];
+			turn_ratified: number;
+		}>;
+	}> = {},
+) {
+	return vi.spyOn(api, "getDiplomacy").mockResolvedValue({
+		game_id: "g1",
+		player: "alice",
+		turn: sampleState.turn,
+		discovered: overrides.discovered ?? ["alice", "bob"],
+		relations: overrides.relations ?? [
+			{ player_a: "alice", player_b: "bob", state: "peace" },
+		],
+		events: [],
+		messages: overrides.messages ?? [],
+		pending_proposals: [],
+		active_treaties: overrides.active_treaties ?? [],
+	});
+}
+
 function stubAffordanceQueries() {
 	stubTurnSubmissions();
 	stubMySubmission();
+	stubDiplomacy();
 	vi.spyOn(api, "getValidAttacks").mockResolvedValue({
 		game_id: "g1",
 		unit_id: 1,
@@ -420,6 +459,9 @@ describe("GameplayView", () => {
 
 	it("clicking an attack-target tile queues an ATTACK", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubDiplomacy();
+		stubMySubmission();
+		stubTurnSubmissions();
 		vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -503,6 +545,9 @@ describe("GameplayView", () => {
 
 	it("Found City control queues a FOUND_CITY for the selected worker", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubDiplomacy();
+		stubMySubmission();
+		stubTurnSubmissions();
 		vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -610,6 +655,7 @@ describe("GameplayView", () => {
 		});
 		stubMySubmission();
 		stubTurnSubmissions(["bob"]);
+		stubDiplomacy();
 
 		const client = newClient();
 		const { rerender } = render(
@@ -688,6 +734,7 @@ describe("GameplayView", () => {
 		});
 		stubMySubmission();
 		stubTurnSubmissions(["alice", "bob"]);
+		stubDiplomacy();
 
 		const client = newClient();
 		const { rerender } = render(
@@ -768,5 +815,147 @@ describe("GameplayView", () => {
 		expect(submit.mock.calls[0][1]).toEqual([
 			{ type: "TRAIN_UNIT", city_id: 11, unit_type: "scout" },
 		]);
+	});
+
+	// --- Phase 7: diplomacy panel ----------------------------------------
+
+	it("diplomacy panel lists opponents, renders the thread, and queues a SEND_MESSAGE on End Turn", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy({
+			messages: [
+				{
+					id: 1,
+					sender: "bob",
+					recipient: "alice",
+					body: "parley?",
+					turn_sent: 2,
+				},
+			],
+			active_treaties: [
+				{
+					id: 7,
+					parties: ["alice", "bob"],
+					clauses: [],
+					turn_ratified: 1,
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Unread badge surfaces bob's prior message.
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-unread-bob"),
+			).toBeInTheDocument(),
+		);
+
+		// Opening the thread with bob clears the unread badge.
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-message-1")).toBeInTheDocument(),
+		);
+		expect(screen.queryByTestId("diplomacy-unread-bob")).toBeNull();
+
+		// Compose and queue an outbound message.
+		const textarea = screen.getByTestId("diplomacy-compose");
+		fireEvent.change(textarea, { target: { value: "counter-offer" } });
+		fireEvent.click(screen.getByTestId("diplomacy-send"));
+
+		// The queued line is reflected both in the thread preview and in
+		// the shared Queued-orders sidebar.
+		expect(screen.getByTestId("diplomacy-message-queued")).toBeInTheDocument();
+		expect(
+			screen.getByText(/Message → bob: counter-offer/),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{
+				type: "SEND_MESSAGE",
+				recipient: "bob",
+				body: "counter-offer",
+			},
+		]);
+	});
+
+	it("diplomacy.message_received bumps the unread badge for the sender's thread", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		// Start with no prior messages — the delta comes from the event.
+		const diplomacy = stubDiplomacy({ messages: [] });
+
+		const client = newClient();
+		const { rerender } = render(
+			<GameplayView gameId="g1" currentPlayer="alice" />,
+			{ wrapper: wrapper(client) },
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-opponent-bob"),
+			).toHaveAttribute("data-unread", "false"),
+		);
+
+		// Flip the stub to include the new message so the query
+		// invalidation triggered by the event refetches the updated body.
+		diplomacy.mockResolvedValue({
+			game_id: "g1",
+			player: "alice",
+			turn: sampleState.turn,
+			discovered: ["alice", "bob"],
+			relations: [{ player_a: "alice", player_b: "bob", state: "peace" }],
+			events: [],
+			messages: [
+				{
+					id: 9,
+					sender: "bob",
+					recipient: "alice",
+					body: "new intel",
+					turn_sent: sampleState.turn,
+				},
+			],
+			pending_proposals: [],
+			active_treaties: [],
+		});
+
+		act(() => {
+			_lastEvent = {
+				type: "diplomacy.message_received",
+				game_id: "g1",
+				// @ts-expect-error open shape
+				message: {
+					id: 9,
+					sender: "bob",
+					recipient: "alice",
+					body: "new intel",
+					turn_sent: sampleState.turn,
+				},
+			};
+		});
+		rerender(<GameplayView gameId="g1" currentPlayer="alice" />);
+
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-opponent-bob"),
+			).toHaveAttribute("data-unread", "true"),
+		);
+		expect(screen.getByTestId("diplomacy-unread-bob")).toHaveTextContent("1");
 	});
 });

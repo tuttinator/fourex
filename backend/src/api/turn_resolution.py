@@ -39,6 +39,7 @@ from ..game.models import (
 )
 from ..game.rules import redact_state, resolve_turn
 from .websocket import (
+    broadcast_diplomacy_message_received,
     broadcast_player_action,
     broadcast_turn_end,
     broadcast_turn_resolved,
@@ -137,6 +138,10 @@ async def check_and_resolve_turn(
                 },
             )
 
+    # Snapshot the existing message IDs so we can diff which ones the
+    # resolver appended and fan them out to sender+recipient only (Phase 7).
+    existing_message_ids = {m.id for m in state.messages}
+
     turn_result = resolve_turn(state, player_actions)
 
     for player in game.players:
@@ -167,6 +172,28 @@ async def check_and_resolve_turn(
 
     await broadcast_turn_end(game_id, state.turn)
     await broadcast_turn_resolved(game_id, state.turn)
+
+    # Phase 7: emit one ``diplomacy.message_received`` per message the
+    # resolver accepted this turn. Scoped to sender+recipient only so the
+    # event stream honours message privacy (see ``redact_state``). Fired
+    # after ``turn.resolved`` so clients that refetch the diplomacy state
+    # on ``turn.resolved`` still pick up the per-event unread-badge
+    # deltas — the order is "authoritative state refresh first, then
+    # per-message signals".
+    for message in state.messages:
+        if message.id in existing_message_ids:
+            continue
+        await broadcast_diplomacy_message_received(
+            game_id,
+            {
+                "id": message.id,
+                "sender": message.sender,
+                "recipient": message.recipient,
+                "body": message.body,
+                "turn_sent": message.turn_sent,
+            },
+            visible_to=(message.sender, message.recipient),
+        )
 
     # Game-end check: match the MCP-path behaviour — only score-by-max-turns
     # triggers here. Domination / economic / elimination victory detection

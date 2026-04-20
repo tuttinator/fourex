@@ -15,6 +15,7 @@ the namespace in their own phases.
 """
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
@@ -281,3 +282,31 @@ async def broadcast_diplomacy_event(game_id: str, event: dict) -> None:
     await manager.broadcast_to_game(
         game_id, {"type": "diplomacy", "game_id": game_id, **event}
     )
+
+
+async def broadcast_diplomacy_message_received(
+    game_id: str,
+    message: dict,
+    visible_to: Iterable[str],
+) -> None:
+    """Fan a newly-delivered private message to only its sender and recipient.
+
+    Phase 7 diplomacy-panel visibility: when ``resolve_turn()`` accepts a
+    ``SEND_MESSAGE`` action the resulting ``Message`` is appended to
+    ``state.messages`` and ``redact_state`` scopes visibility to the
+    sender/recipient pair. This broadcast mirrors that scoping at the
+    socket level so opponents subscribed to the same game don't see the
+    body — a game-wide fan-out would be a privacy leak because it
+    reveals both the contents and the existence of the exchange.
+    """
+    audience = {p for p in visible_to if p}
+    if not audience:
+        return
+    payload = {
+        "type": "diplomacy.message_received",
+        "game_id": game_id,
+        "message": message,
+    }
+    for conn in manager.connections_for_game(game_id):
+        if conn.player_id in audience:
+            await manager._send(conn, payload)
