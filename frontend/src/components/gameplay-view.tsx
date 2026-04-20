@@ -151,6 +151,8 @@ function describeAction(action: GameAction): string {
       return `Withdraw proposal #${action.proposal_id}`
     case 'CANCEL_TREATY':
       return `Cancel treaty #${action.treaty_id}`
+    case 'DECLARE_WAR':
+      return `Declare war on ${action.target_player}`
   }
 }
 
@@ -741,9 +743,10 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     selectedOpponent,
   ])
 
-  // Phase 8: treaty-lifecycle live updates. Any of the three new
-  // lifecycle events invalidates the diplomacy query so the panel
-  // reflects the post-resolution pending/active lists — the events are
+  // Phase 8 / Phase 9: diplomacy lifecycle live updates. Any of the
+  // scoped diplomacy events (treaty proposal/response/cancellation from
+  // Phase 8 + war declaration from Phase 9) invalidates the diplomacy
+  // query so the panel reflects post-resolution state. The events are
   // already scoped to the parties on the server so receiving a frame is
   // itself enough evidence we need to refetch.
   useEffect(() => {
@@ -752,7 +755,8 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     if (
       t !== 'diplomacy.proposal_received' &&
       t !== 'diplomacy.proposal_responded' &&
-      t !== 'diplomacy.treaty_cancelled'
+      t !== 'diplomacy.treaty_cancelled' &&
+      t !== 'diplomacy.war_declared'
     ) {
       return
     }
@@ -989,6 +993,9 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             }
             onQueueCancelTreaty={(treaty_id) =>
               appendToQueue({ type: 'CANCEL_TREATY', treaty_id })
+            }
+            onQueueDeclareWar={(target_player) =>
+              appendToQueue({ type: 'DECLARE_WAR', target_player })
             }
           />
 
@@ -1310,6 +1317,7 @@ interface DiplomacyPanelProps {
   onQueueRespondToTreaty: (proposalId: number, accept: boolean) => void
   onQueueWithdrawTreaty: (proposalId: number) => void
   onQueueCancelTreaty: (treatyId: number) => void
+  onQueueDeclareWar: (target: PlayerId) => void
 }
 
 interface DiplomacyThreadViewProps {
@@ -1323,6 +1331,7 @@ interface DiplomacyThreadViewProps {
   onQueueRespondToTreaty: (proposalId: number, accept: boolean) => void
   onQueueWithdrawTreaty: (proposalId: number) => void
   onQueueCancelTreaty: (treatyId: number) => void
+  onQueueDeclareWar: (target: PlayerId) => void
 }
 
 function describeClause(clause: TreatyClause): string {
@@ -1349,7 +1358,9 @@ function DiplomacyThreadView({
   onQueueRespondToTreaty,
   onQueueWithdrawTreaty,
   onQueueCancelTreaty,
+  onQueueDeclareWar,
 }: DiplomacyThreadViewProps) {
+  const [confirmingWar, setConfirmingWar] = useState(false)
   const [draft, setDraft] = useState('')
   const thread: DiplomacyMessage[] = diplomacy.messages
     .filter(
@@ -1410,6 +1421,14 @@ function DiplomacyThreadView({
     (a): a is Extract<GameAction, { type: 'PROPOSE_TREATY' }> =>
       a.type === 'PROPOSE_TREATY' && a.recipient === opponent,
   )
+
+  // Phase 9: a queued DECLARE_WAR against this opponent disables the
+  // button so the user can't double-queue the same declaration.
+  const warAlreadyQueued = queuedActions.some(
+    (a) => a.type === 'DECLARE_WAR' && a.target_player === opponent,
+  )
+  const canDeclareWar = relation === 'peace' && !warAlreadyQueued
+  const affectedTreatyCount = activeTreaties.length
 
   return (
     <Card className="rounded-none border-0 border-b">
@@ -1603,6 +1622,68 @@ function DiplomacyThreadView({
           queuedProposalsCount={queuedProposalsForOpponent.length}
           onQueueProposeTreaty={onQueueProposeTreaty}
         />
+
+        {/* Phase 9: Declare War affordance. Only visible while the
+            relation is peace; the two-step confirm spells out the
+            consequences (treaties cancelled, relation flips to war)
+            before anything lands on the queue. */}
+        {relation === 'peace' && (
+          <div
+            className="rounded border border-destructive/40 bg-destructive/5 p-2"
+            data-testid="diplomacy-declare-war-root"
+          >
+            {!confirmingWar ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="w-full text-xs"
+                disabled={!canDeclareWar}
+                onClick={() => setConfirmingWar(true)}
+                data-testid="diplomacy-declare-war-open"
+              >
+                <Swords className="h-3.5 w-3.5 mr-1" />
+                {warAlreadyQueued ? 'War queued' : 'Declare war'}
+              </Button>
+            ) : (
+              <div className="space-y-2 text-xs">
+                <p className="font-medium text-destructive">
+                  Declare war on {opponent}?
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Relation flips to war on End Turn.
+                  {affectedTreatyCount > 0 &&
+                    ` ${affectedTreatyCount} active treat${
+                      affectedTreatyCount === 1 ? 'y' : 'ies'
+                    } will be cancelled.`}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="flex-1 text-xs"
+                    onClick={() => {
+                      onQueueDeclareWar(opponent)
+                      setConfirmingWar(false)
+                    }}
+                    data-testid="diplomacy-declare-war-confirm"
+                  >
+                    <Swords className="h-3.5 w-3.5 mr-1" />
+                    Confirm
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-xs"
+                    onClick={() => setConfirmingWar(false)}
+                    data-testid="diplomacy-declare-war-cancel"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -2058,6 +2139,7 @@ function DiplomacyPanel({
   onQueueRespondToTreaty,
   onQueueWithdrawTreaty,
   onQueueCancelTreaty,
+  onQueueDeclareWar,
 }: DiplomacyPanelProps) {
   if (!diplomacy) {
     return (
@@ -2091,6 +2173,7 @@ function DiplomacyPanel({
         onQueueRespondToTreaty={onQueueRespondToTreaty}
         onQueueWithdrawTreaty={onQueueWithdrawTreaty}
         onQueueCancelTreaty={onQueueCancelTreaty}
+        onQueueDeclareWar={onQueueDeclareWar}
       />
     )
   }

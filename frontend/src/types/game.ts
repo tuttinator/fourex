@@ -452,6 +452,11 @@ export interface CancelTreatyActionPayload {
 	treaty_id: number;
 }
 
+export interface DeclareWarActionPayload {
+	type: "DECLARE_WAR";
+	target_player: PlayerId;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -463,7 +468,8 @@ export type GameAction =
 	| ProposeTreatyActionPayload
 	| RespondToTreatyActionPayload
 	| WithdrawTreatyActionPayload
-	| CancelTreatyActionPayload;
+	| CancelTreatyActionPayload
+	| DeclareWarActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

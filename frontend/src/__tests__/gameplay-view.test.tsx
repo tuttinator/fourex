@@ -1111,4 +1111,94 @@ describe("GameplayView", () => {
 			{ type: "CANCEL_TREATY", treaty_id: 7 },
 		]);
 	});
+
+	// --- Phase 9: declare war --------------------------------------------
+
+	it("declaring war opens a confirmation and queues DECLARE_WAR on End Turn", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy({
+			active_treaties: [
+				{
+					id: 3,
+					parties: ["alice", "bob"],
+					clauses: [{ clause_type: "free_text", text: "nap" }],
+					turn_ratified: 1,
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-opponent-bob")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-declare-war-open"),
+			).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("diplomacy-declare-war-open"));
+		// Confirmation surface mentions the treaty-cancellation consequence.
+		expect(
+			screen.getByText(/1 active treaty will be cancelled/),
+		).toBeInTheDocument();
+		// Cancelling hides the confirmation without queuing anything.
+		fireEvent.click(screen.getByTestId("diplomacy-declare-war-cancel"));
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("diplomacy-declare-war-open"),
+			).toBeInTheDocument(),
+		);
+
+		// Re-open and confirm.
+		fireEvent.click(screen.getByTestId("diplomacy-declare-war-open"));
+		fireEvent.click(screen.getByTestId("diplomacy-declare-war-confirm"));
+		expect(screen.getByText(/Declare war on bob/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{ type: "DECLARE_WAR", target_player: "bob" },
+		]);
+	});
+
+	it("the Declare War control is hidden when the relation is already war", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		stubDiplomacy({
+			relations: [{ player_a: "alice", player_b: "bob", state: "war" }],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-opponent-bob")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("diplomacy-opponent-bob"));
+		await waitFor(() =>
+			expect(screen.getByTestId("diplomacy-thread")).toBeInTheDocument(),
+		);
+		expect(
+			screen.queryByTestId("diplomacy-declare-war-open"),
+		).not.toBeInTheDocument();
+	});
 });

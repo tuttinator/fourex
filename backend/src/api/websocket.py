@@ -380,6 +380,35 @@ async def broadcast_diplomacy_proposal_responded(
     )
 
 
+async def broadcast_diplomacy_war_declared(
+    game_id: str,
+    actor: str,
+    target: str,
+    cause: str,
+) -> None:
+    """Fan a war-declaration event to the two parties only.
+
+    Phase 9 "Declare War" live updates. ``cause`` is one of
+    ``declaration`` (from an explicit ``DECLARE_WAR`` action) or
+    ``treacherous_attack`` (when a PEACE attack flips the relation to
+    WAR as a side effect). Scoped to the declarer + target pair because
+    the live delta only matters to those two — third parties who have
+    discovered both sides pick up the relation change on the next
+    ``turn.resolved`` state refetch, identically to ``treaty_cancelled``.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "diplomacy.war_declared",
+            "game_id": game_id,
+            "actor": actor,
+            "target": target,
+            "cause": cause,
+        },
+        visible_to=(actor, target),
+    )
+
+
 async def broadcast_diplomacy_treaty_cancelled(
     game_id: str,
     treaty_id: int,

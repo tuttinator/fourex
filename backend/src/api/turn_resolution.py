@@ -44,6 +44,7 @@ from .websocket import (
     broadcast_diplomacy_proposal_received,
     broadcast_diplomacy_proposal_responded,
     broadcast_diplomacy_treaty_cancelled,
+    broadcast_diplomacy_war_declared,
     broadcast_player_action,
     broadcast_turn_end,
     broadcast_turn_resolved,
@@ -294,6 +295,21 @@ async def check_and_resolve_turn(
                 outcome=outcome_map[etype],
                 treaty_id=treaty_id,
                 visible_to=(proposer, recipient),
+            )
+        elif etype == DiplomaticEventType.WAR_DECLARED:
+            # Phase 9: explicit DECLARE_WAR actions and treacherous-attack
+            # first-strikes both emit WAR_DECLARED; the ``cause`` payload
+            # field distinguishes them so clients can phrase the
+            # notification appropriately.
+            counterparty = event.counterparty
+            if counterparty is None:
+                continue
+            cause = str(event.payload.get("cause", "declaration"))
+            await broadcast_diplomacy_war_declared(
+                game_id,
+                actor=event.actor,
+                target=counterparty,
+                cause=cause,
             )
         elif etype in (
             DiplomaticEventType.TREATY_CANCELLED,
