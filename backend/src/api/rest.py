@@ -130,6 +130,51 @@ async def submit_actions(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/games/{game_id}/my-submission", tags=["state"])
+async def get_my_submission(
+    game_id: str,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Return the caller's submitted actions for the current turn.
+
+    Lets the frontend restore the queued-orders UI after a page refresh:
+    if the player has already submitted, the stored actions come back here
+    so the view can repopulate the queue and show "waiting for turn to
+    resolve". Returns ``submitted: false`` when nothing is on file.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    existing = await controller.repo.get_turn_action(
+        game_id, current_player, state.turn
+    )
+    if existing is None:
+        return {
+            "game_id": game_id,
+            "player": current_player,
+            "turn": state.turn,
+            "submitted": False,
+            "actions": [],
+        }
+
+    raw_list = (
+        existing.actions_json if isinstance(existing.actions_json, list) else []
+    )
+    return {
+        "game_id": game_id,
+        "player": current_player,
+        "turn": state.turn,
+        "submitted": True,
+        "actions": raw_list,
+        "submitted_at": (
+            existing.submitted_at.isoformat() if existing.submitted_at else None
+        ),
+    }
+
+
 @router.get("/games/{game_id}/units/{unit_id}/valid-moves", tags=["state"])
 async def get_unit_valid_moves(
     game_id: str,

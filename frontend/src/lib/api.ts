@@ -1,5 +1,7 @@
 import { getGameApiKey } from "@/lib/game-auth";
 import type {
+	BuildableBuildingsResponse,
+	CanFoundCityResponse,
 	CreateGameRequest,
 	CreateLobbyRequest,
 	DiplomacyStateResponse,
@@ -11,10 +13,14 @@ import type {
 	JoinLobbyRequest,
 	LobbyKeyResponse,
 	MessageListResponse,
+	MySubmissionResponse,
+	TrainableUnitsResponse,
 	TreatyClause,
 	TurnDetailResponse,
 	TurnListResponse,
 	TurnPromptsResponse,
+	ValidAttacksResponse,
+	ValidImprovementsResponse,
 	ValidMovesResponse,
 } from "@/types/game";
 
@@ -191,6 +197,56 @@ export const api = {
 		);
 	},
 
+	async getValidAttacks(
+		gameId: string,
+		unitId: number,
+	): Promise<ValidAttacksResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/units/${unitId}/valid-attacks`,
+			{ gameId },
+		);
+	},
+
+	async getCanFoundCity(
+		gameId: string,
+		unitId: number,
+	): Promise<CanFoundCityResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/units/${unitId}/can-found-city`,
+			{ gameId },
+		);
+	},
+
+	async getValidImprovements(
+		gameId: string,
+		unitId: number,
+	): Promise<ValidImprovementsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/units/${unitId}/valid-improvements`,
+			{ gameId },
+		);
+	},
+
+	async getTrainableUnits(
+		gameId: string,
+		cityId: number,
+	): Promise<TrainableUnitsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/cities/${cityId}/trainable-units`,
+			{ gameId },
+		);
+	},
+
+	async getBuildableBuildings(
+		gameId: string,
+		cityId: number,
+	): Promise<BuildableBuildingsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/cities/${cityId}/buildable-buildings`,
+			{ gameId },
+		);
+	},
+
 	async submitActions(
 		gameId: string,
 		actions: GameAction[],
@@ -200,6 +256,13 @@ export const api = {
 			body: JSON.stringify(actions),
 			gameId,
 		});
+	},
+
+	async getMySubmission(gameId: string): Promise<MySubmissionResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/my-submission`,
+			{ gameId },
+		);
 	},
 
 	async getGameStateAsPlayer(

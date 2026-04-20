@@ -9,6 +9,13 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from ...api.turn_resolution import (
+    TURN_TIMEOUT_SECONDS,
+    check_and_resolve_turn,
+)
+from ...api.turn_resolution import (
+    parse_action as _parse_action,
+)
 from ...auth import AuthError, authenticate
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
@@ -28,41 +35,7 @@ from ...game.models import (
     TrainUnitAction,
     WithdrawTreatyAction,
 )
-from ...game.rules import redact_state, resolve_turn
-
-# Turn timeout: 10 minutes.
-TURN_TIMEOUT_SECONDS = 600
-
-
-def _parse_action(raw: dict[str, Any]) -> Action:
-    """Parse a raw action dict into a typed Action."""
-    action_type = raw.get("type", "")
-    if action_type == "MOVE":
-        return MoveAction.model_validate(raw)
-    elif action_type == "ATTACK":
-        return AttackAction.model_validate(raw)
-    elif action_type == "FOUND_CITY":
-        return FoundCityAction.model_validate(raw)
-    elif action_type == "TRAIN_UNIT":
-        return TrainUnitAction.model_validate(raw)
-    elif action_type == "BUILD_IMPROVEMENT":
-        return BuildImprovementAction.model_validate(raw)
-    elif action_type == "BUILD_BUILDING":
-        return BuildBuildingAction.model_validate(raw)
-    elif action_type == "DECLARE_WAR":
-        return DeclareWarAction.model_validate(raw)
-    elif action_type == "SEND_MESSAGE":
-        return SendMessageAction.model_validate(raw)
-    elif action_type == "PROPOSE_TREATY":
-        return ProposeTreatyAction.model_validate(raw)
-    elif action_type == "RESPOND_TO_TREATY":
-        return RespondToTreatyAction.model_validate(raw)
-    elif action_type == "WITHDRAW_TREATY":
-        return WithdrawTreatyAction.model_validate(raw)
-    elif action_type == "CANCEL_TREATY":
-        return CancelTreatyAction.model_validate(raw)
-    else:
-        raise ValueError(f"Unknown action type: {action_type}")
+from ...game.rules import redact_state
 
 
 def _validate_actions_against_state(
@@ -124,104 +97,6 @@ def _validate_actions_against_state(
             continue
         results.append({"valid": r.success, "message": r.message})
     return results
-
-
-async def _check_and_resolve_turn(
-    repo: GameRepository, game_id: str
-) -> dict[str, Any] | None:
-    """Check if all players have submitted for the current turn.
-
-    If so, resolve the turn and advance. Returns turn result info or None.
-    """
-    game = await repo.get_game(game_id)
-    if game is None:
-        return None
-
-    state = GameState.model_validate(game.state)
-    current_turn = state.turn
-
-    submitted = await repo.get_all_turn_actions(game_id, current_turn)
-    submitted_players = {ta.player_id for ta in submitted}
-
-    all_submitted = set(game.players) == submitted_players
-
-    # Check timeout
-    timed_out = False
-    if not all_submitted and game.turn_started_at:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        elapsed = (now - game.turn_started_at).total_seconds()
-        if elapsed >= TURN_TIMEOUT_SECONDS:
-            timed_out = True
-
-    if not all_submitted and not timed_out:
-        return None
-
-    # Build player_actions dict for resolve_turn
-    player_actions: dict[str, list[Action]] = {}
-    for player in game.players:
-        ta = next((t for t in submitted if t.player_id == player), None)
-        if ta and ta.actions_json:
-            raw_list = ta.actions_json if isinstance(ta.actions_json, list) else []
-            player_actions[player] = [_parse_action(a) for a in raw_list]
-        else:
-            player_actions[player] = []
-
-    # Resolve the turn
-    turn_result = resolve_turn(state, player_actions)
-
-    # Save fog-of-war-redacted snapshots for each player
-    for player in game.players:
-        redacted = redact_state(state, player)
-        await repo.upsert_turn_snapshot(
-            game_id=game_id,
-            player_id=player,
-            turn_number=current_turn,
-            state_json=redacted.model_dump(mode="json"),
-        )
-
-    # Save periodic god-mode snapshots (every 10 turns) for replay
-    if state.turn % 10 == 0:
-        await repo.create_game_snapshot(
-            game_id=game_id,
-            turn_number=state.turn,
-            state=state,
-            snapshot_type="periodic",
-        )
-
-    # Save the turn result
-    await repo.save_turn_result(game_id, turn_result, player_actions)
-
-    # Update game state (turn counter already incremented by resolve_turn)
-    await repo.update_game_state(game_id, state)
-
-    # Reset turn_started_at for the new turn
-    from sqlalchemy import update as sa_update
-
-    from ...database.models import Game as GameModel
-
-    await repo.session.execute(
-        sa_update(GameModel)
-        .where(GameModel.id == game_id)
-        .values(turn_started_at=datetime.now(UTC).replace(tzinfo=None))
-    )
-
-    # Check if game should end (max turns reached)
-    if state.turn >= game.max_turns:
-        await repo.end_game(game_id, victory_type="score")
-        # Save final god-mode snapshot for replay
-        await repo.create_game_snapshot(
-            game_id=game_id,
-            turn_number=state.turn,
-            state=state,
-            snapshot_type="final",
-        )
-
-    return {
-        "turn_resolved": current_turn,
-        "new_turn": state.turn,
-        "timed_out": timed_out,
-        "skipped_players": [p for p in game.players if p not in submitted_players],
-    }
 
 
 def register(mcp: FastMCP) -> None:
@@ -373,7 +248,7 @@ def register(mcp: FastMCP) -> None:
             )
 
             # Check if this completes the turn
-            resolve_result = await _check_and_resolve_turn(repo, auth.game_id)
+            resolve_result = await check_and_resolve_turn(repo, auth.game_id)
 
             await session.commit()
 
@@ -510,7 +385,7 @@ def register(mcp: FastMCP) -> None:
                 and seconds_remaining <= 0
                 and len(submitted_players) < len(game.players)
             ):
-                resolve_result = await _check_and_resolve_turn(repo, auth.game_id)
+                resolve_result = await check_and_resolve_turn(repo, auth.game_id)
                 if resolve_result:
                     await session.commit()
                     # Re-fetch after resolution

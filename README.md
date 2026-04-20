@@ -102,6 +102,7 @@ When you open this project in Claude Code or Goose, the agent connects to the MC
 Once you've opened the project, try these prompts:
 
 **Claude Code:**
+
 ```
 Create a new 4X game with 2 AI players and play as player 1.
 Focus on economic growth early, then build military.
@@ -117,6 +118,7 @@ What are the nearest resources and where should I expand?
 ```
 
 **Goose:**
+
 ```
 Use the fourex-mcp tools to create a 2-player game with seed 42.
 Join as player 1 and play the first 10 turns with a balanced strategy.
@@ -138,8 +140,6 @@ mise run lint
 # Run tests with coverage
 mise run test-cov
 
-# Start with Docker Compose
-docker-compose up -d postgres redis
 mise run backend
 ```
 

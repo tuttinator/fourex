@@ -3,7 +3,6 @@ Persistent game controller using database storage.
 """
 
 import random
-from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,18 +18,13 @@ from ..game.rules import (
     STARTING_STOCKPILE,
     generate_map,
     place_starting_units,
-    redact_state,
-    resolve_turn,
     update_discovery,
 )
+from .turn_resolution import check_and_resolve_turn
 from .websocket import (
     broadcast_lobby_player_joined,
     broadcast_lobby_player_left,
     broadcast_lobby_started,
-    broadcast_player_action,
-    broadcast_turn_end,
-    broadcast_turn_resolved,
-    broadcast_turn_start,
 )
 
 
@@ -41,11 +35,11 @@ class PersistentGameController:
         self.session = session
         self.repo = GameRepository(session)
 
-        # In-memory caches for performance
+        # In-memory cache of authoritative GameState, keyed by game_id.
+        # Turn submissions are no longer held in memory — they live in the
+        # ``turn_actions`` table and are consulted by
+        # ``turn_resolution.check_and_resolve_turn``.
         self._game_cache: dict[str, GameState] = {}
-        self._pending_actions: dict[str, dict[PlayerId, list[Action]]] = defaultdict(
-            dict
-        )
 
     async def create_lobby(
         self,
@@ -95,7 +89,6 @@ class PersistentGameController:
 
         # Cache the game state
         self._game_cache[game_id] = state
-        self._pending_actions[game_id] = {}
 
     async def join_game(self, game_id: str, player_id: str) -> None:
         """A player joins a joinable game.
@@ -216,6 +209,11 @@ class PersistentGameController:
         if not state:
             raise ValueError(f"Game state for {game_id} not found")
 
+        # Lobbies are created with an empty roster in the state snapshot;
+        # the authoritative roster lives on the DB row and is only synced
+        # into state.players here, at start.
+        state.players = list(players)
+
         # Initialize player stockpiles
         for player in players:
             state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
@@ -232,7 +230,6 @@ class PersistentGameController:
 
         # Cache
         self._game_cache[game_id] = state
-        self._pending_actions[game_id] = {}
 
         # Create initial snapshot
         await self.repo.create_game_snapshot(
@@ -299,7 +296,6 @@ class PersistentGameController:
 
         # Cache the game state
         self._game_cache[game_id] = state
-        self._pending_actions[game_id] = {}
 
         # Create initial snapshot
         await self.repo.create_game_snapshot(
@@ -346,13 +342,13 @@ class PersistentGameController:
     async def submit_player_actions(
         self, game_id: str, player_id: PlayerId, actions: list[Action]
     ) -> None:
-        """Submit actions for a player in the current turn."""
-        print(
-            f"DEBUG: Submitting actions for {player_id} in game {game_id}, turn {await self.get_current_turn(game_id)}"
-        )
-        print(f"DEBUG: Actions count: {len(actions)}")
+        """Submit actions for a player in the current turn.
 
-        # Ensure game exists
+        Writes to the ``turn_actions`` table (upsert — resubmitting
+        overwrites) and then delegates to
+        ``turn_resolution.check_and_resolve_turn``, which is the single
+        source of truth shared with the MCP ``submit_actions`` tool.
+        """
         state = await self.get_game_state(game_id)
         if not state:
             raise ValueError(f"Game {game_id} not found")
@@ -360,32 +356,20 @@ class PersistentGameController:
         if player_id not in state.players:
             raise ValueError(f"Player {player_id} not in game {game_id}")
 
-        print(f"DEBUG: Current turn: {state.turn}, Players: {state.players}")
-
-        # Save actions to database
-        await self.repo.save_player_actions(
+        actions_json = [a.model_dump(mode="json") for a in actions]
+        await self.repo.upsert_turn_action(
             game_id=game_id,
-            turn_number=state.turn,
             player_id=player_id,
-            actions=actions,
+            turn_number=state.turn,
+            actions_json=actions_json,
         )
 
-        # Store in pending actions
-        self._pending_actions[game_id][player_id] = actions
+        await check_and_resolve_turn(self.repo, game_id)
 
-        print(
-            f"DEBUG: Pending actions now: {list(self._pending_actions[game_id].keys())}"
-        )
-        print(
-            f"DEBUG: Need {len(state.players)} players, have {len(self._pending_actions[game_id])}"
-        )
-
-        # Check if all players have submitted actions
-        if len(self._pending_actions[game_id]) == len(state.players):
-            print(f"DEBUG: All players submitted actions, processing turn {state.turn}")
-            await self._process_turn(game_id)
-        else:
-            print("DEBUG: Waiting for more players to submit actions")
+        # Refresh the cache — the turn may have advanced.
+        refreshed = await self.load_game_from_database(game_id)
+        if refreshed is not None:
+            self._game_cache[game_id] = refreshed
 
     async def log_prompt(self, game_id: str, prompt_log: PromptLog) -> None:
         """Log an LLM prompt and response for research."""
@@ -452,121 +436,6 @@ class PersistentGameController:
         """Get game database record with metadata."""
         return await self.repo.get_game(game_id)
 
-    async def _process_turn(self, game_id: str) -> None:
-        """Process a complete turn for all players."""
-        print(f"DEBUG: Processing turn for game {game_id}")
-        state = await self.get_game_state(game_id)
-        if not state:
-            print(f"DEBUG: No game state found for {game_id}")
-            return
-
-        print(f"DEBUG: Current turn before processing: {state.turn}")
-        print(f"DEBUG: Max turns: {state.max_turns}")
-
-        # Broadcast turn start
-        await broadcast_turn_start(game_id, state.turn)
-
-        actions = self._pending_actions[game_id].copy()
-        print(f"DEBUG: Processing actions: {len(actions)} players submitted actions")
-
-        # Broadcast player actions
-        for player_id, player_actions in actions.items():
-            print(f"DEBUG: Player {player_id} has {len(player_actions)} actions")
-            for action in player_actions:
-                await broadcast_player_action(
-                    game_id,
-                    player_id,
-                    {
-                        "type": action.type,
-                        "unit_id": getattr(action, "unit_id", None),
-                        "target_location": getattr(action, "target_location", None),
-                        "player": player_id,
-                    },
-                )
-
-        # Persist per-player actions to turn_actions table
-        completed_turn = state.turn
-        for player_id, player_actions in actions.items():
-            actions_json = [action.model_dump(mode="json") for action in player_actions]
-            await self.repo.upsert_turn_action(
-                game_id, player_id, completed_turn, actions_json
-            )
-
-        # Resolve turn
-        print(f"DEBUG: Calling resolve_turn with turn {state.turn}")
-        result = resolve_turn(state, actions)
-        print(f"DEBUG: Turn resolved, new turn is: {state.turn}")
-
-        # Save per-player fog-of-war-redacted snapshots to turn_snapshots
-        for player_id in state.players:
-            redacted = redact_state(state, player_id)
-            await self.repo.upsert_turn_snapshot(
-                game_id,
-                player_id,
-                completed_turn,
-                redacted.model_dump(mode="json"),
-            )
-
-        # Save turn result to database
-        print("DEBUG: Saving turn result to database")
-        await self.repo.save_turn_result(game_id, result, actions)
-
-        # Update game state in database
-        print("DEBUG: Updating game state in database")
-        await self.repo.update_game_state(game_id, state)
-
-        # Update cache
-        self._game_cache[game_id] = state
-        print(f"DEBUG: Updated cache with turn {state.turn}")
-
-        # Broadcast turn end (legacy event, retained until consumers move
-        # off it) and the dot-namespaced ``turn.resolved`` the Phase 4
-        # frontend gameplay tracer subscribes to.
-        await broadcast_turn_end(game_id, state.turn)
-        await broadcast_turn_resolved(game_id, state.turn)
-
-        # Clear pending actions for next turn
-        self._pending_actions[game_id] = {}
-        print("DEBUG: Cleared pending actions for next turn")
-
-        # Create periodic snapshots (every 10 turns)
-        if state.turn % 10 == 0:
-            await self.repo.create_game_snapshot(
-                game_id=game_id,
-                turn_number=state.turn,
-                state=state,
-                snapshot_type="periodic",
-            )
-
-        # Check victory conditions
-        await self._check_victory(game_id)
-        print(f"DEBUG: Turn processing complete for turn {state.turn}")
-
-    async def _check_victory(self, game_id: str) -> None:
-        """Check if the game has ended by delegating to rules.check_victory()."""
-        from ..game.rules import check_victory
-
-        state = await self.get_game_state(game_id)
-        if not state:
-            return
-
-        result = check_victory(state)
-
-        if result.victory_type != "none" and result.winner is not None:
-            print(
-                f"Game {game_id} ended by {result.victory_type}, "
-                f"winner: {result.winner}"
-            )
-            await self.repo.end_game(game_id, result.winner, result.victory_type)
-
-            # Create final snapshot
-            await self.repo.create_game_snapshot(
-                game_id=game_id,
-                turn_number=state.turn,
-                state=state,
-                snapshot_type="final",
-            )
-
     async def restore_game_state(self, game_id: str) -> GameState | None:
         """Restore game state from database snapshot if needed."""
         snapshot_state = await self.repo.restore_game_from_snapshot(game_id)
@@ -586,10 +455,8 @@ class PersistentGameController:
         """Clear game state cache."""
         if game_id:
             self._game_cache.pop(game_id, None)
-            self._pending_actions.pop(game_id, None)
         else:
             self._game_cache.clear()
-            self._pending_actions.clear()
 
 
 # Global controller instance - single controller for all sessions

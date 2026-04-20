@@ -420,6 +420,156 @@ describe("api.submitActions", () => {
 	});
 });
 
+describe("api.getValidAttacks", () => {
+	it("GETs the per-unit valid-attacks endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				unit_id: 5,
+				attack_range: 1,
+				attack: 3,
+				targets: [
+					{
+						target_type: "unit",
+						target_id: 9,
+						x: 1,
+						y: 0,
+						distance: 1,
+						owner: "bob",
+						hp: 10,
+						diplomatic_state: "war",
+					},
+				],
+			}),
+		});
+
+		const result = await api.getValidAttacks("g1", 5);
+		expect(result.targets).toHaveLength(1);
+		expect(result.targets[0].target_type).toBe("unit");
+
+		const [calledUrl, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/units/5/valid-attacks");
+		expect((init.headers as Record<string, string>).Authorization).toBe(
+			"Bearer fx_aliceKey",
+		);
+	});
+});
+
+describe("api.getCanFoundCity", () => {
+	it("GETs the can-found-city endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				unit_id: 3,
+				can_found: true,
+				reason: null,
+				cost: { food: 15 },
+			}),
+		});
+
+		const result = await api.getCanFoundCity("g1", 3);
+		expect(result.can_found).toBe(true);
+		expect(result.cost.food).toBe(15);
+
+		const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/units/3/can-found-city");
+	});
+});
+
+describe("api.getValidImprovements", () => {
+	it("GETs the valid-improvements endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				unit_id: 7,
+				tile: { x: 2, y: 3 },
+				improvements: [
+					{
+						improvement: "farm",
+						cost: { food: 0, wood: 5, ore: 0, crystal: 0 },
+						affordable: true,
+						terrain: "plains",
+						resource: "food",
+					},
+				],
+			}),
+		});
+
+		const result = await api.getValidImprovements("g1", 7);
+		expect(result.improvements).toHaveLength(1);
+		expect(result.improvements[0].improvement).toBe("farm");
+
+		const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/units/7/valid-improvements");
+	});
+});
+
+describe("api.getTrainableUnits", () => {
+	it("GETs the trainable-units endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				city_id: 2,
+				units: [
+					{
+						unit_type: "scout",
+						cost: { food: 10, wood: 5, ore: 0, crystal: 0 },
+						affordable: true,
+						stats: { hp: 8, moves: 3, sight: 3, attack: 1, attack_range: 1 },
+					},
+				],
+			}),
+		});
+
+		const result = await api.getTrainableUnits("g1", 2);
+		expect(result.units[0].unit_type).toBe("scout");
+
+		const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/cities/2/trainable-units");
+	});
+});
+
+describe("api.getBuildableBuildings", () => {
+	it("GETs the buildable-buildings endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				city_id: 4,
+				buildings: [
+					{
+						building_type: "granary",
+						cost: { food: 0, wood: 20, ore: 0, crystal: 0 },
+						affordable: true,
+						already_built: false,
+						effect: "+50% food output",
+					},
+				],
+			}),
+		});
+
+		const result = await api.getBuildableBuildings("g1", 4);
+		expect(result.buildings[0].building_type).toBe("granary");
+
+		const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/cities/4/buildable-buildings");
+	});
+});
+
 describe("queryKeys", () => {
 	it("generates stable keys for games list", () => {
 		expect(queryKeys.games()).toEqual(["games", {}]);

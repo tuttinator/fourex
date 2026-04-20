@@ -217,7 +217,7 @@ export default function GameDetailPage() {
   // Active or ended: show observation view with header
   if (game.status === 'active' || game.status === 'ended') {
     return (
-      <div className="h-screen flex flex-col">
+      <div className="h-full flex flex-col">
         {/* Header */}
         <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="container mx-auto px-4 py-3 flex items-center justify-between">

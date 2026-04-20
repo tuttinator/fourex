@@ -39,7 +39,7 @@ mise run inspect-http          # MCP Inspector against HTTP server
 mise run format                # black + ruff --fix
 mise run lint                  # black --check + ruff + mypy
 
-# Database (requires docker-compose up -d postgres)
+# Database
 mise run db-reset              # drop + recreate tables
 mise run db-check              # verify connection
 
@@ -57,6 +57,7 @@ cd frontend && npm run build
 Three main components, each with its own source tree:
 
 ### backend/ — Game Engine + API
+
 - `src/game/models.py` — Pydantic models: `GameState`, `Unit`, `City`, `Tile`, `Action` (discriminated union of `MoveAction | AttackAction | FoundCityAction | TrainUnitAction | ...`), `ResourceBag`, enums for `Terrain`, `Resource`, `UnitType`, `BuildingType`
 - `src/game/rules.py` — Pure deterministic game logic: `resolve_turn()` is the core entry point, processes all player actions, collects resources, advances turn counter. Map generation uses seeded RNG
 - `src/api/rest.py` — FastAPI REST endpoints under `/api/v1`: game CRUD, state queries with fog-of-war, action submission
@@ -66,6 +67,7 @@ Three main components, each with its own source tree:
 - `src/config.py` — `pydantic-settings` based config, reads from `.env`
 
 ### backend/src/mcp_server/ — MCP Server (single canonical server)
+
 - `server.py` — FastMCP server with stdio and streamable-http transports, CORS, `/healthz`
 - `tools/lifecycle.py` — Game creation and joining (`create_game`, `join_game`, `get_game_info`)
 - `tools/gameplay.py` — Turn flow (`get_game_state`, `submit_actions`, `validate_actions`, `is_my_turn`)
@@ -76,12 +78,14 @@ Three main components, each with its own source tree:
 - Entry points: `fourex-mcp` (stdio), `fourex-mcp-http` (HTTP on :8020)
 
 ### agents/ — AI Agent System
+
 - `src/agent.py` — `FourXAgent` class: LLM-driven agent that observes game state, plans, and submits actions via REST (MCP migration pending)
 - `src/orchestrator.py` — `GameOrchestrator`: runs a full game loop, creates agents with personalities (aggressive/defensive/economic), manages turn execution
 - `src/llm_providers.py` — `MultiLLMClient` with provider fallback chain: Modal Ollama > LLM Studio (local, default :1234) > OpenAI. All providers extract `<think>...</think>` tokens from responses
 - `src/personalities.py` — Agent personality definitions
 
 ### frontend/ — Next.js UI
+
 - Next.js + TypeScript + Tailwind CSS + shadcn/ui (Radix primitives)
 - React Query for server state
 
@@ -97,7 +101,7 @@ Three main components, each with its own source tree:
 
 - Python 3.12+, uv for package management
 - FastAPI + Pydantic v2
-- SQLAlchemy async + asyncpg + PostgreSQL (via docker-compose)
+- SQLAlchemy async + asyncpg + PostgreSQL
 - Observability: logfire + structlog
 - Resilience: tenacity + backoff for LLM retries
 - Frontend: Next.js, TypeScript, Tailwind, Radix UI, React Query

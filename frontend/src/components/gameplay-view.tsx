@@ -1,41 +1,85 @@
 'use client'
 
 /**
- * Phase 4 gameplay tracer — the first end-to-end action loop for a
- * seated human player.
+ * Phase 5 gameplay view — every queueable action the PRD's gameplay
+ * surface calls for.
  *
- * Flow:
- *   1. Click a friendly unit → fetch /valid-moves → highlight reachable
- *      tiles on the map.
- *   2. Click a highlighted tile → queue a MOVE action in the sidebar.
- *   3. Remove individual items from the queue if you change your mind.
- *   4. Click End Turn → POST the whole queue atomically to /actions.
- *   5. Wait for `turn.resolved` on the WebSocket → invalidate the
- *      game-state query, clear the queue, drop the waiting banner.
+ * Selection is either a friendly unit or a friendly city (mutually
+ * exclusive). Depending on what's selected, the sidebar surfaces the
+ * relevant affordances:
+ *   - Unit  → valid moves (yellow highlight), valid attacks (red
+ *             highlight), found-city (for a settler-capable worker on
+ *             a legal tile), build-improvement (for a worker on a tile
+ *             that permits one).
+ *   - City  → train-unit / build-building tabs, filtered by cost and
+ *             by what the city already has.
  *
- * The valid-moves list is re-fetched from the server rather than
- * computed client-side so the rendered highlight is exactly the set
- * the server will accept on submission — no drift risk if map-gen or
- * unit stats change server-side.
+ * All affordance lists are fetched from Phase 5's backend endpoints so
+ * the UI's filter rules stay in lockstep with the server-side validators.
+ * Every queued order goes into a single ``queue`` and flushes atomically
+ * on End Turn; ``turn.resolved`` on the lobby WebSocket clears the queue
+ * and triggers a game-state refetch.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, Loader2, RefreshCw, Trash2, Send } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import {
+  AlertCircle,
+  Building2,
+  Hammer,
+  Landmark,
+  Loader2,
+  RefreshCw,
+  Send,
+  Sparkles,
+  Swords,
+  Trash2,
+} from 'lucide-react'
 import { api, ApiError, queryKeys } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
 import type {
+  BuildableBuilding,
+  BuildableBuildingsResponse,
+  CanFoundCityResponse,
   Coord,
+  GameAction,
   GameState,
   PlayerId,
   QueuedAction,
+  ResourceBag,
   Tile,
+  TrainableUnit,
+  TrainableUnitsResponse,
   Unit,
+  ValidAttacksResponse,
+  ValidImprovement,
+  ValidImprovementsResponse,
   ValidMovesResponse,
 } from '@/types/game'
 
@@ -46,11 +90,42 @@ interface GameplayViewProps {
   currentPlayer: PlayerId
 }
 
+function formatCost(cost: ResourceBag): string {
+  const parts: string[] = []
+  if (cost.food) parts.push(`${cost.food} food`)
+  if (cost.wood) parts.push(`${cost.wood} wood`)
+  if (cost.ore) parts.push(`${cost.ore} ore`)
+  if (cost.crystal) parts.push(`${cost.crystal} crystal`)
+  return parts.length ? parts.join(', ') : 'free'
+}
+
+function describeAction(action: GameAction): string {
+  switch (action.type) {
+    case 'MOVE':
+      return `Move unit #${action.unit_id} → (${action.to.x}, ${action.to.y})`
+    case 'ATTACK':
+      return `Attack ${action.target_type} #${action.target_id} (unit #${action.attacker_id})`
+    case 'FOUND_CITY':
+      return `Found city (worker #${action.worker_id})`
+    case 'BUILD_IMPROVEMENT':
+      return `Build ${action.improvement} (worker #${action.worker_id})`
+    case 'TRAIN_UNIT':
+      return `Train ${action.unit_type} @ city #${action.city_id}`
+    case 'BUILD_BUILDING':
+      return `Build ${action.building_type} @ city #${action.city_id}`
+  }
+}
+
+function newQueueId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null)
+  const [selectedCityId, setSelectedCityId] = useState<number | null>(null)
   const [queue, setQueue] = useState<QueuedAction[]>([])
   const [waiting, setWaiting] = useState(false)
 
@@ -66,9 +141,40 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   } = useQuery({
     queryKey: stateQueryKey,
     queryFn: () => api.getGameState(gameId),
-    // Polling fallback: if the WS drops we still surface turn-resolution.
     refetchInterval: ACTIVE_POLL_INTERVAL,
   })
+
+  // Restore queued orders from the server on mount / when the turn rolls
+  // over, so a page refresh after submitting preserves the "waiting for
+  // turn to resolve" UI and shows the submitted orders.
+  const { data: mySubmission } = useQuery({
+    queryKey: ['game', gameId, 'mySubmission', gameState?.turn ?? null],
+    queryFn: () => api.getMySubmission(gameId),
+    enabled: gameState != null,
+  })
+
+  const hydratedTurnRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!mySubmission) return
+    if (hydratedTurnRef.current === mySubmission.turn) return
+    hydratedTurnRef.current = mySubmission.turn
+    if (mySubmission.submitted) {
+      setQueue(
+        mySubmission.actions.map((action) => ({
+          queue_id: newQueueId(),
+          action,
+        })),
+      )
+      setWaiting(true)
+    }
+  }, [mySubmission])
+
+  // ---- Per-unit affordance queries ---------------------------------------
+
+  const selectedUnit: Unit | null =
+    selectedUnitId != null && gameState
+      ? gameState.units[selectedUnitId] ?? null
+      : null
 
   const { data: validMoves } = useQuery<ValidMovesResponse | null>({
     queryKey: ['game', gameId, 'validMoves', selectedUnitId],
@@ -79,11 +185,65 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     enabled: selectedUnitId != null,
   })
 
+  const { data: validAttacks } = useQuery<ValidAttacksResponse | null>({
+    queryKey: ['game', gameId, 'validAttacks', selectedUnitId],
+    queryFn: () =>
+      selectedUnitId == null
+        ? Promise.resolve(null)
+        : api.getValidAttacks(gameId, selectedUnitId),
+    enabled: selectedUnitId != null,
+  })
+
+  const { data: canFoundCity } = useQuery<CanFoundCityResponse | null>({
+    queryKey: ['game', gameId, 'canFoundCity', selectedUnitId],
+    queryFn: () =>
+      selectedUnitId == null
+        ? Promise.resolve(null)
+        : api.getCanFoundCity(gameId, selectedUnitId),
+    enabled: selectedUnitId != null && selectedUnit?.type === 'worker',
+  })
+
+  const { data: validImprovements } =
+    useQuery<ValidImprovementsResponse | null>({
+      queryKey: ['game', gameId, 'validImprovements', selectedUnitId],
+      queryFn: () =>
+        selectedUnitId == null
+          ? Promise.resolve(null)
+          : api.getValidImprovements(gameId, selectedUnitId),
+      enabled: selectedUnitId != null && selectedUnit?.type === 'worker',
+    })
+
+  // ---- Per-city affordance queries ---------------------------------------
+
+  const selectedCity =
+    selectedCityId != null && gameState
+      ? gameState.cities[selectedCityId] ?? null
+      : null
+
+  const { data: trainableUnits } = useQuery<TrainableUnitsResponse | null>({
+    queryKey: ['game', gameId, 'trainableUnits', selectedCityId],
+    queryFn: () =>
+      selectedCityId == null
+        ? Promise.resolve(null)
+        : api.getTrainableUnits(gameId, selectedCityId),
+    enabled: selectedCityId != null,
+  })
+
+  const { data: buildableBuildings } =
+    useQuery<BuildableBuildingsResponse | null>({
+      queryKey: ['game', gameId, 'buildableBuildings', selectedCityId],
+      queryFn: () =>
+        selectedCityId == null
+          ? Promise.resolve(null)
+          : api.getBuildableBuildings(gameId, selectedCityId),
+      enabled: selectedCityId != null,
+    })
+
+  // ---- Highlight derivation ----------------------------------------------
+
   // Tiles already targeted by queued moves for this unit — subtract from
-  // the highlight set so we don't suggest a tile the player already
-  // booked. Server-side re-validation on submission will flag illegal
-  // double-moves anyway, but local filtering keeps the UI honest.
-  const queuedTargetKeys = useMemo(() => {
+  // move highlights so we don't suggest a tile the player already booked.
+  const queuedMoveKeys = useMemo(() => {
     const out = new Set<string>()
     for (const q of queue) {
       if (q.action.type === 'MOVE' && q.action.unit_id === selectedUnitId) {
@@ -93,17 +253,59 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     return out
   }, [queue, selectedUnitId])
 
+  // Attack targets already queued for this attacker — subtract from the
+  // attack highlight set so one hostile isn't double-clicked.
+  const queuedAttackKeys = useMemo(() => {
+    const out = new Set<string>()
+    if (selectedUnitId == null || !validAttacks) return out
+    for (const q of queue) {
+      const a = q.action
+      if (a.type !== 'ATTACK') continue
+      if (a.attacker_id !== selectedUnitId) continue
+      const target = validAttacks.targets.find(
+        (t) => t.target_type === a.target_type && t.target_id === a.target_id,
+      )
+      if (target) out.add(`${target.x},${target.y}`)
+    }
+    return out
+  }, [queue, selectedUnitId, validAttacks])
+
   const highlightedTiles: Coord[] = useMemo(() => {
     if (!validMoves) return []
     return validMoves.moves
-      .filter((m) => !queuedTargetKeys.has(`${m.x},${m.y}`))
+      .filter((m) => !queuedMoveKeys.has(`${m.x},${m.y}`))
       .map((m) => ({ x: m.x, y: m.y }))
-  }, [validMoves, queuedTargetKeys])
+  }, [validMoves, queuedMoveKeys])
+
+  const attackTiles: Coord[] = useMemo(() => {
+    if (!validAttacks) return []
+    return validAttacks.targets
+      .filter((t) => !queuedAttackKeys.has(`${t.x},${t.y}`))
+      .map((t) => ({ x: t.x, y: t.y }))
+  }, [validAttacks, queuedAttackKeys])
 
   const highlightedKeys = useMemo(
     () => new Set(highlightedTiles.map((t) => `${t.x},${t.y}`)),
     [highlightedTiles],
   )
+
+  const attackTargetByKey = useMemo(() => {
+    const map = new Map<
+      string,
+      { target_type: 'unit' | 'city'; target_id: number }
+    >()
+    if (!validAttacks) return map
+    for (const t of validAttacks.targets) {
+      if (queuedAttackKeys.has(`${t.x},${t.y}`)) continue
+      map.set(`${t.x},${t.y}`, {
+        target_type: t.target_type,
+        target_id: t.target_id,
+      })
+    }
+    return map
+  }, [validAttacks, queuedAttackKeys])
+
+  // ---- Tile-click routing -------------------------------------------------
 
   const lookupUnitAtTile = useCallback(
     (state: GameState, tile: Tile): Unit | null => {
@@ -118,12 +320,31 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       if (!gameState) return
       const key = `${tile.loc.x},${tile.loc.y}`
 
-      // Highlighted target takes priority — queue the move.
+      // Attack target takes priority — red tiles are the most-specific
+      // affordance when a unit is selected.
+      const attackTarget = attackTargetByKey.get(key)
+      if (selectedUnitId != null && attackTarget) {
+        setQueue((prev) => [
+          ...prev,
+          {
+            queue_id: newQueueId(),
+            action: {
+              type: 'ATTACK',
+              attacker_id: selectedUnitId,
+              target_id: attackTarget.target_id,
+              target_type: attackTarget.target_type,
+            },
+          },
+        ])
+        return
+      }
+
+      // Move highlight next.
       if (selectedUnitId != null && highlightedKeys.has(key)) {
         setQueue((prev) => [
           ...prev,
           {
-            queue_id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            queue_id: newQueueId(),
             action: {
               type: 'MOVE',
               unit_id: selectedUnitId,
@@ -134,23 +355,87 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
         return
       }
 
+      // Friendly unit on tile → select unit (clears city selection).
       const unitOnTile = lookupUnitAtTile(gameState, tile)
       if (unitOnTile && unitOnTile.owner === currentPlayer) {
         setSelectedUnitId(unitOnTile.id)
+        setSelectedCityId(null)
         return
       }
 
-      // Clicking anywhere else clears the selection. If the user clicks
-      // an enemy unit we deliberately don't surface it as "selected" —
-      // selection is a friendly-only concept here.
+      // Friendly city on tile → select city (clears unit selection).
+      if (tile.city_id) {
+        const city = gameState.cities[tile.city_id]
+        if (city && city.owner === currentPlayer) {
+          setSelectedCityId(city.id)
+          setSelectedUnitId(null)
+          return
+        }
+      }
+
+      // Otherwise clear selection.
       setSelectedUnitId(null)
+      setSelectedCityId(null)
     },
-    [gameState, selectedUnitId, highlightedKeys, lookupUnitAtTile, currentPlayer],
+    [
+      gameState,
+      selectedUnitId,
+      highlightedKeys,
+      attackTargetByKey,
+      lookupUnitAtTile,
+      currentPlayer,
+    ],
   )
+
+  // ---- Queue helpers ------------------------------------------------------
 
   const removeFromQueue = useCallback((queueId: string) => {
     setQueue((prev) => prev.filter((q) => q.queue_id !== queueId))
   }, [])
+
+  const appendToQueue = useCallback((action: GameAction) => {
+    setQueue((prev) => [...prev, { queue_id: newQueueId(), action }])
+  }, [])
+
+  // Disable Found City if already queued for this worker.
+  const alreadyQueuedFoundCity = useMemo(
+    () =>
+      selectedUnitId != null &&
+      queue.some(
+        (q) =>
+          q.action.type === 'FOUND_CITY' &&
+          q.action.worker_id === selectedUnitId,
+      ),
+    [queue, selectedUnitId],
+  )
+
+  // Disable improvement buttons if one's already queued for this worker.
+  const alreadyQueuedImprovement = useMemo(
+    () =>
+      selectedUnitId != null &&
+      queue.some(
+        (q) =>
+          q.action.type === 'BUILD_IMPROVEMENT' &&
+          q.action.worker_id === selectedUnitId,
+      ),
+    [queue, selectedUnitId],
+  )
+
+  // Hide already-queued buildings from the city panel so the same
+  // building isn't stacked twice.
+  const queuedBuildingsForCity = useMemo(() => {
+    const out = new Set<string>()
+    if (selectedCityId == null) return out
+    for (const q of queue) {
+      const a = q.action
+      if (a.type !== 'BUILD_BUILDING') continue
+      if (a.city_id !== selectedCityId) continue
+      out.add(a.building_type)
+    }
+    return out
+  }, [queue, selectedCityId])
+
+  // ---- End Turn -----------------------------------------------------------
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -178,11 +463,6 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     },
   })
 
-  // turn.resolved: canonical signal that the queue posted, the turn
-  // advanced, and we should re-fetch state. We also clear the queue
-  // and drop the waiting banner here (not in the mutation's onSuccess)
-  // because the server-authoritative moment is resolution, not
-  // submission.
   const lastHandledTurn = useRef<number | null>(null)
   useEffect(() => {
     if (!lastEvent || lastEvent.type !== 'turn.resolved') return
@@ -191,17 +471,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     if (turn != null) lastHandledTurn.current = turn
     setQueue([])
     setSelectedUnitId(null)
+    setSelectedCityId(null)
     setWaiting(false)
     queryClient.invalidateQueries({ queryKey: stateQueryKey })
     queryClient.invalidateQueries({
       queryKey: queryKeys.gameDetail(gameId),
     })
   }, [lastEvent, queryClient, stateQueryKey, gameId])
-
-  const selectedUnit =
-    selectedUnitId != null && gameState
-      ? gameState.units[selectedUnitId] ?? null
-      : null
 
   if (isLoading) {
     return (
@@ -271,64 +547,82 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Map */}
         <div className="flex-1 relative">
           <PixiMap
             gameState={gameState}
             selectedPlayer={currentPlayer}
             fogOfWarEnabled
             selectedUnitId={selectedUnitId}
+            selectedCityId={selectedCityId}
             highlightedTiles={highlightedTiles}
+            attackTiles={attackTiles}
             onTileClick={handleTileClick}
           />
         </div>
 
         {/* Sidebar */}
-        <div className="w-80 border-l bg-background/95 backdrop-blur flex flex-col">
-          <Card className="rounded-none border-0 border-b">
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Selection</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm space-y-1">
-              {selectedUnit ? (
-                <>
-                  <div className="flex items-center justify-between">
-                    <span className="capitalize font-medium">
-                      {selectedUnit.type}
-                    </span>
-                    <span className="text-muted-foreground text-xs">
-                      #{selectedUnit.id}
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    HP {selectedUnit.hp} &middot; Moves left{' '}
-                    {selectedUnit.moves_left} &middot; ({selectedUnit.loc.x},{' '}
-                    {selectedUnit.loc.y})
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {highlightedTiles.length} legal move
-                    {highlightedTiles.length === 1 ? '' : 's'}
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Click one of your units to see its valid moves.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+        <div className="w-96 border-l bg-background/95 backdrop-blur flex flex-col h-full min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+          {selectedCity ? (
+            <CityPanel
+              city={selectedCity}
+              trainable={trainableUnits?.units ?? null}
+              buildable={buildableBuildings?.buildings ?? null}
+              queuedBuildings={queuedBuildingsForCity}
+              onTrainUnit={(unit_type) =>
+                appendToQueue({
+                  type: 'TRAIN_UNIT',
+                  city_id: selectedCity.id,
+                  unit_type,
+                })
+              }
+              onBuildBuilding={(building_type) =>
+                appendToQueue({
+                  type: 'BUILD_BUILDING',
+                  city_id: selectedCity.id,
+                  building_type,
+                })
+              }
+            />
+          ) : (
+            <UnitPanel
+              unit={selectedUnit}
+              highlightedCount={highlightedTiles.length}
+              attackCount={attackTiles.length}
+              canFoundCity={canFoundCity ?? null}
+              validImprovements={validImprovements?.improvements ?? null}
+              foundCityQueued={alreadyQueuedFoundCity}
+              improvementQueued={alreadyQueuedImprovement}
+              onFoundCity={() =>
+                selectedUnit &&
+                appendToQueue({
+                  type: 'FOUND_CITY',
+                  worker_id: selectedUnit.id,
+                })
+              }
+              onBuildImprovement={(improvement) =>
+                selectedUnit &&
+                appendToQueue({
+                  type: 'BUILD_IMPROVEMENT',
+                  worker_id: selectedUnit.id,
+                  improvement,
+                })
+              }
+            />
+          )}
 
-          <Card className="rounded-none border-0 border-b flex-1 flex flex-col min-h-0">
+          {/* Queue panel */}
+          <Card className="rounded-none border-0 border-b flex-1 flex flex-col">
             <CardHeader className="py-3">
               <CardTitle className="text-sm flex items-center justify-between">
                 <span>Queued orders ({queue.length})</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 overflow-auto space-y-2 pt-0">
+            <CardContent className="space-y-2 pt-0">
               {queue.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No orders queued. Click a highlighted tile to queue a
-                  move.
+                  No orders queued. Select a unit or city to see what you
+                  can do this turn.
                 </p>
               ) : (
                 queue.map((q) => (
@@ -338,8 +632,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                   >
                     <div className="flex flex-col">
                       <span className="font-medium">
-                        Move unit #{q.action.unit_id} → ({q.action.to.x},{' '}
-                        {q.action.to.y})
+                        {describeAction(q.action)}
                       </span>
                       {q.error && (
                         <span className="text-destructive">{q.error}</span>
@@ -359,8 +652,9 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               )}
             </CardContent>
           </Card>
+          </div>
 
-          <div className="p-3 border-t">
+          <div className="p-3 border-t shrink-0">
             <Button
               className="w-full"
               disabled={submitMutation.isPending || waiting}
@@ -377,5 +671,248 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+// --- Sidebar sub-panels ---------------------------------------------------
+
+interface UnitPanelProps {
+  unit: Unit | null
+  highlightedCount: number
+  attackCount: number
+  canFoundCity: CanFoundCityResponse | null
+  validImprovements: ValidImprovement[] | null
+  foundCityQueued: boolean
+  improvementQueued: boolean
+  onFoundCity: () => void
+  onBuildImprovement: (improvement: ValidImprovement['improvement']) => void
+}
+
+function UnitPanel({
+  unit,
+  highlightedCount,
+  attackCount,
+  canFoundCity,
+  validImprovements,
+  foundCityQueued,
+  improvementQueued,
+  onFoundCity,
+  onBuildImprovement,
+}: UnitPanelProps) {
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm">Selection</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        {!unit ? (
+          <p className="text-xs text-muted-foreground">
+            Click one of your units or cities to see what you can do.
+          </p>
+        ) : (
+          <>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="capitalize font-medium">{unit.type}</span>
+                <span className="text-muted-foreground text-xs">
+                  #{unit.id}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                HP {unit.hp} &middot; Moves left {unit.moves_left} &middot;
+                ({unit.loc.x}, {unit.loc.y})
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {highlightedCount} legal move
+                {highlightedCount === 1 ? '' : 's'}
+                {attackCount > 0 && (
+                  <>
+                    {' '}
+                    &middot; {attackCount} attack target
+                    {attackCount === 1 ? '' : 's'}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {canFoundCity && (
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start"
+                  disabled={!canFoundCity.can_found || foundCityQueued}
+                  onClick={onFoundCity}
+                  title={canFoundCity.reason ?? undefined}
+                >
+                  <Landmark className="h-4 w-4 mr-2" />
+                  Found city ({canFoundCity.cost.food} food)
+                  {foundCityQueued && ' — queued'}
+                </Button>
+                {!canFoundCity.can_found && canFoundCity.reason && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {canFoundCity.reason}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {validImprovements && validImprovements.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-xs font-medium flex items-center gap-1">
+                  <Hammer className="h-3.5 w-3.5" />
+                  Improvements
+                </div>
+                {validImprovements.map((imp) => (
+                  <Button
+                    key={imp.improvement}
+                    variant="outline"
+                    size="sm"
+                    className="w-full justify-between text-xs"
+                    disabled={!imp.affordable || improvementQueued}
+                    onClick={() => onBuildImprovement(imp.improvement)}
+                    title={
+                      !imp.affordable
+                        ? `Cannot afford (${formatCost(imp.cost)})`
+                        : undefined
+                    }
+                  >
+                    <span className="capitalize">
+                      {imp.improvement.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {formatCost(imp.cost)}
+                    </span>
+                  </Button>
+                ))}
+                {improvementQueued && (
+                  <p className="text-xs text-muted-foreground">
+                    An improvement is already queued for this worker.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+interface CityPanelProps {
+  city: { id: number; loc: Coord; hp: number; buildings: string[] }
+  trainable: TrainableUnit[] | null
+  buildable: BuildableBuilding[] | null
+  queuedBuildings: Set<string>
+  onTrainUnit: (unit_type: TrainableUnit['unit_type']) => void
+  onBuildBuilding: (building_type: BuildableBuilding['building_type']) => void
+}
+
+function CityPanel({
+  city,
+  trainable,
+  buildable,
+  queuedBuildings,
+  onTrainUnit,
+  onBuildBuilding,
+}: CityPanelProps) {
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span>
+            <Building2 className="inline h-4 w-4 mr-1" />
+            City #{city.id}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            ({city.loc.x}, {city.loc.y}) &middot; HP {city.hp}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <Tabs defaultValue="train" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="train">
+              <Sparkles className="h-3.5 w-3.5 mr-1" />
+              Train
+            </TabsTrigger>
+            <TabsTrigger value="build">
+              <Hammer className="h-3.5 w-3.5 mr-1" />
+              Build
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="train" className="space-y-1 mt-2">
+            {!trainable ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : trainable.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No trainable units.
+              </p>
+            ) : (
+              trainable.map((u) => (
+                <Button
+                  key={u.unit_type}
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-between text-xs"
+                  disabled={!u.affordable}
+                  onClick={() => onTrainUnit(u.unit_type)}
+                  title={
+                    !u.affordable
+                      ? `Cannot afford (${formatCost(u.cost)})`
+                      : undefined
+                  }
+                >
+                  <span className="capitalize flex items-center gap-1">
+                    <Swords className="h-3 w-3" />
+                    {u.unit_type}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {formatCost(u.cost)}
+                  </span>
+                </Button>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="build" className="space-y-1 mt-2">
+            {!buildable ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : (
+              buildable
+                .filter((b) => !b.already_built)
+                .map((b) => {
+                  const queued = queuedBuildings.has(b.building_type)
+                  return (
+                    <Button
+                      key={b.building_type}
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-between text-xs"
+                      disabled={!b.affordable || queued}
+                      onClick={() => onBuildBuilding(b.building_type)}
+                      title={b.effect}
+                    >
+                      <span className="capitalize">
+                        {b.building_type}
+                        {queued && ' — queued'}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {formatCost(b.cost)}
+                      </span>
+                    </Button>
+                  )
+                })
+            )}
+            {buildable && buildable.every((b) => b.already_built) && (
+              <p className="text-xs text-muted-foreground">
+                Every building is already constructed.
+              </p>
+            )}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   )
 }

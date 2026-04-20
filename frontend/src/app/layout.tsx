@@ -39,9 +39,11 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            <div className="min-h-screen bg-background">
+            <div className="h-dvh flex flex-col bg-background">
               <SessionBar />
-              {children}
+              <main className="flex-1 min-h-0 overflow-y-auto">
+                {children}
+              </main>
             </div>
             <Toaster />
           </QueryProvider>

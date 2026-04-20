@@ -3,8 +3,18 @@ export type PlayerId = string;
 export type Terrain = "plains" | "forest" | "mountain" | "water";
 export type Resource = "food" | "wood" | "ore" | "crystal";
 export type UnitType = "scout" | "worker" | "soldier" | "archer";
-export type BuildingType = "granary" | "barracks" | "walls";
-export type ImprovementType = "farm" | "mine" | "crystal_extractor";
+export type BuildingType =
+	| "granary"
+	| "barracks"
+	| "walls"
+	| "monument"
+	| "library"
+	| "temple";
+export type ImprovementType =
+	| "farm"
+	| "mine"
+	| "crystal_extractor"
+	| "lumber_mill";
 export type DiplomaticState = "peace" | "alliance" | "war";
 
 export interface Coord {
@@ -238,8 +248,12 @@ export interface MapCanvasProps {
 	onViewportChange?: (viewport: MapViewport) => void;
 	/** Unit id to draw a selection ring around (Phase 4 gameplay). */
 	selectedUnitId?: number | null;
+	/** City id to draw a selection ring around (Phase 5 gameplay). */
+	selectedCityId?: number | null;
 	/** Tiles to render a semi-transparent highlight on (move targets). */
 	highlightedTiles?: Coord[];
+	/** Tiles to render a red hostile-target highlight on (attack targets). */
+	attackTiles?: Coord[];
 }
 
 export interface PlayerListProps {
@@ -380,9 +394,120 @@ export interface MoveActionPayload {
 	to: Coord;
 }
 
-// Phase 4 ships the move action only; later phases extend this union with
-// attack / found-city / train / build-building / build-improvement.
-export type GameAction = MoveActionPayload;
+export interface AttackActionPayload {
+	type: "ATTACK";
+	attacker_id: number;
+	target_id: number;
+	target_type: "unit" | "city";
+}
+
+export interface FoundCityActionPayload {
+	type: "FOUND_CITY";
+	worker_id: number;
+}
+
+export interface BuildImprovementActionPayload {
+	type: "BUILD_IMPROVEMENT";
+	worker_id: number;
+	improvement: ImprovementType;
+}
+
+export interface TrainUnitActionPayload {
+	type: "TRAIN_UNIT";
+	city_id: number;
+	unit_type: UnitType;
+}
+
+export interface BuildBuildingActionPayload {
+	type: "BUILD_BUILDING";
+	city_id: number;
+	building_type: BuildingType;
+}
+
+export type GameAction =
+	| MoveActionPayload
+	| AttackActionPayload
+	| FoundCityActionPayload
+	| BuildImprovementActionPayload
+	| TrainUnitActionPayload
+	| BuildBuildingActionPayload;
+
+// Phase 5 endpoint payloads --------------------------------------------------
+
+export interface ValidAttackTarget {
+	target_type: "unit" | "city";
+	target_id: number;
+	x: number;
+	y: number;
+	distance: number;
+	owner: PlayerId;
+	hp: number;
+	diplomatic_state: "peace" | "alliance" | "war";
+}
+
+export interface ValidAttacksResponse {
+	game_id: string;
+	unit_id: number;
+	attack_range: number;
+	attack: number;
+	targets: ValidAttackTarget[];
+}
+
+export interface CanFoundCityResponse {
+	game_id: string;
+	unit_id: number;
+	can_found: boolean;
+	reason: string | null;
+	cost: { food: number };
+}
+
+export interface ValidImprovement {
+	improvement: ImprovementType;
+	cost: ResourceBag;
+	affordable: boolean;
+	terrain: Terrain;
+	resource: Resource | null;
+}
+
+export interface ValidImprovementsResponse {
+	game_id: string;
+	unit_id: number;
+	tile: Coord | null;
+	improvements: ValidImprovement[];
+}
+
+export interface TrainableUnit {
+	unit_type: UnitType;
+	cost: ResourceBag;
+	affordable: boolean;
+	stats: {
+		hp: number;
+		moves: number;
+		sight: number;
+		attack: number;
+		attack_range: number;
+	};
+}
+
+export interface TrainableUnitsResponse {
+	game_id: string;
+	city_id: number;
+	units: TrainableUnit[];
+}
+
+export interface BuildableBuilding {
+	building_type: BuildingType;
+	cost: ResourceBag;
+	affordable: boolean;
+	already_built: boolean;
+	effect: string;
+}
+
+export interface BuildableBuildingsResponse {
+	game_id: string;
+	city_id: number;
+	buildings: BuildableBuilding[];
+}
 
 export interface QueuedAction {
 	/** Client-side id for removal from the queue before submit. */
@@ -390,6 +515,15 @@ export interface QueuedAction {
 	action: GameAction;
 	/** Server-validation error returned on End Turn, if any. */
 	error?: string;
+}
+
+export interface MySubmissionResponse {
+	game_id: string;
+	player: PlayerId;
+	turn: number;
+	submitted: boolean;
+	actions: GameAction[];
+	submitted_at?: string | null;
 }
 
 export const MESSAGE_BODY_MAX_LENGTH = 2000;

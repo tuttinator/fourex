@@ -40,22 +40,29 @@ type MockPixiProps = {
 		loc: { x: number; y: number };
 		terrain: string;
 		unit_id?: number;
+		city_id?: number;
 	}) => void;
 	selectedUnitId?: number | null;
+	selectedCityId?: number | null;
 	highlightedTiles?: { x: number; y: number }[];
+	attackTiles?: { x: number; y: number }[];
 };
 
 vi.mock("@/components/pixi-map", () => ({
 	PixiMap: ({
 		onTileClick,
 		selectedUnitId,
+		selectedCityId,
 		highlightedTiles,
+		attackTiles,
 	}: MockPixiProps) => (
 		<div data-testid="mock-pixi">
 			<span data-testid="selected-unit-id">{selectedUnitId ?? "none"}</span>
+			<span data-testid="selected-city-id">{selectedCityId ?? "none"}</span>
 			<span data-testid="highlight-count">
 				{highlightedTiles?.length ?? 0}
 			</span>
+			<span data-testid="attack-count">{attackTiles?.length ?? 0}</span>
 			<button
 				data-testid="click-friendly-unit"
 				onClick={() =>
@@ -81,6 +88,32 @@ vi.mock("@/components/pixi-map", () => ({
 			>
 				click-highlight
 			</button>
+			<button
+				data-testid="click-attack-tile"
+				onClick={() =>
+					onTileClick?.({
+						id: 3,
+						loc: { x: 2, y: 0 },
+						terrain: "plains",
+						unit_id: 99,
+					})
+				}
+			>
+				click-attack
+			</button>
+			<button
+				data-testid="click-friendly-city"
+				onClick={() =>
+					onTileClick?.({
+						id: 4,
+						loc: { x: 3, y: 3 },
+						terrain: "plains",
+						city_id: 11,
+					})
+				}
+			>
+				click-city
+			</button>
 		</div>
 	),
 }));
@@ -95,6 +128,8 @@ const sampleState: GameState = {
 	tiles: [
 		{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", unit_id: 1 },
 		{ id: 1, loc: { x: 1, y: 0 }, terrain: "plains" },
+		{ id: 2, loc: { x: 2, y: 0 }, terrain: "plains", unit_id: 99 },
+		{ id: 3, loc: { x: 3, y: 3 }, terrain: "plains", city_id: 11 },
 	],
 	units: {
 		1: {
@@ -105,12 +140,28 @@ const sampleState: GameState = {
 			moves_left: 2,
 			loc: { x: 0, y: 0 },
 		},
+		99: {
+			id: 99,
+			owner: "bob",
+			type: "soldier",
+			hp: 10,
+			moves_left: 2,
+			loc: { x: 2, y: 0 },
+		},
 	},
-	cities: {},
+	cities: {
+		11: {
+			id: 11,
+			owner: "alice",
+			loc: { x: 3, y: 3 },
+			hp: 20,
+			buildings: [],
+		},
+	},
 	players: ["alice", "bob"],
 	diplomacy: {},
 	stockpiles: {
-		alice: { food: 0, wood: 0, ore: 0, crystal: 0 },
+		alice: { food: 50, wood: 50, ore: 10, crystal: 0 },
 		bob: { food: 0, wood: 0, ore: 0, crystal: 0 },
 	},
 	next_unit_id: 2,
@@ -132,6 +183,39 @@ function newClient() {
 	});
 }
 
+function stubAffordanceQueries() {
+	vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+		game_id: "g1",
+		unit_id: 1,
+		attack_range: 1,
+		attack: 0,
+		targets: [],
+	});
+	vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+		game_id: "g1",
+		unit_id: 1,
+		can_found: false,
+		reason: "stub",
+		cost: { food: 15 },
+	});
+	vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+		game_id: "g1",
+		unit_id: 1,
+		tile: { x: 0, y: 0 },
+		improvements: [],
+	});
+	vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+		game_id: "g1",
+		city_id: 11,
+		units: [],
+	});
+	vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+		game_id: "g1",
+		city_id: 11,
+		buildings: [],
+	});
+}
+
 beforeEach(() => {
 	_lastEvent = null;
 	vi.restoreAllMocks();
@@ -146,6 +230,7 @@ afterEach(() => {
 describe("GameplayView", () => {
 	it("selecting a friendly unit fetches valid moves and highlights them", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
 		const validMoves = vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -176,6 +261,7 @@ describe("GameplayView", () => {
 
 	it("clicking a highlighted tile queues a move; End Turn posts the whole batch", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
 		vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -218,6 +304,7 @@ describe("GameplayView", () => {
 
 	it("removing a queued item before End Turn excludes it from the batch", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
 		vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -257,6 +344,7 @@ describe("GameplayView", () => {
 
 	it("turn.resolved clears the queue, drops selection, and invalidates state", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
 		vi.spyOn(api, "getValidMoves").mockResolvedValue({
 			game_id: "g1",
 			unit_id: 1,
@@ -304,5 +392,203 @@ describe("GameplayView", () => {
 				["game", "g1", "detail"],
 			]),
 		);
+	});
+
+	it("clicking an attack-target tile queues an ATTACK", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: false,
+			reason: "stub",
+			cost: { food: 15 },
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 2,
+			attack: 3,
+			targets: [
+				{
+					target_type: "unit",
+					target_id: 99,
+					x: 2,
+					y: 0,
+					distance: 2,
+					owner: "bob",
+					hp: 10,
+					diplomatic_state: "war",
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("click-friendly-unit"));
+		await waitFor(() =>
+			expect(screen.getByTestId("attack-count")).toHaveTextContent("1"),
+		);
+
+		fireEvent.click(screen.getByTestId("click-attack-tile"));
+		expect(screen.getByText(/Attack unit #99/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{
+				type: "ATTACK",
+				attacker_id: 1,
+				target_id: 99,
+				target_type: "unit",
+			},
+		]);
+	});
+
+	it("Found City control queues a FOUND_CITY for the selected worker", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [],
+		});
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 0,
+			attack: 0,
+			targets: [],
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: true,
+			reason: null,
+			cost: { food: 15 },
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("click-friendly-unit"));
+		const foundButton = await screen.findByRole("button", {
+			name: /Found city/,
+		});
+		fireEvent.click(foundButton);
+
+		expect(screen.getByText(/Found city \(worker #1\)/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{ type: "FOUND_CITY", worker_id: 1 },
+		]);
+	});
+
+	it("clicking a friendly city opens the city panel and queues a TRAIN_UNIT", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [
+				{
+					unit_type: "scout",
+					cost: { food: 10, wood: 5, ore: 0, crystal: 0 },
+					affordable: true,
+					stats: { hp: 8, moves: 3, sight: 3, attack: 1, attack_range: 1 },
+				},
+			],
+		});
+		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("click-friendly-city"));
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-city-id")).toHaveTextContent("11"),
+		);
+
+		const trainButton = await screen.findByRole("button", {
+			name: /scout/,
+		});
+		fireEvent.click(trainButton);
+
+		expect(screen.getByText(/Train scout @ city #11/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: /End Turn/ }));
+		await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+		expect(submit.mock.calls[0][1]).toEqual([
+			{ type: "TRAIN_UNIT", city_id: 11, unit_type: "scout" },
+		]);
 	});
 });

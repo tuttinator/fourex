@@ -55,7 +55,9 @@ export function PixiMap({
   onUnitClick,
   onCityClick,
   selectedUnitId,
+  selectedCityId,
   highlightedTiles,
+  attackTiles,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
@@ -260,6 +262,9 @@ export function PixiMap({
           granary: 0xffd700,
           barracks: 0xff4444,
           walls: 0x888888,
+          monument: 0xd8b4fe,
+          library: 0x93c5fd,
+          temple: 0xfbcfe8,
         }
         city.buildings.forEach((b, i) => {
           const angle = (i * 2 * Math.PI) / Math.max(city.buildings.length, 3) - Math.PI / 2
@@ -296,6 +301,35 @@ export function PixiMap({
         highlightGfx.stroke()
       }
       world.addChild(highlightGfx)
+    }
+
+    // Attack-target overlay (Phase 5) — red tile for each hostile in range.
+    if (attackTiles && attackTiles.length > 0) {
+      const attackGfx = new Graphics()
+      for (const coord of attackTiles) {
+        const hx = coord.x * TILE_SIZE
+        const hy = coord.y * TILE_SIZE
+        attackGfx.rect(hx, hy, TILE_SIZE, TILE_SIZE)
+        attackGfx.fill({ color: 0xef4444, alpha: 0.35 })
+        attackGfx.setStrokeStyle({ width: 2, color: 0xef4444, alpha: 0.95 })
+        attackGfx.rect(hx + 1, hy + 1, TILE_SIZE - 2, TILE_SIZE - 2)
+        attackGfx.stroke()
+      }
+      world.addChild(attackGfx)
+    }
+
+    // Selected-city ring (Phase 5)
+    if (selectedCityId != null) {
+      const city = cities[selectedCityId]
+      if (city) {
+        const ring = new Graphics()
+        ring.setStrokeStyle({ width: 2.5, color: 0xfbbf24, alpha: 1 })
+        const cx = city.loc.x * TILE_SIZE + TILE_SIZE / 2
+        const cy = city.loc.y * TILE_SIZE + TILE_SIZE / 2
+        ring.circle(cx, cy, 15)
+        ring.stroke()
+        world.addChild(ring)
+      }
     }
 
     // Units
@@ -397,7 +431,7 @@ export function PixiMap({
     })
 
     world.addChild(interactiveLayer)
-  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, highlightedTiles])
+  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, attackTiles])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {
