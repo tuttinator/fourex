@@ -120,6 +120,135 @@ function newQueueId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const RESOURCE_META: Array<{
+  key: keyof ResourceBag
+  emoji: string
+  label: string
+}> = [
+  { key: 'food', emoji: '🌾', label: 'Food' },
+  { key: 'wood', emoji: '🪵', label: 'Wood' },
+  { key: 'ore', emoji: '⛏️', label: 'Ore' },
+  { key: 'crystal', emoji: '💎', label: 'Crystal' },
+]
+
+interface YieldBreakdown {
+  total: ResourceBag
+  lines: string[]
+}
+
+/** Estimate the current player's per-turn yield from cities + owned tiles.
+ *
+ * Mirrors ``_calculate_tile_yield`` and ``collect_resources`` in
+ * ``backend/src/game/rules.py`` so the hover hint reflects what the server
+ * will credit at the end of the turn. The Granary food multiplier isn't
+ * modelled on the client, so city base food is a plain +2.
+ */
+function computeYieldBreakdown(
+  state: GameState,
+  player: PlayerId,
+): YieldBreakdown {
+  const total: ResourceBag = { food: 0, wood: 0, ore: 0, crystal: 0 }
+  const lines: string[] = []
+
+  const myCities = Object.values(state.cities).filter((c) => c.owner === player)
+  if (myCities.length > 0) {
+    const cityFood = myCities.length * 2
+    total.food += cityFood
+    lines.push(`+${cityFood} food from ${myCities.length} city base`)
+  }
+
+  const cityTileKeys = new Set(
+    myCities.map((c) => `${c.loc.x},${c.loc.y}`),
+  )
+
+  let tileFood = 0
+  let tileWood = 0
+  let tileOre = 0
+  let tileCrystal = 0
+
+  for (const tile of state.tiles) {
+    if (tile.owner !== player) continue
+    if (cityTileKeys.has(`${tile.loc.x},${tile.loc.y}`)) continue
+
+    let f = 0
+    let w = 0
+    let o = 0
+    let c = 0
+
+    if (tile.resource === 'food') f += 1
+    else if (tile.resource === 'wood') w += 1
+    else if (tile.resource === 'ore') o += 1
+    else if (tile.resource === 'crystal') c += 1
+    else if (tile.terrain === 'forest') w += 1
+
+    if (tile.improvement === 'farm' && tile.resource === 'food') f += 2
+    else if (tile.improvement === 'mine' && tile.resource === 'ore') o += 2
+    else if (tile.improvement === 'lumber_mill') w += 2
+    else if (
+      tile.improvement === 'crystal_extractor' &&
+      tile.resource === 'crystal'
+    )
+      c += 1
+
+    tileFood += f
+    tileWood += w
+    tileOre += o
+    tileCrystal += c
+  }
+
+  total.food += tileFood
+  total.wood += tileWood
+  total.ore += tileOre
+  total.crystal += tileCrystal
+
+  if (tileFood) lines.push(`+${tileFood} food from tile yields`)
+  if (tileWood) lines.push(`+${tileWood} wood from tile yields`)
+  if (tileOre) lines.push(`+${tileOre} ore from tile yields`)
+  if (tileCrystal) lines.push(`+${tileCrystal} crystal from tile yields`)
+
+  return { total, lines }
+}
+
+interface ResourceBarProps {
+  stockpile: ResourceBag
+  yieldBreakdown: YieldBreakdown
+}
+
+function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      {RESOURCE_META.map(({ key, emoji, label }) => {
+        const amount = stockpile[key] ?? 0
+        const delta = yieldBreakdown.total[key] ?? 0
+        const relevantLines = yieldBreakdown.lines.filter((l) =>
+          l.endsWith(` ${key} from tile yields`) ||
+          (key === 'food' && l.endsWith('city base')),
+        )
+        const tooltip =
+          `${label}: ${amount}\n` +
+          (delta > 0
+            ? `+${delta} per turn\n${relevantLines.join('\n')}`
+            : 'no income this turn')
+        return (
+          <span
+            key={key}
+            title={tooltip}
+            className="flex items-center gap-1 tabular-nums"
+          >
+            <span aria-hidden="true">{emoji}</span>
+            <span className="font-medium">{amount}</span>
+            {delta > 0 && (
+              <span className="text-xs text-muted-foreground">
+                (+{delta})
+              </span>
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -539,9 +668,22 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             </Badge>
           )}
         </div>
-        <div className="text-xs text-muted-foreground">
-          {Object.keys(gameState.units).length} units &middot;{' '}
-          {Object.keys(gameState.cities).length} cities
+        <div className="flex items-center gap-4">
+          <ResourceBar
+            stockpile={
+              gameState.stockpiles[currentPlayer] ?? {
+                food: 0,
+                wood: 0,
+                ore: 0,
+                crystal: 0,
+              }
+            }
+            yieldBreakdown={computeYieldBreakdown(gameState, currentPlayer)}
+          />
+          <div className="text-xs text-muted-foreground">
+            {Object.keys(gameState.units).length} units &middot;{' '}
+            {Object.keys(gameState.cities).length} cities
+          </div>
         </div>
       </div>
 

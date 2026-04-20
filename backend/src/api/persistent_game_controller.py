@@ -303,24 +303,23 @@ class PersistentGameController:
         )
 
     async def get_game_state(self, game_id: str) -> GameState | None:
-        """Get the current state of a game."""
-        # Check cache first
-        if game_id in self._game_cache:
-            return self._game_cache[game_id]
+        """Get the current state of a game.
 
-        # Load from database
+        Always loads from the DB. The controller used to hold an in-memory
+        ``_game_cache`` but the MCP submit path writes to the DB with a
+        separate session, so the REST controller's cache could go stale
+        across turn advances — submissions would then upsert against a
+        stale ``state.turn`` and silently overwrite the wrong row. The
+        cache is kept as a write-through mirror only; reads bypass it.
+        """
         db_game = await self.repo.get_game(game_id)
         if not db_game:
             return None
 
         try:
-            # Convert database state to GameState model
             state = GameState.model_validate(db_game.state)
-
-            # Cache the loaded state
             self._game_cache[game_id] = state
             return state
-
         except Exception as e:
             print(f"Error loading game state for {game_id}: {e}")
             return None
