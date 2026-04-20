@@ -19,6 +19,7 @@ import type {
 	TurnDetailResponse,
 	TurnListResponse,
 	TurnPromptsResponse,
+	TurnSubmissionsResponse,
 	ValidAttacksResponse,
 	ValidImprovementsResponse,
 	ValidMovesResponse,
@@ -261,6 +262,15 @@ export const api = {
 	async getMySubmission(gameId: string): Promise<MySubmissionResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/my-submission`,
+			{ gameId },
+		);
+	},
+
+	async getTurnSubmissions(
+		gameId: string,
+	): Promise<TurnSubmissionsResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/turn-submissions`,
 			{ gameId },
 		);
 	},

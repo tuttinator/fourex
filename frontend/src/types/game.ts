@@ -526,6 +526,13 @@ export interface MySubmissionResponse {
 	submitted_at?: string | null;
 }
 
+export interface TurnSubmissionsResponse {
+	game_id: string;
+	turn: number;
+	players: PlayerId[];
+	submitted_players: PlayerId[];
+}
+
 export const MESSAGE_BODY_MAX_LENGTH = 2000;
 export const MESSAGES_PER_TURN_LIMIT = 5;
 export const FREE_TEXT_CLAUSE_MAX_LENGTH = 500;

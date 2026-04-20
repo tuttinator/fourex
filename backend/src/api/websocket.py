@@ -233,6 +233,38 @@ async def broadcast_turn_resolved(game_id: str, turn: int) -> None:
     )
 
 
+async def broadcast_turn_submitted(
+    game_id: str,
+    player_id: str,
+    turn: int,
+    submitted_players: list[str],
+) -> None:
+    """Emit when a player upserts their turn submission.
+
+    Phase 6 turn-submission visibility: the frontend uses this to render
+    per-opponent "deciding" vs "submitted" indicators and a global
+    "waiting for N player(s)" banner without polling. The payload
+    includes the roster of players who have submitted so far for the
+    current turn — a resubmission by the same player is idempotent
+    against that set, so the UI can trust the snapshot rather than
+    replaying deltas.
+
+    The submitter's ``player_id`` is public information (it's in
+    ``game.players``), so this event fans out to every connection on the
+    game; no per-player scoping is needed.
+    """
+    await manager.broadcast_to_game(
+        game_id,
+        {
+            "type": "turn.submitted",
+            "game_id": game_id,
+            "player_id": player_id,
+            "turn": turn,
+            "submitted_players": list(submitted_players),
+        },
+    )
+
+
 async def broadcast_player_action(game_id: str, player_id: str, action: dict) -> None:
     await manager.broadcast_to_game(
         game_id,

@@ -183,7 +183,31 @@ function newClient() {
 	});
 }
 
+function stubTurnSubmissions(
+	submitted: string[] = [],
+	turn = sampleState.turn,
+) {
+	return vi.spyOn(api, "getTurnSubmissions").mockResolvedValue({
+		game_id: "g1",
+		turn,
+		players: ["alice", "bob"],
+		submitted_players: submitted,
+	});
+}
+
+function stubMySubmission(submitted = false) {
+	return vi.spyOn(api, "getMySubmission").mockResolvedValue({
+		game_id: "g1",
+		player: "alice",
+		turn: sampleState.turn,
+		submitted,
+		actions: [],
+	});
+}
+
 function stubAffordanceQueries() {
+	stubTurnSubmissions();
+	stubMySubmission();
 	vi.spyOn(api, "getValidAttacks").mockResolvedValue({
 		game_id: "g1",
 		unit_id: 1,
@@ -542,6 +566,160 @@ describe("GameplayView", () => {
 		expect(submit.mock.calls[0][1]).toEqual([
 			{ type: "FOUND_CITY", worker_id: 1 },
 		]);
+	});
+
+	it("submission roster hydrates from /turn-submissions and reflects turn.submitted events", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		// Stub everything but turn-submissions so we can assert the
+		// roster's hydration + live-event path.
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 1,
+			attack: 0,
+			targets: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: false,
+			reason: "stub",
+			cost: { food: 15 },
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [],
+		});
+		stubMySubmission();
+		stubTurnSubmissions(["bob"]);
+
+		const client = newClient();
+		const { rerender } = render(
+			<GameplayView gameId="g1" currentPlayer="alice" />,
+			{ wrapper: wrapper(client) },
+		);
+
+		// Hydration: bob shows as submitted, alice as deciding.
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("submission-row-bob"),
+			).toHaveAttribute("data-submitted", "true"),
+		);
+		expect(screen.getByTestId("submission-row-alice")).toHaveAttribute(
+			"data-submitted",
+			"false",
+		);
+
+		// Live delta: a turn.submitted event carrying both names flips
+		// alice to "submitted" too.
+		act(() => {
+			_lastEvent = {
+				type: "turn.submitted",
+				game_id: "g1",
+				player_id: "alice",
+				turn: sampleState.turn,
+				submitted_players: ["alice", "bob"],
+			} as unknown as LobbyEvent;
+		});
+		rerender(<GameplayView gameId="g1" currentPlayer="alice" />);
+
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("submission-row-alice"),
+			).toHaveAttribute("data-submitted", "true"),
+		);
+	});
+
+	it("turn.resolved resets the submission roster for the new turn", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [],
+		});
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 1,
+			attack: 0,
+			targets: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: false,
+			reason: "stub",
+			cost: { food: 15 },
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		stubMySubmission();
+		stubTurnSubmissions(["alice", "bob"]);
+
+		const client = newClient();
+		const { rerender } = render(
+			<GameplayView gameId="g1" currentPlayer="alice" />,
+			{ wrapper: wrapper(client) },
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("submission-row-alice"),
+			).toHaveAttribute("data-submitted", "true"),
+		);
+
+		act(() => {
+			_lastEvent = {
+				type: "turn.resolved",
+				game_id: "g1",
+				// @ts-expect-error open event shape
+				turn: sampleState.turn + 1,
+			};
+		});
+		rerender(<GameplayView gameId="g1" currentPlayer="alice" />);
+
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("submission-row-alice"),
+			).toHaveAttribute("data-submitted", "false"),
+		);
+		expect(screen.getByTestId("submission-row-bob")).toHaveAttribute(
+			"data-submitted",
+			"false",
+		);
 	});
 
 	it("clicking a friendly city opens the city panel and queues a TRAIN_UNIT", async () => {

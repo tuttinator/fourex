@@ -160,9 +160,7 @@ async def get_my_submission(
             "actions": [],
         }
 
-    raw_list = (
-        existing.actions_json if isinstance(existing.actions_json, list) else []
-    )
+    raw_list = existing.actions_json if isinstance(existing.actions_json, list) else []
     return {
         "game_id": game_id,
         "player": current_player,
@@ -172,6 +170,39 @@ async def get_my_submission(
         "submitted_at": (
             existing.submitted_at.isoformat() if existing.submitted_at else None
         ),
+    }
+
+
+@router.get("/games/{game_id}/turn-submissions", tags=["state"])
+async def get_turn_submissions(
+    game_id: str,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Return the roster of players who have submitted for the current turn.
+
+    Phase 6 hydration surface: lets the gameplay view repopulate its
+    per-opponent "deciding" vs "submitted" indicators on mount (and on
+    every ``turn.resolved``) so a page refresh doesn't lose visibility
+    into who the game is still waiting on. Live updates arrive via the
+    ``turn.submitted`` WebSocket event, which carries the same roster.
+
+    Auth: per-game bearer, same as every other gameplay endpoint. The
+    response lists public ``player_id``s only — this is already surfaced
+    via ``GameDetailResponse.players``, so it leaks no fog-of-war.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    submitted = await controller.repo.get_all_turn_actions(game_id, state.turn)
+    submitted_players = [ta.player_id for ta in submitted]
+    return {
+        "game_id": game_id,
+        "turn": state.turn,
+        "players": list(state.players),
+        "submitted_players": submitted_players,
     }
 
 

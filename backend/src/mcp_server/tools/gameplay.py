@@ -247,6 +247,19 @@ def register(mcp: FastMCP) -> None:
                 actions_json=actions_json,
             )
 
+            # Phase 6: fan out turn.submitted before the resolve check so
+            # subscribers always see the submission frame (REST path does
+            # the same in PersistentGameController.submit_player_actions).
+            from ...api.websocket import broadcast_turn_submitted
+
+            submitted = await repo.get_all_turn_actions(auth.game_id, state.turn)
+            await broadcast_turn_submitted(
+                game_id=auth.game_id,
+                player_id=auth.player_id,
+                turn=state.turn,
+                submitted_players=[ta.player_id for ta in submitted],
+            )
+
             # Check if this completes the turn
             resolve_result = await check_and_resolve_turn(repo, auth.game_id)
 

@@ -36,6 +36,8 @@ import {
 import {
   AlertCircle,
   Building2,
+  Check,
+  Clock,
   Hammer,
   Landmark,
   Loader2,
@@ -76,6 +78,7 @@ import type {
   Tile,
   TrainableUnit,
   TrainableUnitsResponse,
+  TurnSubmissionsResponse,
   Unit,
   ValidAttacksResponse,
   ValidImprovement,
@@ -257,6 +260,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const [selectedCityId, setSelectedCityId] = useState<number | null>(null)
   const [queue, setQueue] = useState<QueuedAction[]>([])
   const [waiting, setWaiting] = useState(false)
+  // Phase 6: per-player submission roster for the current turn. The
+  // initial snapshot arrives from ``GET /turn-submissions`` on mount (and
+  // on every turn rollover); live deltas come from the ``turn.submitted``
+  // WebSocket event. Resets on ``turn.resolved``.
+  const [submittedPlayers, setSubmittedPlayers] = useState<Set<PlayerId>>(
+    () => new Set(),
+  )
 
   const { lastEvent } = useLobbyEvents(gameId)
 
@@ -297,6 +307,25 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       setWaiting(true)
     }
   }, [mySubmission])
+
+  // Phase 6: hydrate the submission roster on mount and every turn
+  // rollover. Live updates then arrive via the turn.submitted WS event;
+  // the snapshot is a safety net against missed frames (e.g. after a
+  // reconnect) and fixes the "refresh mid-turn" case.
+  const { data: turnSubmissions } = useQuery<TurnSubmissionsResponse | null>({
+    queryKey: ['game', gameId, 'turnSubmissions', gameState?.turn ?? null],
+    queryFn: () => api.getTurnSubmissions(gameId),
+    enabled: gameState != null,
+  })
+
+  const hydratedSubmissionsTurnRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!turnSubmissions) return
+    if (hydratedSubmissionsTurnRef.current === turnSubmissions.turn) return
+    hydratedSubmissionsTurnRef.current = turnSubmissions.turn
+    const next = new Set(turnSubmissions.submitted_players)
+    queueMicrotask(() => setSubmittedPlayers(next))
+  }, [turnSubmissions])
 
   // ---- Per-unit affordance queries ---------------------------------------
 
@@ -602,11 +631,40 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     setSelectedUnitId(null)
     setSelectedCityId(null)
     setWaiting(false)
+    // Clear the submission roster for the upcoming turn — the hydration
+    // query will reseed it (empty) on the next render, but resetting here
+    // avoids a flicker where last turn's "submitted" ticks linger.
+    setSubmittedPlayers(new Set())
     queryClient.invalidateQueries({ queryKey: stateQueryKey })
     queryClient.invalidateQueries({
       queryKey: queryKeys.gameDetail(gameId),
     })
   }, [lastEvent, queryClient, stateQueryKey, gameId])
+
+  // Phase 6: fold turn.submitted deltas into the roster set. The event
+  // payload carries the full snapshot ("submitted_players") so we trust
+  // it verbatim rather than accumulating — resubmissions are idempotent
+  // and any missed frame is covered by the hydration query.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.type !== 'turn.submitted') return
+    const payload = lastEvent as unknown as {
+      submitted_players?: PlayerId[]
+      turn?: number
+    }
+    if (!Array.isArray(payload.submitted_players)) return
+    // Only react if this event is for the turn we're currently showing.
+    // Stale events (from a prior turn that just resolved) are ignored so
+    // they don't reintroduce submitters after the roster was cleared.
+    if (
+      gameState != null &&
+      payload.turn != null &&
+      payload.turn !== gameState.turn
+    ) {
+      return
+    }
+    const next = new Set(payload.submitted_players)
+    queueMicrotask(() => setSubmittedPlayers(next))
+  }, [lastEvent, gameState])
 
   if (isLoading) {
     return (
@@ -661,12 +719,23 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
           <Badge variant="secondary" className="text-xs">
             Playing as {currentPlayer}
           </Badge>
-          {waiting && (
-            <Badge variant="outline" className="text-xs">
-              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-              Waiting for turn to resolve
-            </Badge>
-          )}
+          {(() => {
+            const outstanding = gameState.players.filter(
+              (p) => !submittedPlayers.has(p),
+            )
+            if (outstanding.length === 0) return null
+            // Only surface the waiting badge if the current player has
+            // already submitted — otherwise the UI would nag about
+            // opponents before the user's even queued their own turn.
+            if (!waiting) return null
+            return (
+              <Badge variant="outline" className="text-xs">
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                Waiting for {outstanding.length} player
+                {outstanding.length === 1 ? '' : 's'}
+              </Badge>
+            )
+          })()}
         </div>
         <div className="flex items-center gap-4">
           <ResourceBar
@@ -752,6 +821,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               }
             />
           )}
+
+          {/* Submission roster (Phase 6) */}
+          <SubmissionRoster
+            players={gameState.players}
+            currentPlayer={currentPlayer}
+            submittedPlayers={submittedPlayers}
+          />
 
           {/* Queue panel */}
           <Card className="rounded-none border-0 border-b flex-1 flex flex-col">
@@ -1054,6 +1130,66 @@ function CityPanel({
             )}
           </TabsContent>
         </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface SubmissionRosterProps {
+  players: PlayerId[]
+  currentPlayer: PlayerId
+  submittedPlayers: Set<PlayerId>
+}
+
+/** Per-player turn-submission indicators (Phase 6).
+ *
+ * Fed by the ``turn.submitted`` WebSocket event and rehydrated from
+ * ``GET /turn-submissions`` on mount / turn rollover. Each opponent
+ * renders as "submitted" (green check) or "deciding" (amber clock);
+ * the current player's own row shows the same state so the user has a
+ * single place to confirm their own submission landed.
+ */
+function SubmissionRoster({
+  players,
+  currentPlayer,
+  submittedPlayers,
+}: SubmissionRosterProps) {
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm">Turn submissions</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1 pt-0">
+        {players.map((p) => {
+          const submitted = submittedPlayers.has(p)
+          const isSelf = p === currentPlayer
+          return (
+            <div
+              key={p}
+              className="flex items-center justify-between text-xs rounded px-2 py-1 bg-muted/30"
+              data-testid={`submission-row-${p}`}
+              data-submitted={submitted ? 'true' : 'false'}
+            >
+              <span className="font-medium truncate">
+                {p}
+                {isSelf && (
+                  <span className="ml-1 text-muted-foreground">(you)</span>
+                )}
+              </span>
+              {submitted ? (
+                <span className="flex items-center gap-1 text-green-600">
+                  <Check className="h-3.5 w-3.5" />
+                  submitted
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-amber-600">
+                  <Clock className="h-3.5 w-3.5" />
+                  deciding
+                </span>
+              )}
+            </div>
+          )
+        })}
       </CardContent>
     </Card>
   )

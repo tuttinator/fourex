@@ -25,6 +25,7 @@ from .websocket import (
     broadcast_lobby_player_joined,
     broadcast_lobby_player_left,
     broadcast_lobby_started,
+    broadcast_turn_submitted,
 )
 
 
@@ -361,6 +362,18 @@ class PersistentGameController:
             player_id=player_id,
             turn_number=state.turn,
             actions_json=actions_json,
+        )
+
+        # Phase 6: fan out turn.submitted so other players' UIs can flip
+        # this seat from "deciding" to "submitted". Emitted before the
+        # resolve check so subscribers always see the submission frame
+        # whether or not this was the last seat (turn.resolved follows).
+        submitted = await self.repo.get_all_turn_actions(game_id, state.turn)
+        await broadcast_turn_submitted(
+            game_id=game_id,
+            player_id=player_id,
+            turn=state.turn,
+            submitted_players=[ta.player_id for ta in submitted],
         )
 
         await check_and_resolve_turn(self.repo, game_id)
