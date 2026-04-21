@@ -463,6 +463,32 @@ LIBRARY_SCIENCE_BONUS = 2
 TEMPLE_SCIENCE_BONUS = 1
 
 
+# Phase 1 rules-reference constants. These live with the other engine
+# constants so the REST/MCP rules reference has one canonical source.
+# Phase 2+ will wire TERRAIN_ENTRY_COST into pathfinding; Phase 3 will
+# wire STACK_CAP and FORTIFICATION_CITY_DEFENCE_BONUS into the movement
+# validator and combat resolver. Publishing them here now means agents
+# can plan against the target ruleset before the engine catches up.
+RULES_SCHEMA_VERSION = 1
+
+# Per-tile entry cost for land units. ``None`` means impassable.
+# Future terrain types (e.g. hills, rivers) slot in here without touching
+# engine code.
+TERRAIN_ENTRY_COST: dict[Terrain, int | None] = {
+    Terrain.PLAINS: 1,
+    Terrain.FOREST: 2,
+    Terrain.MOUNTAIN: None,
+    Terrain.WATER: None,
+}
+
+# Max units that may co-occupy a single tile, friendly or enemy.
+STACK_CAP = 5
+
+# Multiplicative damage reduction for units defending on a friendly city
+# tile. 0.25 means a defender on a city tile takes 25% less damage.
+FORTIFICATION_CITY_DEFENCE_BONUS = 0.25
+
+
 class BuildJob(BaseModel):
     """Building/unit construction job.
 

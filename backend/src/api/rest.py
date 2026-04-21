@@ -51,6 +51,7 @@ from ..game.rules import (
     get_visible_tiles,
     redact_state,
 )
+from ..game.rules_reference import build_rules_reference
 from ..identity import UserIdentityContext, require_user_identity
 from .persistent_game_controller import get_persistent_game_controller
 
@@ -80,6 +81,20 @@ def get_current_player_optional(
     flow respectively.
     """
     return auth.player_id if auth is not None else None
+
+
+@router.get("/rules", tags=["rules"])
+async def get_rules_reference() -> dict[str, Any]:
+    """Return the canonical rules reference payload.
+
+    Single source of truth for unit stats, building costs, improvement
+    effects, terrain entry costs, combat formulas, stacking rules,
+    queued-order cancellation conditions, and the tech tree. Static —
+    no game context, no authentication — so agents and UI consumers can
+    fetch it once per version and cache. Breaking shape changes bump
+    ``schema_version``.
+    """
+    return build_rules_reference()
 
 
 @router.get("/state", tags=["state"])

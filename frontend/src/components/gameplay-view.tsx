@@ -58,6 +58,7 @@ import {
 } from 'lucide-react'
 import { api, ApiError, queryKeys } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
+import { RulesReferencePanel } from '@/components/rules-reference-panel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -1221,6 +1222,9 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               appendToQueue({ type: 'DECLARE_WAR', target_player })
             }
           />
+
+          {/* Rules reference (Phase 1) — static canonical payload. */}
+          <RulesReferencePanel />
 
           {/* Tech tree panel (Phase 6) */}
           <TechTreePanel

@@ -14,6 +14,7 @@ import type {
 	LobbyKeyResponse,
 	MessageListResponse,
 	MySubmissionResponse,
+	RulesReference,
 	TechTreeResponse,
 	TrainableUnitsResponse,
 	TreatyClause,
@@ -255,6 +256,10 @@ export const api = {
 		});
 	},
 
+	async getRulesReference(): Promise<RulesReference> {
+		return fetchApi(`/rules`);
+	},
+
 	async submitActions(
 		gameId: string,
 		actions: GameAction[],
@@ -468,6 +473,7 @@ export const queryKeys = {
 		["game", gameId, "turn", turnNumber, "prompts"] as const,
 	diplomacy: (gameId: string) => ["game", gameId, "diplomacy"] as const,
 	techTree: (gameId: string) => ["game", gameId, "techTree"] as const,
+	rulesReference: () => ["rulesReference"] as const,
 };
 
 // Utility functions

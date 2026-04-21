@@ -634,6 +634,96 @@ export interface TechTreeResponse {
 	research: ResearchState;
 }
 
+/** Phase 1 rules reference payload — single source of truth for every
+ * game constant an agent or UI consumer needs. Mirrors the REST
+ * ``GET /api/v1/rules`` and the MCP ``get_rules_reference`` tool. */
+export interface RulesReferenceUnit {
+	cost: ResourceBag;
+	production_cost: number;
+	moves: number;
+	hp: number;
+	sight: number;
+	attack: number;
+	attack_range: number;
+	special: string;
+	required_tech: TechId | null;
+}
+
+export interface RulesReferenceBuilding {
+	cost: ResourceBag;
+	production_cost: number;
+	hp: number;
+	effect: string;
+	required_tech: TechId | null;
+}
+
+export interface RulesReferenceImprovement {
+	cost: ResourceBag;
+	valid_terrain: Terrain[];
+	required_resource: Resource | null;
+	effect: string;
+}
+
+export interface RulesReferenceTerrain {
+	entry_cost: number | null;
+	passable: boolean;
+}
+
+export interface RulesReferenceCombat {
+	damage_formula: string;
+	counter_attack: {
+		formula: string;
+		excluded_units: UnitType[];
+		notes: string;
+	};
+	city_attack: {
+		soldier_bonus_multiplier: number;
+		notes: string;
+	};
+	city_counter_fire: {
+		requires_building: BuildingType;
+		damage: number;
+		notes: string;
+	};
+	fortification: {
+		city_defence_bonus: number;
+		notes: string;
+	};
+	treacherous_attack: string;
+}
+
+export interface RulesReferenceStacking {
+	cap_per_tile: number;
+	symmetric: boolean;
+	notes: string;
+}
+
+export interface RulesReferenceOrders {
+	cancellation_conditions: string[];
+	notes: string;
+}
+
+export interface RulesReferenceCities {
+	base_production_per_turn: number;
+	barracks_unit_production_bonus: number;
+	base_science_per_turn: number;
+	library_science_bonus: number;
+	temple_science_bonus: number;
+}
+
+export interface RulesReference {
+	schema_version: number;
+	units: Record<UnitType, RulesReferenceUnit>;
+	buildings: Record<BuildingType, RulesReferenceBuilding>;
+	improvements: Record<ImprovementType, RulesReferenceImprovement>;
+	terrain: Record<Terrain, RulesReferenceTerrain>;
+	tech_tree: Record<TechId, Tech>;
+	combat: RulesReferenceCombat;
+	stacking: RulesReferenceStacking;
+	orders: RulesReferenceOrders;
+	cities: RulesReferenceCities;
+}
+
 export interface QueuedAction {
 	/** Client-side id for removal from the queue before submit. */
 	queue_id: string;

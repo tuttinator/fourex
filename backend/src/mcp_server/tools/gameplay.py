@@ -42,6 +42,7 @@ from ...game.models import (
     WithdrawTreatyAction,
 )
 from ...game.rules import redact_state
+from ...game.rules_reference import build_rules_reference
 
 
 def _validate_actions_against_state(
@@ -515,3 +516,31 @@ def register(mcp: FastMCP) -> None:
                 "progress": research.progress,
             },
         }
+
+    @mcp.tool(
+        name="get_rules_reference",
+        description=(
+            "Return the canonical rules reference: unit stats, building "
+            "costs, improvement effects, terrain entry costs, combat "
+            "formulas, stacking rules, queued-order cancellation "
+            "conditions, and the tech tree. Static — no game context "
+            "required — so agents can call this once per version and "
+            "cache. Breaking shape changes bump schema_version."
+        ),
+        annotations=ToolAnnotations(
+            title="Get Rules Reference",
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["gameplay", "rules", "query"]},
+    )
+    async def get_rules_reference() -> dict[str, Any]:
+        """Return the full rules reference payload.
+
+        Returns:
+            The same structured payload served by
+            ``GET /api/v1/rules`` (schema_version, units, buildings,
+            improvements, terrain, tech_tree, combat, stacking, orders,
+            cities).
+        """
+        return build_rules_reference()
