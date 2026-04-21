@@ -80,6 +80,7 @@ import type {
   BuildableBuildingsResponse,
   BuildJob,
   CanFoundCityResponse,
+  City,
   Coord,
   DiplomacyMessage,
   DiplomacyRelation,
@@ -372,6 +373,90 @@ function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
   )
 }
 
+// Phase 4 gameplay-improvements — a commandable entity on a tile. See
+// ``collectFriendlyEntities``.
+type StackEntry =
+  | { kind: 'unit'; unit: Unit }
+  | { kind: 'city'; city: City }
+
+interface StackSelectorPopoverProps {
+  entries: StackEntry[]
+  anchor: { x: number; y: number }
+  onSelect: (entry: StackEntry) => void
+  onClose: () => void
+}
+
+function StackSelectorPopover({
+  entries,
+  anchor,
+  onSelect,
+  onClose,
+}: StackSelectorPopoverProps) {
+  // Dismiss on Escape so the popover is keyboard-closable — click-away
+  // is handled by the transparent overlay below.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <>
+      <div
+        data-testid="stack-selector-backdrop"
+        className="absolute inset-0 z-40"
+        onClick={onClose}
+      />
+      <div
+        data-testid="stack-selector"
+        role="menu"
+        className="absolute z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-lg p-1"
+        style={{ left: anchor.x + 12, top: anchor.y + 12 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          Stack ({entries.length})
+        </div>
+        {entries.map((entry) => {
+          if (entry.kind === 'unit') {
+            return (
+              <button
+                key={`unit-${entry.unit.id}`}
+                type="button"
+                data-testid={`stack-entry-unit-${entry.unit.id}`}
+                onClick={() => onSelect(entry)}
+                className="w-full flex items-center justify-between gap-4 rounded px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              >
+                <span className="capitalize font-medium">{entry.unit.type}</span>
+                <span className="text-xs text-muted-foreground">
+                  HP {entry.unit.hp} &middot; Mv {entry.unit.moves_left}
+                </span>
+              </button>
+            )
+          }
+          return (
+            <button
+              key={`city-${entry.city.id}`}
+              type="button"
+              data-testid={`stack-entry-city-${entry.city.id}`}
+              onClick={() => onSelect(entry)}
+              className="w-full flex items-center justify-between gap-4 rounded px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            >
+              <span className="font-medium">City</span>
+              <span className="text-xs text-muted-foreground">HP {entry.city.hp}</span>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -380,6 +465,15 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   const [selectedCityId, setSelectedCityId] = useState<number | null>(null)
   const [queue, setQueue] = useState<QueuedAction[]>([])
   const [waiting, setWaiting] = useState(false)
+  // Phase 4 gameplay-improvements: stacked-tile selector. When the player
+  // clicks a tile that holds 2+ selectable friendly entities (units+city
+  // or 2+ units), we show a popover so they can pick which entity to
+  // command rather than implicitly grabbing the top of the stack.
+  const [stackSelector, setStackSelector] = useState<{
+    tile: Tile
+    screenX: number
+    screenY: number
+  } | null>(null)
   // Phase 6: per-player submission roster for the current turn. The
   // initial snapshot arrives from ``GET /turn-submissions`` on mount (and
   // on every turn rollover); live deltas come from the ``turn.submitted``
@@ -691,8 +785,30 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     [],
   )
 
+  // Phase 4 gameplay-improvements: enumerate the player-commandable
+  // entities sitting on a tile. We only include friendlies because the
+  // click handler only ever sets a selection for things the current
+  // player controls — enemy presence is surfaced elsewhere (hover
+  // tooltip, attack-target overlay).
+  const collectFriendlyEntities = useCallback(
+    (state: GameState, tile: Tile, owner: PlayerId): StackEntry[] => {
+      const out: StackEntry[] = []
+      const unitIds = tile.unit_ids ?? []
+      for (const unitId of unitIds) {
+        const unit = state.units[unitId]
+        if (unit && unit.owner === owner) out.push({ kind: 'unit', unit })
+      }
+      if (tile.city_id) {
+        const city = state.cities[tile.city_id]
+        if (city && city.owner === owner) out.push({ kind: 'city', city })
+      }
+      return out
+    },
+    [],
+  )
+
   const handleTileClick = useCallback(
-    (tile: Tile) => {
+    (tile: Tile, screen?: { x: number; y: number }) => {
       if (!gameState) return
       const key = `${tile.loc.x},${tile.loc.y}`
 
@@ -712,6 +828,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             },
           },
         ])
+        setStackSelector(null)
         return
       }
 
@@ -728,8 +845,22 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             },
           },
         ])
+        setStackSelector(null)
         return
       }
+
+      // Phase 4 gameplay-improvements: if the clicked tile has 2+
+      // friendly selectable entities, open the stack selector so the
+      // player picks which entity to command.
+      const friendly = collectFriendlyEntities(gameState, tile, currentPlayer)
+      if (friendly.length >= 2 && screen) {
+        setStackSelector({ tile, screenX: screen.x, screenY: screen.y })
+        return
+      }
+
+      // Single friendly entity (or none) — fall through to the
+      // direct-selection behaviour.
+      setStackSelector(null)
 
       // Friendly unit on tile → select unit (clears city selection).
       const unitOnTile = lookupUnitAtTile(gameState, tile)
@@ -759,9 +890,104 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       highlightedKeys,
       attackTargetByKey,
       lookupUnitAtTile,
+      collectFriendlyEntities,
       currentPlayer,
     ],
   )
+
+  // Phase 4 gameplay-improvements: derive the selectable entries on the
+  // stack-selector tile from the live game state. Using the current
+  // ``gameState`` (not a snapshot captured at click time) keeps the
+  // popover coherent if a WS tick arrives between click and render.
+  const stackSelectorEntries = useMemo<StackEntry[]>(() => {
+    if (!stackSelector || !gameState) return []
+    // Resolve the latest copy of the tile by coord — ``gameState.tiles``
+    // is rebuilt on every refetch so the captured ``tile`` reference
+    // would otherwise go stale.
+    const { x, y } = stackSelector.tile.loc
+    const fresh =
+      gameState.tiles.find((t) => t.loc.x === x && t.loc.y === y) ??
+      stackSelector.tile
+    return collectFriendlyEntities(gameState, fresh, currentPlayer)
+  }, [stackSelector, gameState, collectFriendlyEntities, currentPlayer])
+
+  // Auto-dismiss the selector if the tile no longer has 2+ selectable
+  // entities (e.g. a unit moved away or was killed between ticks).
+  // Deferred via queueMicrotask to match the hydration-effect pattern
+  // used elsewhere in this file and satisfy the cascading-render lint.
+  useEffect(() => {
+    if (!stackSelector) return
+    if (stackSelectorEntries.length < 2) {
+      queueMicrotask(() => setStackSelector(null))
+    }
+  }, [stackSelector, stackSelectorEntries.length])
+
+  const selectStackEntry = useCallback((entry: StackEntry) => {
+    if (entry.kind === 'unit') {
+      setSelectedUnitId(entry.unit.id)
+      setSelectedCityId(null)
+    } else {
+      setSelectedCityId(entry.city.id)
+      setSelectedUnitId(null)
+    }
+    setStackSelector(null)
+  }, [])
+
+  // Phase 4 gameplay-improvements: Tab cycles the active selection
+  // through every friendly entity on the currently-selected tile. No-op
+  // if focus is inside a form control so typing in the diplomacy
+  // composer isn't hijacked.
+  useEffect(() => {
+    if (!gameState) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        if (target.isContentEditable) return
+      }
+      // Find the tile that holds the current selection.
+      let tile: Tile | null = null
+      if (selectedUnitId != null) {
+        const u = gameState.units[selectedUnitId]
+        if (u) {
+          tile = gameState.tiles.find(
+            (t) => t.loc.x === u.loc.x && t.loc.y === u.loc.y,
+          ) ?? null
+        }
+      } else if (selectedCityId != null) {
+        const c = gameState.cities[selectedCityId]
+        if (c) {
+          tile = gameState.tiles.find(
+            (t) => t.loc.x === c.loc.x && t.loc.y === c.loc.y,
+          ) ?? null
+        }
+      }
+      if (!tile) return
+      const entries = collectFriendlyEntities(gameState, tile, currentPlayer)
+      if (entries.length < 2) return
+      e.preventDefault()
+      const currentIdx = entries.findIndex((entry) =>
+        entry.kind === 'unit'
+          ? entry.unit.id === selectedUnitId
+          : entry.city.id === selectedCityId,
+      )
+      const step = e.shiftKey ? -1 : 1
+      const nextIdx =
+        (currentIdx + step + entries.length) % entries.length
+      selectStackEntry(entries[nextIdx])
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    gameState,
+    selectedUnitId,
+    selectedCityId,
+    collectFriendlyEntities,
+    currentPlayer,
+    selectStackEntry,
+  ])
 
   // ---- Queue helpers ------------------------------------------------------
 
@@ -1110,6 +1336,14 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             attackTiles={attackTiles}
             onTileClick={handleTileClick}
           />
+          {stackSelector && stackSelectorEntries.length >= 2 ? (
+            <StackSelectorPopover
+              entries={stackSelectorEntries}
+              anchor={{ x: stackSelector.screenX, y: stackSelector.screenY }}
+              onSelect={selectStackEntry}
+              onClose={() => setStackSelector(null)}
+            />
+          ) : null}
         </div>
 
         {/* Sidebar */}

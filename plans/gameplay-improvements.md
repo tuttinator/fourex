@@ -100,12 +100,12 @@ Make stacked tiles usable in the frontend. Clicking a tile that contains a city 
 
 ### Acceptance criteria
 
-- [ ] Clicking a multi-entity tile opens a selector popover.
-- [ ] Popover lists each unit with type, HP, moves remaining, and the city if present.
-- [ ] Selecting an entry in the popover sets the active selection and closes the popover.
-- [ ] A keyboard shortcut cycles selection through entities on the currently-selected tile.
-- [ ] Tiles with 2+ selectable entities render a stack-count badge.
-- [ ] Single-entity tiles behave exactly as before (no popover).
+- [x] Clicking a multi-entity tile opens a selector popover.
+- [x] Popover lists each unit with type, HP, moves remaining, and the city if present.
+- [x] Selecting an entry in the popover sets the active selection and closes the popover.
+- [x] A keyboard shortcut cycles selection through entities on the currently-selected tile.
+- [x] Tiles with 2+ selectable entities render a stack-count badge.
+- [x] Single-entity tiles behave exactly as before (no popover).
 
 ---
 

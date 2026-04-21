@@ -275,7 +275,12 @@ export interface MapCanvasProps {
 	gameState: GameState;
 	selectedPlayer?: PlayerId;
 	fogOfWarEnabled?: boolean;
-	onTileClick?: (tile: Tile) => void;
+	/**
+	 * Click handler for a map tile. The optional ``screen`` parameter
+	 * carries the pointer's viewport coordinates so callers can anchor
+	 * a floating UI (e.g. the stacked-tile selector) next to the click.
+	 */
+	onTileClick?: (tile: Tile, screen?: { x: number; y: number }) => void;
 	onUnitClick?: (unit: Unit) => void;
 	onCityClick?: (city: City) => void;
 	viewport?: MapViewport;

@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import type { MapCanvasProps, Tile } from '@/types/game'
 import { TERRAIN_COLORS, PLAYER_COLORS } from '@/types/game'
-import { Application, Container, Graphics, Sprite } from 'pixi.js'
+import { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
 import {
   cityVariantFor,
   loadSpriteAtlas,
@@ -15,6 +15,7 @@ const RESOURCE_SPRITE_SIZE = 14
 const IMPROVEMENT_SPRITE_SIZE = 20
 const CITY_SPRITE_SIZE = 32
 const BUILDING_INDICATOR_SIZE = 10
+const STACK_BADGE_RADIUS = 7
 
 function hexToNumber(hex: string): number {
   return parseInt(hex.replace('#', ''), 16)
@@ -412,6 +413,39 @@ export function PixiMap({
       }
     }
 
+    // Stack-count badge (Phase 4 gameplay-improvements). Rendered above
+    // the unit sprites so the badge reads cleanly on any terrain. Shown
+    // whenever the visible stack on a tile holds 2+ units — owner-agnostic
+    // so enemy stacks also surface a tactical cue at a glance.
+    for (const tile of tiles) {
+      const count = tile.unit_ids?.length ?? 0
+      if (count < 2) continue
+      const badgeCx = tile.loc.x * TILE_SIZE + STACK_BADGE_RADIUS + 1
+      const badgeCy = tile.loc.y * TILE_SIZE + STACK_BADGE_RADIUS + 1
+      const badge = new Graphics()
+      badge.circle(badgeCx, badgeCy, STACK_BADGE_RADIUS)
+      badge.fill({ color: 0x111827, alpha: 0.9 })
+      badge.setStrokeStyle({ width: 1, color: 0xfbbf24, alpha: 1 })
+      badge.circle(badgeCx, badgeCy, STACK_BADGE_RADIUS)
+      badge.stroke()
+      world.addChild(badge)
+
+      const label = new Text({
+        text: String(count),
+        style: {
+          fontFamily: 'sans-serif',
+          fontSize: 10,
+          fontWeight: 'bold',
+          fill: 0xfbbf24,
+          align: 'center',
+        },
+      })
+      label.anchor.set(0.5)
+      label.x = badgeCx
+      label.y = badgeCy
+      world.addChild(label)
+    }
+
     // Interactive layer for hover/click detection
     const interactiveLayer = new Graphics()
     interactiveLayer.rect(0, 0, map_width * TILE_SIZE, map_height * TILE_SIZE)
@@ -464,7 +498,7 @@ export function PixiMap({
       const tile = tileLookup.get(`${tileX},${tileY}`)
       if (!tile) return
 
-      onTileClick?.(tile)
+      onTileClick?.(tile, { x: e.global.x, y: e.global.y })
       const clickedUnitId = tile.unit_ids?.[tile.unit_ids.length - 1]
       if (clickedUnitId !== undefined && units[clickedUnitId]) onUnitClick?.(units[clickedUnitId])
       if (tile.city_id && cities[tile.city_id]) onCityClick?.(cities[tile.city_id])

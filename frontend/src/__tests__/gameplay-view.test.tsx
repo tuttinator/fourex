@@ -35,13 +35,16 @@ vi.mock("@/hooks/use-lobby-events", () => ({
 // echoes props via data attributes so tests can assert the selection /
 // highlight pipeline.
 type MockPixiProps = {
-	onTileClick?: (tile: {
-		id: number;
-		loc: { x: number; y: number };
-		terrain: string;
-		unit_ids: number[];
-		city_id?: number;
-	}) => void;
+	onTileClick?: (
+		tile: {
+			id: number;
+			loc: { x: number; y: number };
+			terrain: string;
+			unit_ids: number[];
+			city_id?: number;
+		},
+		screen?: { x: number; y: number },
+	) => void;
 	selectedUnitId?: number | null;
 	selectedCityId?: number | null;
 	highlightedTiles?: { x: number; y: number }[];
@@ -116,6 +119,23 @@ vi.mock("@/components/pixi-map", () => ({
 			>
 				click-city
 			</button>
+			<button
+				data-testid="click-stacked-tile"
+				onClick={() =>
+					onTileClick?.(
+						{
+							id: 5,
+							loc: { x: 4, y: 4 },
+							terrain: "plains",
+							unit_ids: [2, 3],
+							city_id: 12,
+						},
+						{ x: 100, y: 120 },
+					)
+				}
+			>
+				click-stack
+			</button>
 		</div>
 	),
 }));
@@ -132,6 +152,10 @@ const sampleState: GameState = {
 		{ id: 1, loc: { x: 1, y: 0 }, terrain: "plains", unit_ids: [] },
 		{ id: 2, loc: { x: 2, y: 0 }, terrain: "plains", unit_ids: [99] },
 		{ id: 3, loc: { x: 3, y: 3 }, terrain: "plains", unit_ids: [], city_id: 11 },
+		// Phase 4 gameplay-improvements: a stacked tile with two friendly
+		// units and a friendly city — enough selectable entities to open
+		// the stack selector popover.
+		{ id: 5, loc: { x: 4, y: 4 }, terrain: "plains", unit_ids: [2, 3], city_id: 12 },
 	],
 	units: {
 		1: {
@@ -141,6 +165,22 @@ const sampleState: GameState = {
 			hp: 10,
 			moves_left: 2,
 			loc: { x: 0, y: 0 },
+		},
+		2: {
+			id: 2,
+			owner: "alice",
+			type: "soldier",
+			hp: 8,
+			moves_left: 1,
+			loc: { x: 4, y: 4 },
+		},
+		3: {
+			id: 3,
+			owner: "alice",
+			type: "archer",
+			hp: 6,
+			moves_left: 2,
+			loc: { x: 4, y: 4 },
 		},
 		99: {
 			id: 99,
@@ -157,6 +197,14 @@ const sampleState: GameState = {
 			owner: "alice",
 			loc: { x: 3, y: 3 },
 			hp: 20,
+			buildings: [],
+			build_queue: [],
+		},
+		12: {
+			id: 12,
+			owner: "alice",
+			loc: { x: 4, y: 4 },
+			hp: 18,
 			buildings: [],
 			build_queue: [],
 		},
@@ -1468,5 +1516,122 @@ describe("GameplayView", () => {
 		expect(
 			screen.queryByTestId("diplomacy-declare-war-open"),
 		).not.toBeInTheDocument();
+	});
+
+	// ---- Phase 4 gameplay-improvements: stacked-tile UI ----------------
+
+	it("clicking a stacked friendly tile opens the stack selector", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("click-stacked-tile"));
+
+		await waitFor(() =>
+			expect(screen.getByTestId("stack-selector")).toBeInTheDocument(),
+		);
+		// Two friendly units + a friendly city at (4,4) → three entries.
+		expect(screen.getByTestId("stack-entry-unit-2")).toBeInTheDocument();
+		expect(screen.getByTestId("stack-entry-unit-3")).toBeInTheDocument();
+		expect(screen.getByTestId("stack-entry-city-12")).toBeInTheDocument();
+		// Selection should not have auto-committed — the player hasn't
+		// picked anything yet.
+		expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("none");
+		expect(screen.getByTestId("selected-city-id")).toHaveTextContent("none");
+	});
+
+	it("selecting an entry in the stack selector commits the selection", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 3,
+			moves_left: 2,
+			moves: [],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("click-stacked-tile"));
+		await waitFor(() =>
+			expect(screen.getByTestId("stack-selector")).toBeInTheDocument(),
+		);
+
+		fireEvent.click(screen.getByTestId("stack-entry-unit-3"));
+
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("3"),
+		);
+		expect(screen.queryByTestId("stack-selector")).not.toBeInTheDocument();
+	});
+
+	it("Tab key cycles selection through friendly entities on the tile", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 2,
+			moves_left: 2,
+			moves: [],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Seed a selection on the stacked tile by picking one entry.
+		fireEvent.click(screen.getByTestId("click-stacked-tile"));
+		await waitFor(() =>
+			expect(screen.getByTestId("stack-selector")).toBeInTheDocument(),
+		);
+		fireEvent.click(screen.getByTestId("stack-entry-unit-2"));
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("2"),
+		);
+
+		// Tab once → next unit on the tile (order: unit 2, unit 3, city 12).
+		act(() => {
+			fireEvent.keyDown(window, { key: "Tab" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("3"),
+		);
+
+		// Tab again → city 12.
+		act(() => {
+			fireEvent.keyDown(window, { key: "Tab" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-city-id")).toHaveTextContent("12"),
+		);
+		expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("none");
+
+		// Tab again → wraps back to unit 2.
+		act(() => {
+			fireEvent.keyDown(window, { key: "Tab" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("2"),
+		);
 	});
 });
