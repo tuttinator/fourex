@@ -167,9 +167,17 @@ class TestValidMovesEndpoint:
         assert len(data["moves"]) >= 1
         sample = data["moves"][0]
         # Shape contract — the frontend highlighter keys on (x, y) and
-        # renders terrain/resource hints on hover.
-        for field in ("x", "y", "terrain", "distance"):
+        # renders terrain/resource hints on hover. ``cost`` + ``path``
+        # landed in Phase 2 of the gameplay-improvements work; the
+        # legacy ``distance`` field remains as an alias of ``cost``.
+        for field in ("x", "y", "terrain", "distance", "cost", "path"):
             assert field in sample
+        assert sample["cost"] == sample["distance"]
+        assert isinstance(sample["path"], list)
+        assert len(sample["path"]) >= 1
+        # Path ends on the reported destination.
+        end = sample["path"][-1]
+        assert end["x"] == sample["x"] and end["y"] == sample["y"]
 
     @pytest.mark.asyncio
     async def test_enemy_unit_returns_404(

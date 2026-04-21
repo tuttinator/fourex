@@ -423,6 +423,12 @@ async def test_get_valid_moves_tiles_within_range(db_session, mcp):
         assert "x" in tile and "y" in tile
         assert "has_resource" in tile
         assert "has_improvement" in tile
+        # Phase 2 gameplay-improvements: cost + path accompany every tile.
+        assert tile["cost"] == tile["distance"]
+        assert isinstance(tile["path"], list)
+        assert len(tile["path"]) >= 1
+        end = tile["path"][-1]
+        assert end["x"] == tile["x"] and end["y"] == tile["y"]
 
 
 @pytest.mark.asyncio

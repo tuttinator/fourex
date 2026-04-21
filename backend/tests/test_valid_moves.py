@@ -175,7 +175,11 @@ class TestGetValidMoves:
         assert forest["has_resource"] is True
         assert forest["resource_type"] == "wood"
         assert forest["has_improvement"] is True
-        assert forest["distance"] == 1
+        # Forest entry cost is 2 (TERRAIN_ENTRY_COST) — one step into the
+        # forest from plains costs 2 movement, not Manhattan distance 1.
+        assert forest["cost"] == 2
+        assert forest["distance"] == 2
+        assert forest["path"] == [{"x": 3, "y": 2}]
 
         owned = results[(1, 2)]
         assert owned["owner"] == "p1"

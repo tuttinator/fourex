@@ -638,6 +638,20 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       .map((m) => ({ x: m.x, y: m.y }))
   }, [validMoves, queuedMoveKeys])
 
+  // Per-destination path preview — the server returns the chosen path
+  // alongside each reachable tile so the client doesn't duplicate any
+  // pathfinding rules (Phase 2).
+  const movePathsByTile = useMemo(() => {
+    const out: Record<string, Coord[]> = {}
+    if (!validMoves) return out
+    for (const m of validMoves.moves) {
+      const key = `${m.x},${m.y}`
+      if (queuedMoveKeys.has(key)) continue
+      out[key] = m.path
+    }
+    return out
+  }, [validMoves, queuedMoveKeys])
+
   const attackTiles: Coord[] = useMemo(() => {
     if (!validAttacks) return []
     return validAttacks.targets
@@ -1091,6 +1105,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             selectedUnitId={selectedUnitId}
             selectedCityId={selectedCityId}
             highlightedTiles={highlightedTiles}
+            movePathsByTile={movePathsByTile}
             attackTiles={attackTiles}
             onTileClick={handleTileClick}
           />

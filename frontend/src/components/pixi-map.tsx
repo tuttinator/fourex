@@ -46,6 +46,7 @@ export function PixiMap({
   selectedUnitId,
   selectedCityId,
   highlightedTiles,
+  movePathsByTile,
   attackTiles,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -317,6 +318,26 @@ export function PixiMap({
       world.addChild(highlightGfx)
     }
 
+    // Hovered-destination path preview (Phase 2 gameplay-improvements).
+    // Draws the server-computed chain of tiles from the selected unit's
+    // current location to the hovered reachable tile so the player can
+    // verify the route before committing.
+    if (hover && movePathsByTile) {
+      const hoverKey = `${hover.tile.loc.x},${hover.tile.loc.y}`
+      const path = movePathsByTile[hoverKey]
+      if (path && path.length > 0) {
+        const pathGfx = new Graphics()
+        for (const step of path) {
+          const px = step.x * TILE_SIZE
+          const py = step.y * TILE_SIZE
+          pathGfx.setStrokeStyle({ width: 3, color: 0xf59e0b, alpha: 1 })
+          pathGfx.rect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6)
+          pathGfx.stroke()
+        }
+        world.addChild(pathGfx)
+      }
+    }
+
     // Attack-target overlay (Phase 5) — red tile for each hostile in range.
     if (attackTiles && attackTiles.length > 0) {
       const attackGfx = new Graphics()
@@ -448,7 +469,7 @@ export function PixiMap({
     })
 
     world.addChild(interactiveLayer)
-  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, attackTiles])
+  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, movePathsByTile, attackTiles, hover])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {

@@ -2,6 +2,7 @@
 Game rules and turn resolution logic.
 """
 
+import heapq
 import random
 from copy import deepcopy
 
@@ -13,6 +14,7 @@ from .models import (
     MESSAGES_PER_TURN_LIMIT,
     STARTER_TECHS,
     TECH_TREE,
+    TERRAIN_ENTRY_COST,
     TREATY_PROPOSAL_EXPIRY_TURNS,
     UNIT_PRODUCTION_COST,
     UNIT_STATS,
@@ -1083,20 +1085,91 @@ def resolve_diplomacy_phase(state: GameState) -> None:
     ]
 
 
-def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, str]:
-    """Check if a unit can move to the target location."""
-    # Check distance
-    distance = unit.loc.distance_to(target)
-    if distance > unit.moves_left:
-        return (
-            False,
-            f"Unit {unit.id} has {unit.moves_left} moves left, need {distance}",
-        )
+def compute_paths(
+    state: GameState,
+    unit: Unit,
+    budget: int,
+) -> dict[Coord, tuple[int, list[Coord]]]:
+    """Dijkstra from ``unit.loc`` over ``TERRAIN_ENTRY_COST``.
 
-    # Check if target tile exists and is passable
+    Returns ``{destination: (cumulative_cost, path)}`` for every tile
+    reachable within ``budget`` movement points. ``path`` lists the
+    tiles stepped through from the unit's current location, excluding
+    the start and including the destination.
+
+    A tile is reachable when the cumulative entry cost along a shortest
+    4-connected path from ``unit.loc`` stays at or below ``budget`` and
+    every intermediate tile is passable and unoccupied by another unit.
+    The destination tile itself must be unoccupied by another unit but
+    may be impassable? — no: impassable (``None`` entry cost) terrain
+    is never a valid destination. The unit's own tile is excluded from
+    the result.
+    """
+    if budget <= 0:
+        return {}
+
+    tiles_by_coord: dict[Coord, Tile] = {tile.loc: tile for tile in state.tiles}
+    start = unit.loc
+    if start not in tiles_by_coord:
+        return {}
+
+    dist: dict[Coord, int] = {start: 0}
+    prev: dict[Coord, Coord] = {}
+    heap: list[tuple[int, int, int]] = [(0, start.x, start.y)]
+
+    while heap:
+        cost, x, y = heapq.heappop(heap)
+        current = Coord(x=x, y=y)
+        if cost > dist.get(current, cost):
+            continue
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            neighbour = Coord(x=nx, y=ny)
+            tile = tiles_by_coord.get(neighbour)
+            if tile is None:
+                continue
+            entry = TERRAIN_ENTRY_COST.get(tile.terrain)
+            if entry is None:
+                continue
+            # Another unit blocks the step. Stacking (Phase 3) lifts this.
+            if tile.unit_id is not None and tile.unit_id != unit.id:
+                continue
+            new_cost = cost + entry
+            if new_cost > budget:
+                continue
+            if new_cost < dist.get(neighbour, new_cost + 1):
+                dist[neighbour] = new_cost
+                prev[neighbour] = current
+                heapq.heappush(heap, (new_cost, nx, ny))
+
+    results: dict[Coord, tuple[int, list[Coord]]] = {}
+    for dest, cost in dist.items():
+        if dest == start:
+            continue
+        path: list[Coord] = []
+        cursor = dest
+        while cursor != start:
+            path.append(cursor)
+            cursor = prev[cursor]
+        path.reverse()
+        results[dest] = (cost, path)
+    return results
+
+
+def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, str]:
+    """Check if a unit can move to the target location.
+
+    Movement cost is the sum of per-tile entry costs along the shortest
+    passable path from the unit's current location to ``target``.
+    Mountains and water are impassable; any tile occupied by another
+    unit blocks traversal (Phase 3 lifts this for friendly units).
+    """
     target_tile = state.get_tile(target)
     if not target_tile:
         return False, f"Target location {target} is invalid"
+
+    if target == unit.loc:
+        return False, "Target is the unit's current tile"
 
     if target_tile.terrain == Terrain.WATER:
         return False, "Cannot move into water"
@@ -1104,9 +1177,21 @@ def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, st
     if target_tile.terrain == Terrain.MOUNTAIN:
         return False, "Cannot move into mountains"
 
-    # Check if another unit is on the tile
     if target_tile.unit_id and target_tile.unit_id != unit.id:
         return False, f"Another unit {target_tile.unit_id} is on target tile"
+
+    if unit.moves_left <= 0:
+        return False, f"Unit {unit.id} has 0 moves left"
+
+    paths = compute_paths(state, unit, unit.moves_left)
+    if target not in paths:
+        return (
+            False,
+            (
+                f"Unit {unit.id} has {unit.moves_left} moves left, "
+                f"no path to {target} within budget"
+            ),
+        )
 
     return True, "Valid move"
 
@@ -1125,6 +1210,9 @@ def execute_move(state: GameState, action: MoveAction) -> ActionResult:
     if not valid:
         return ActionResult(success=False, message=message, action=action)
 
+    paths = compute_paths(state, unit, unit.moves_left)
+    cost, _path = paths[action.to]
+
     # Update old tile
     old_tile = state.get_tile(unit.loc)
     if old_tile:
@@ -1136,9 +1224,8 @@ def execute_move(state: GameState, action: MoveAction) -> ActionResult:
         new_tile.unit_id = unit.id
 
     # Update unit
-    distance = unit.loc.distance_to(action.to)
     unit.loc = action.to
-    unit.moves_left -= distance
+    unit.moves_left -= cost
 
     return ActionResult(
         success=True,
@@ -2152,47 +2239,52 @@ def get_valid_moves(
 ) -> list[dict]:
     """Compute all tiles a unit can legally move to this turn.
 
-    A tile is a valid destination if:
-    - Manhattan distance from the unit <= ``unit.moves_left``
-    - The tile exists and terrain is passable (not water/mountain)
-    - The tile is not occupied by another unit
-    - The tile is in ``visible_coords`` (when supplied — for fog-of-war)
+    Dijkstra over ``TERRAIN_ENTRY_COST`` from the unit's current tile:
+    a destination is valid when the shortest 4-connected path from the
+    unit stays within ``unit.moves_left``, every intermediate tile is
+    passable and unoccupied by another unit, and the destination is in
+    ``visible_coords`` (when supplied — for fog-of-war).
 
-    ``visible_coords`` of ``None`` disables the visibility filter (used by
-    tests and any server-side caller that holds raw state).
+    ``visible_coords`` of ``None`` disables the visibility filter (used
+    by tests and any server-side caller that holds raw state).
 
     Each result tile includes ``x``, ``y``, ``terrain``, ``has_resource``,
-    ``resource_type``, ``has_improvement``, ``owner``, and ``distance``.
+    ``resource_type``, ``has_improvement``, ``owner``, ``cost`` (sum of
+    entry costs along the chosen path), ``path`` (list of ``{x, y}``
+    steps from the unit's current location, excluding the start and
+    including the destination), and ``distance`` (alias of ``cost`` for
+    backwards compatibility).
     """
     unit = state.get_unit(unit_id)
     if unit is None or unit.moves_left <= 0:
         return []
 
+    tiles_by_coord = {tile.loc: tile for tile in state.tiles}
+    paths = compute_paths(state, unit, unit.moves_left)
+
     results: list[dict] = []
-    for tile in state.tiles:
-        distance = unit.loc.distance_to(tile.loc)
-        if distance == 0 or distance > unit.moves_left:
+    for dest, (cost, path) in paths.items():
+        if visible_coords is not None and dest not in visible_coords:
             continue
-        if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
-            continue
-        if tile.unit_id is not None and tile.unit_id != unit.id:
-            continue
-        if visible_coords is not None and tile.loc not in visible_coords:
+        tile = tiles_by_coord.get(dest)
+        if tile is None:
             continue
         results.append(
             {
-                "x": tile.loc.x,
-                "y": tile.loc.y,
+                "x": dest.x,
+                "y": dest.y,
                 "terrain": tile.terrain.value,
                 "has_resource": tile.resource is not None,
                 "resource_type": tile.resource.value if tile.resource else None,
                 "has_improvement": tile.improvement is not None,
                 "owner": tile.owner,
-                "distance": distance,
+                "cost": cost,
+                "path": [{"x": step.x, "y": step.y} for step in path],
+                "distance": cost,
             }
         )
 
-    results.sort(key=lambda r: (r["distance"], r["x"], r["y"]))
+    results.sort(key=lambda r: (r["cost"], r["x"], r["y"]))
     return results
 
 

@@ -286,6 +286,12 @@ export interface MapCanvasProps {
 	selectedCityId?: number | null;
 	/** Tiles to render a semi-transparent highlight on (move targets). */
 	highlightedTiles?: Coord[];
+	/**
+	 * Per-destination server-computed path for the selected unit. Keyed
+	 * by ``"x,y"`` so the map can draw a connected path preview when the
+	 * player hovers a reachable tile.
+	 */
+	movePathsByTile?: Record<string, Coord[]>;
 	/** Tiles to render a red hostile-target highlight on (attack targets). */
 	attackTiles?: Coord[];
 }
@@ -412,6 +418,9 @@ export interface ValidMoveTile {
 	x: number;
 	y: number;
 	terrain: Terrain;
+	cost: number;
+	path: Coord[];
+	/** Alias of ``cost`` kept for backwards compatibility with Phase 4 callers. */
 	distance: number;
 }
 

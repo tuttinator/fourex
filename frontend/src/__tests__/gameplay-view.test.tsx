@@ -313,7 +313,16 @@ describe("GameplayView", () => {
 			game_id: "g1",
 			unit_id: 1,
 			moves_left: 2,
-			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 		});
 
 		const client = newClient();
@@ -344,7 +353,16 @@ describe("GameplayView", () => {
 			game_id: "g1",
 			unit_id: 1,
 			moves_left: 2,
-			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 		});
 		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
 			status: "actions_submitted",
@@ -387,7 +405,16 @@ describe("GameplayView", () => {
 			game_id: "g1",
 			unit_id: 1,
 			moves_left: 2,
-			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 		});
 		const submit = vi.spyOn(api, "submitActions").mockResolvedValue({
 			status: "actions_submitted",
@@ -427,7 +454,16 @@ describe("GameplayView", () => {
 			game_id: "g1",
 			unit_id: 1,
 			moves_left: 2,
-			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 		});
 
 		const client = newClient();
@@ -540,7 +576,16 @@ describe("GameplayView", () => {
 				game_id: "g1",
 				unit_id: 1,
 				moves_left: 2,
-				moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+				moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 			});
 
 		const { rerender } = render(
@@ -595,7 +640,16 @@ describe("GameplayView", () => {
 			game_id: "g1",
 			unit_id: 1,
 			moves_left: 2,
-			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
 		});
 		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
 			game_id: "g1",
