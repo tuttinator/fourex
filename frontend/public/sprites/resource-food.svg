@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- wheat stalk -->
+  <rect x="7" y="3" width="2" height="11" fill="#8a5a1b"/>
+  <!-- kernels -->
+  <rect x="5" y="3" width="2" height="2" fill="#ffd700"/>
+  <rect x="9" y="3" width="2" height="2" fill="#ffd700"/>
+  <rect x="4" y="5" width="2" height="2" fill="#ffb938"/>
+  <rect x="10" y="5" width="2" height="2" fill="#ffb938"/>
+  <rect x="5" y="7" width="2" height="2" fill="#ffd700"/>
+  <rect x="9" y="7" width="2" height="2" fill="#ffd700"/>
+  <rect x="4" y="9" width="2" height="2" fill="#ffb938"/>
+  <rect x="10" y="9" width="2" height="2" fill="#ffb938"/>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- crystal body -->
+  <polygon points="8,2 12,7 10,14 6,14 4,7" fill="#c48bd6"/>
+  <!-- light facet -->
+  <polygon points="8,2 10,7 8,14 6,7" fill="#e0b9ef"/>
+  <!-- dark facet -->
+  <polygon points="8,2 12,7 10,14 8,14 8,2" fill="#a066b0"/>
+  <!-- specular highlight -->
+  <rect x="7" y="4" width="1" height="3" fill="#ffffff"/>
+</svg>

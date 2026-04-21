@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <rect width="32" height="32" fill="#4682b4"/>
+  <!-- waves -->
+  <path d="M2 8 Q6 6 10 8 T18 8 T26 8 T30 8" stroke="#6fa3cf" stroke-width="1.5" fill="none"/>
+  <path d="M0 16 Q4 14 8 16 T16 16 T24 16 T32 16" stroke="#3a6d9a" stroke-width="1.5" fill="none"/>
+  <path d="M2 24 Q6 22 10 24 T18 24 T26 24 T30 24" stroke="#6fa3cf" stroke-width="1.5" fill="none"/>
+</svg>

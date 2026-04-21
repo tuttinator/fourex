@@ -540,6 +540,7 @@ class GameState(BaseModel):
                 fixed[key] = value
         data["diplomacy"] = fixed
         return data
+
     stockpiles: dict[PlayerId, ResourceBag] = Field(default_factory=dict)
     next_unit_id: int = 1
     next_city_id: int = 1

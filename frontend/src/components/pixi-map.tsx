@@ -3,16 +3,11 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import type { MapCanvasProps, Tile } from '@/types/game'
 import { TERRAIN_COLORS, UNIT_COLORS, PLAYER_COLORS } from '@/types/game'
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
+import { loadSpriteAtlas, type SpriteAtlas } from '@/lib/sprite-atlas'
 
 const TILE_SIZE = 32
-
-const RESOURCE_ICONS: Record<string, string> = {
-  food: 'F',
-  wood: 'W',
-  ore: 'O',
-  crystal: 'C',
-}
+const RESOURCE_SPRITE_SIZE = 14
 
 const UNIT_ICONS: Record<string, string> = {
   scout: 'Sc',
@@ -62,6 +57,7 @@ export function PixiMap({
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
   const worldRef = useRef<Container | null>(null)
+  const atlasRef = useRef<SpriteAtlas | null>(null)
   const isPanningRef = useRef(false)
   const lastPointerRef = useRef({ x: 0, y: 0 })
   const [hover, setHover] = useState<HoverData | null>(null)
@@ -122,6 +118,20 @@ export function PixiMap({
       app.stage.addChild(world)
       appRef.current = app
       worldRef.current = world
+
+      try {
+        atlasRef.current = await loadSpriteAtlas()
+      } catch (error) {
+        if (!disposed) {
+          console.error('Failed to load sprite atlas', error)
+        }
+      }
+
+      if (disposed) {
+        destroyApp()
+        return
+      }
+
       setPixiReady((version) => version + 1)
     }
 
@@ -143,29 +153,45 @@ export function PixiMap({
     const { map_width, map_height, tiles, units, cities, players } = gameState
     const tileLookup = buildTileLookup(tiles)
 
-    // Terrain layer — draw all tiles, marking unexplored ones as dark
-    const terrainGfx = new Graphics()
+    // Terrain layer — unexplored fog stays as Graphics (no sprite), but
+    // every explored tile renders as a sprite from the atlas so the map
+    // reads as art rather than a diagram (Phase 1).
+    const atlas = atlasRef.current
+
     if (fogOfWarEnabled) {
-      // Draw unexplored tiles first (dark background for full grid)
+      const fogGfx = new Graphics()
       for (let gy = 0; gy < map_height; gy++) {
         for (let gx = 0; gx < map_width; gx++) {
           if (!tileLookup.has(`${gx},${gy}`)) {
-            terrainGfx.rect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            terrainGfx.fill(0x0a0a14)
+            fogGfx.rect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            fogGfx.fill(0x0a0a14)
           }
         }
       }
+      world.addChild(fogGfx)
     }
-    // Draw visible tiles
+
     for (const tile of tiles) {
       const x = tile.loc.x * TILE_SIZE
       const y = tile.loc.y * TILE_SIZE
-      const colour = hexToNumber(TERRAIN_COLORS[tile.terrain])
+      const texture = atlas?.terrain[tile.terrain]
 
-      terrainGfx.rect(x, y, TILE_SIZE, TILE_SIZE)
-      terrainGfx.fill(colour)
+      if (texture) {
+        const sprite = new Sprite(texture)
+        sprite.x = x
+        sprite.y = y
+        sprite.width = TILE_SIZE
+        sprite.height = TILE_SIZE
+        world.addChild(sprite)
+      } else {
+        // Fallback while the atlas is still loading — keeps the map
+        // readable on the first paint instead of flashing empty tiles.
+        const fallback = new Graphics()
+        fallback.rect(x, y, TILE_SIZE, TILE_SIZE)
+        fallback.fill(hexToNumber(TERRAIN_COLORS[tile.terrain]))
+        world.addChild(fallback)
+      }
     }
-    world.addChild(terrainGfx)
 
     // Grid lines
     const gridGfx = new Graphics()
@@ -182,23 +208,18 @@ export function PixiMap({
     }
     world.addChild(gridGfx)
 
-    // Resource indicators
-    const resourceStyle = new TextStyle({
-      fontFamily: 'monospace',
-      fontSize: 9,
-      fill: 0xffd700,
-      fontWeight: 'bold',
-    })
+    // Resource indicators — rendered as sprites from the atlas, anchored
+    // to the top-right corner of the tile (Phase 1).
     for (const tile of tiles) {
-      if (tile.resource) {
-        const label = new Text({
-          text: RESOURCE_ICONS[tile.resource] || '?',
-          style: resourceStyle,
-        })
-        label.x = tile.loc.x * TILE_SIZE + TILE_SIZE - 10
-        label.y = tile.loc.y * TILE_SIZE + 1
-        world.addChild(label)
-      }
+      if (!tile.resource) continue
+      const texture = atlas?.resource[tile.resource]
+      if (!texture) continue
+      const sprite = new Sprite(texture)
+      sprite.width = RESOURCE_SPRITE_SIZE
+      sprite.height = RESOURCE_SPRITE_SIZE
+      sprite.x = tile.loc.x * TILE_SIZE + TILE_SIZE - RESOURCE_SPRITE_SIZE - 1
+      sprite.y = tile.loc.y * TILE_SIZE + 1
+      world.addChild(sprite)
     }
 
     // Improvements

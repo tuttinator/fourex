@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- ore chunk -->
+  <polygon points="3,10 5,5 10,3 13,6 14,11 9,14 4,13" fill="#8a8a8a"/>
+  <!-- highlight -->
+  <polygon points="5,5 8,5 8,8 5,8" fill="#b5b5b5"/>
+  <polygon points="10,9 12,9 12,11 10,11" fill="#b5b5b5"/>
+  <!-- shadow -->
+  <polygon points="4,12 9,13 9,14 4,13" fill="#5a5a5a"/>
+</svg>

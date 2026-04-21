@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- log body -->
+  <rect x="2" y="5" width="12" height="6" fill="#8a5a1b"/>
+  <!-- bark detail -->
+  <rect x="2" y="5" width="12" height="1" fill="#6b4513"/>
+  <rect x="2" y="10" width="12" height="1" fill="#6b4513"/>
+  <!-- end-grain rings -->
+  <circle cx="4" cy="8" r="2" fill="#c49a6c"/>
+  <circle cx="4" cy="8" r="1" fill="#8a5a1b"/>
+  <circle cx="12" cy="8" r="2" fill="#c49a6c"/>
+  <circle cx="12" cy="8" r="1" fill="#8a5a1b"/>
+</svg>
