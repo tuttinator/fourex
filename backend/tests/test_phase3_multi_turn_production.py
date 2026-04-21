@@ -200,28 +200,35 @@ class TestAdvanceProduction:
         assert BuildingType.MONUMENT in city.buildings
         assert city.build_queue == []
 
-    def test_unit_stalls_on_occupied_city_tile(self):
-        """If the city tile is occupied when a unit job completes, progress
-        clamps at total_cost and the unit emerges the turn the tile frees."""
+    def test_unit_stalls_on_full_city_tile(self):
+        """If the city tile is at STACK_CAP when a unit job completes,
+        progress clamps at total_cost and the unit emerges the turn a
+        slot opens up. Phase 3: single-unit occupancy no longer stalls
+        — only hitting the cap does."""
+        from backend.src.game.models import STACK_CAP
+
         state = _plains_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(food=100)
         city = _seed_city(state, "p1", 5, 5)
 
-        # Park a worker on the city tile.
-        worker = Unit(
-            id=50,
-            owner="p1",
-            type=UnitType.WORKER,
-            hp=2,
-            moves_left=2,
-            loc=city.loc,
-        )
-        state.units[50] = worker
-        state.next_unit_id = 51
+        # Fill the city tile to STACK_CAP so no new unit can land.
         tile = state.get_tile(city.loc)
         assert tile is not None
-        tile.unit_id = worker.id
+        parked_ids: list[int] = []
+        for i in range(STACK_CAP):
+            worker = Unit(
+                id=50 + i,
+                owner="p1",
+                type=UnitType.WORKER,
+                hp=2,
+                moves_left=2,
+                loc=city.loc,
+            )
+            state.units[worker.id] = worker
+            parked_ids.append(worker.id)
+            tile.unit_ids.append(worker.id)
+        state.next_unit_id = 50 + STACK_CAP
 
         execute_train_unit(
             state, TrainUnitAction(city_id=city.id, unit_type=UnitType.SCOUT)
@@ -234,15 +241,17 @@ class TestAdvanceProduction:
         # Job is still present, clamped at total_cost.
         assert len(city.build_queue) == 1
         assert city.build_queue[0].progress == city.build_queue[0].total_cost
-        assert len(state.units) == 1  # still only the worker
+        assert len(state.units) == STACK_CAP  # still only the parked workers
 
-        # Free the tile.
-        tile.unit_id = None
+        # Free a slot by removing one parked unit.
+        freed = parked_ids.pop()
+        tile.unit_ids.remove(freed)
+        del state.units[freed]
         # Next turn: job completes.
         completions = advance_production(state)
         assert len(completions) == 1
         assert city.build_queue == []
-        assert len(state.units) == 2
+        assert len(state.units) == STACK_CAP
 
 
 class TestInstantResolutionDeleted:
@@ -375,7 +384,7 @@ class TestFogOfWar:
         )
         state.units[100] = scout
         state.next_unit_id = 101
-        state.tiles[0].unit_id = None  # no-op; keep linter happy
+        state.tiles[0].unit_ids = []  # no-op; keep linter happy
 
         execute_train_unit(
             state, TrainUnitAction(city_id=city_p2.id, unit_type=UnitType.SCOUT)

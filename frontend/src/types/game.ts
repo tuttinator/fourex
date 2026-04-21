@@ -54,7 +54,7 @@ export interface Tile {
 	resource?: Resource;
 	owner?: PlayerId;
 	city_id?: number;
-	unit_id?: number;
+	unit_ids: number[];
 	improvement?: ImprovementType;
 }
 
@@ -440,7 +440,10 @@ export interface MoveActionPayload {
 export interface AttackActionPayload {
 	type: "ATTACK";
 	attacker_id: number;
-	target_id: number;
+	/** Deterministic target by id — supply exactly one of target_id or target_tile. */
+	target_id?: number;
+	/** Tile-based target; server picks a defender via seeded RNG. Phase 3. */
+	target_tile?: Coord;
 	target_type: "unit" | "city";
 }
 

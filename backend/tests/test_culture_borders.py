@@ -449,7 +449,7 @@ class TestBorderExpansion:
         )
         state.units[1] = worker
         tile = state.get_tile(Coord(x=5, y=5))
-        tile.unit_id = 1
+        tile.unit_ids = [1]
 
         from backend.src.game.models import FoundCityAction
         from backend.src.game.rules import execute_found_city

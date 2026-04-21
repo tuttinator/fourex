@@ -55,7 +55,7 @@ def _add_worker(state: GameState, owner: str, x: int, y: int) -> Unit:
     state.next_unit_id += 1
     tile = state.get_tile(Coord(x=x, y=y))
     if tile:
-        tile.unit_id = unit.id
+        tile.unit_ids.append(unit.id)
     return unit
 
 
@@ -89,7 +89,7 @@ class TestBuildFarm:
         tile = state.get_tile(Coord(x=3, y=3))
         assert tile.improvement == ImprovementType.FARM
         assert worker.id in state.units  # worker survives
-        assert tile.unit_id == worker.id
+        assert tile.unit_ids == [worker.id]
         assert worker.moves_left == 2  # moves retained
         cost = IMPROVEMENT_STATS[ImprovementType.FARM].cost
         assert state.stockpiles["p1"].wood == 100 - cost.wood
@@ -429,8 +429,8 @@ class TestResolveTurnIntegration:
         assert worker.id in state.units
         assert state.units[worker.id].loc == Coord(x=4, y=3)
         assert state.get_tile(Coord(x=3, y=3)).improvement == ImprovementType.FARM
-        assert state.get_tile(Coord(x=3, y=3)).unit_id is None
-        assert state.get_tile(Coord(x=4, y=3)).unit_id == worker.id
+        assert state.get_tile(Coord(x=3, y=3)).unit_ids == []
+        assert state.get_tile(Coord(x=4, y=3)).unit_ids == [worker.id]
 
     def test_worker_builds_multiple_improvements_across_turns(self):
         """A single worker builds a farm on turn 1, moves, then builds a lumber mill on turn 2."""

@@ -9,9 +9,11 @@ from copy import deepcopy
 from .models import (
     BUILDING_PRODUCTION_COST,
     BUILDING_STATS,
+    FORTIFICATION_CITY_DEFENCE_BONUS,
     IMPROVEMENT_STATS,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
+    STACK_CAP,
     STARTER_TECHS,
     TECH_TREE,
     TERRAIN_ENTRY_COST,
@@ -1099,11 +1101,14 @@ def compute_paths(
 
     A tile is reachable when the cumulative entry cost along a shortest
     4-connected path from ``unit.loc`` stays at or below ``budget`` and
-    every intermediate tile is passable and unoccupied by another unit.
-    The destination tile itself must be unoccupied by another unit but
-    may be impassable? — no: impassable (``None`` entry cost) terrain
-    is never a valid destination. The unit's own tile is excluded from
-    the result.
+    every intermediate tile is passable. Phase 3 semantics: friendly
+    units do not block traversal, but an enemy unit (any unit whose
+    ``owner`` differs from the moving unit's) does. The destination must
+    be passable and, if it already holds units, their number plus one
+    must not exceed :data:`STACK_CAP`; enemy-occupied destinations are
+    never reachable by a move action (they are targets for an
+    ``AttackAction`` instead). The unit's own tile is excluded from the
+    result.
     """
     if budget <= 0:
         return {}
@@ -1112,6 +1117,25 @@ def compute_paths(
     start = unit.loc
     if start not in tiles_by_coord:
         return {}
+
+    def _tile_has_enemy(tile: Tile) -> bool:
+        for other_id in tile.unit_ids:
+            if other_id == unit.id:
+                continue
+            other = state.units.get(other_id)
+            if other is None:
+                continue
+            if other.owner != unit.owner:
+                return True
+        return False
+
+    def _tile_friendly_count(tile: Tile) -> int:
+        count = 0
+        for other_id in tile.unit_ids:
+            if other_id == unit.id:
+                continue
+            count += 1
+        return count
 
     dist: dict[Coord, int] = {start: 0}
     prev: dict[Coord, Coord] = {}
@@ -1131,8 +1155,16 @@ def compute_paths(
             entry = TERRAIN_ENTRY_COST.get(tile.terrain)
             if entry is None:
                 continue
-            # Another unit blocks the step. Stacking (Phase 3) lifts this.
-            if tile.unit_id is not None and tile.unit_id != unit.id:
+            # Enemy stacks block traversal entirely (they are attack
+            # targets, not waypoints). Friendly stacks pass-through freely
+            # for routing, but the cap is enforced at the destination.
+            if _tile_has_enemy(tile):
+                continue
+            if _tile_friendly_count(tile) + 1 > STACK_CAP:
+                # Landing here (including as a through-step's halt) would
+                # exceed the cap. Still reachable *via* this tile would
+                # be wrong because the move could end here on budget
+                # exhaustion, so skip entirely.
                 continue
             new_cost = cost + entry
             if new_cost > budget:
@@ -1161,8 +1193,9 @@ def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, st
 
     Movement cost is the sum of per-tile entry costs along the shortest
     passable path from the unit's current location to ``target``.
-    Mountains and water are impassable; any tile occupied by another
-    unit blocks traversal (Phase 3 lifts this for friendly units).
+    Mountains and water are impassable. Phase 3: enemy-occupied tiles
+    still block traversal; friendly units do not, up to
+    :data:`STACK_CAP` at the destination.
     """
     target_tile = state.get_tile(target)
     if not target_tile:
@@ -1177,8 +1210,22 @@ def is_valid_move(state: GameState, unit: Unit, target: Coord) -> tuple[bool, st
     if target_tile.terrain == Terrain.MOUNTAIN:
         return False, "Cannot move into mountains"
 
-    if target_tile.unit_id and target_tile.unit_id != unit.id:
-        return False, f"Another unit {target_tile.unit_id} is on target tile"
+    # Reject enemy-occupied destinations outright — attack them via
+    # AttackAction instead.
+    for other_id in target_tile.unit_ids:
+        if other_id == unit.id:
+            continue
+        other = state.units.get(other_id)
+        if other is not None and other.owner != unit.owner:
+            return False, f"Enemy unit {other_id} is on target tile"
+
+    # Enforce stack cap at the destination regardless of owner.
+    friendly_count = sum(1 for uid in target_tile.unit_ids if uid != unit.id)
+    if friendly_count + 1 > STACK_CAP:
+        return (
+            False,
+            f"Target tile is at stack cap ({STACK_CAP})",
+        )
 
     if unit.moves_left <= 0:
         return False, f"Unit {unit.id} has 0 moves left"
@@ -1213,15 +1260,16 @@ def execute_move(state: GameState, action: MoveAction) -> ActionResult:
     paths = compute_paths(state, unit, unit.moves_left)
     cost, _path = paths[action.to]
 
-    # Update old tile
+    # Update old tile — remove this unit from the stack, leaving any
+    # co-located friendlies behind.
     old_tile = state.get_tile(unit.loc)
-    if old_tile:
-        old_tile.unit_id = None
+    if old_tile and unit.id in old_tile.unit_ids:
+        old_tile.unit_ids.remove(unit.id)
 
-    # Update new tile
+    # Update new tile — append so stack order matches arrival order.
     new_tile = state.get_tile(action.to)
-    if new_tile:
-        new_tile.unit_id = unit.id
+    if new_tile and unit.id not in new_tile.unit_ids:
+        new_tile.unit_ids.append(unit.id)
 
     # Update unit
     unit.loc = action.to
@@ -1232,6 +1280,62 @@ def execute_move(state: GameState, action: MoveAction) -> ActionResult:
         message=f"Unit {unit.id} moved to {action.to}",
         action=action,
     )
+
+
+def _resolve_attack_target_unit(
+    state: GameState, attacker: Unit, action: AttackAction
+) -> tuple[Unit | None, str | None]:
+    """Resolve an ``AttackAction`` with ``target_type=="unit"`` to one defender.
+
+    Returns ``(defender, None)`` on success or ``(None, error_message)``.
+
+    - If ``target_id`` is supplied, look up that specific unit.
+    - If ``target_tile`` is supplied, pick a defender on that tile that
+      is hostile (not own, not allied). Selection is uniformly random
+      via a RNG seeded off ``state.rng_state`` + turn + attacker +
+      tile, so replays stay deterministic.
+    """
+    if action.target_id is not None:
+        target = state.get_unit(action.target_id)
+        if target is None:
+            return None, f"Target unit {action.target_id} not found"
+        return target, None
+
+    target_tile = action.target_tile
+    tile = state.get_tile(target_tile) if target_tile is not None else None
+    if tile is None or target_tile is None:
+        return None, f"Target tile {target_tile} is invalid"
+    candidates: list[Unit] = []
+    for uid in tile.unit_ids:
+        candidate = state.units.get(uid)
+        if candidate is None or candidate.id == attacker.id:
+            continue
+        if candidate.owner == attacker.owner:
+            continue
+        rel = state.get_diplomatic_state(attacker.owner, candidate.owner)
+        if rel == DiplomaticState.ALLIANCE:
+            continue
+        candidates.append(candidate)
+    if not candidates:
+        return None, f"No hostile defender on tile {target_tile}"
+    rng = random.Random(
+        f"{state.rng_state}:{state.turn}:{attacker.id}:"
+        f"{target_tile.x}:{target_tile.y}"
+    )
+    # Sort by id so candidate ordering is stable regardless of how the
+    # unit_ids list was built, then pick deterministically.
+    candidates.sort(key=lambda u: u.id)
+    chosen = rng.choice(candidates)
+    return chosen, None
+
+
+def _defender_on_friendly_city_tile(state: GameState, defender: Unit) -> bool:
+    """Is ``defender`` standing on a city owned by their own side?"""
+    tile = state.get_tile(defender.loc)
+    if tile is None or tile.city_id is None:
+        return False
+    city = state.cities.get(tile.city_id)
+    return city is not None and city.owner == defender.owner
 
 
 def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
@@ -1245,11 +1349,11 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
         )
 
     if action.target_type == "unit":
-        target = state.get_unit(action.target_id)
-        if not target:
+        target, err = _resolve_attack_target_unit(state, attacker, action)
+        if err is not None or target is None:
             return ActionResult(
                 success=False,
-                message=f"Target unit {action.target_id} not found",
+                message=err or "Target unit not found",
                 action=action,
             )
 
@@ -1299,43 +1403,59 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                 violate_on_obligation=True,
             )
 
-        # Calculate damage
+        # Calculate damage. Phase 3: defenders on a friendly city tile
+        # take FORTIFICATION_CITY_DEFENCE_BONUS less damage (rounded).
         attacker_strength = attacker.stats.attack
         defender_strength = target.stats.attack
         damage = max(1, attacker_strength - defender_strength // 2)
+        if _defender_on_friendly_city_tile(state, target):
+            damage = max(1, int(round(damage * (1 - FORTIFICATION_CITY_DEFENCE_BONUS))))
 
         target.hp -= damage
         message = f"Unit {attacker.id} attacks unit {target.id} for {damage} damage"
 
-        # Counter-attack if target survives and can counter
+        # Counter-attack if target survives and can counter.
         if target.hp > 0 and target.can_attack(attacker.loc):
             counter_damage = max(1, defender_strength - attacker_strength // 2)
+            if _defender_on_friendly_city_tile(state, attacker):
+                counter_damage = max(
+                    1,
+                    int(round(counter_damage * (1 - FORTIFICATION_CITY_DEFENCE_BONUS))),
+                )
             attacker.hp -= counter_damage
             message += f", unit {target.id} counters for {counter_damage} damage"
 
         # Remove destroyed units
         if target.hp <= 0:
             target_tile = state.get_tile(target.loc)
-            if target_tile:
-                target_tile.unit_id = None
+            if target_tile and target.id in target_tile.unit_ids:
+                target_tile.unit_ids.remove(target.id)
             del state.units[target.id]
             message += f", unit {target.id} destroyed"
 
         if attacker.hp <= 0:
             attacker_tile = state.get_tile(attacker.loc)
-            if attacker_tile:
-                attacker_tile.unit_id = None
+            if attacker_tile and attacker.id in attacker_tile.unit_ids:
+                attacker_tile.unit_ids.remove(attacker.id)
             del state.units[attacker.id]
             message += f", unit {attacker.id} destroyed"
 
         return ActionResult(success=True, message=message, action=action)
 
     elif action.target_type == "city":
-        target_city = state.get_city(action.target_id)
+        # City attacks use ``target_id`` to name the city directly. If a
+        # caller supplies ``target_tile`` instead, resolve it to the
+        # city sitting on that tile.
+        if action.target_id is not None:
+            city_id = action.target_id
+        else:
+            tile = state.get_tile(action.target_tile) if action.target_tile else None
+            city_id = tile.city_id if tile is not None else None
+        target_city = state.get_city(city_id) if city_id is not None else None
         if not target_city:
             return ActionResult(
                 success=False,
-                message=f"Target city {action.target_id} not found",
+                message=f"Target city {city_id} not found",
                 action=action,
             )
 
@@ -1407,8 +1527,8 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
         # Remove destroyed units
         if attacker.hp <= 0:
             attacker_tile = state.get_tile(attacker.loc)
-            if attacker_tile:
-                attacker_tile.unit_id = None
+            if attacker_tile and attacker.id in attacker_tile.unit_ids:
+                attacker_tile.unit_ids.remove(attacker.id)
             del state.units[attacker.id]
             message += f", unit {attacker.id} destroyed"
 
@@ -1494,7 +1614,8 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
     state.stockpiles[worker.owner] = player_resources - cost
 
     # Remove worker
-    tile.unit_id = None
+    if worker.id in tile.unit_ids:
+        tile.unit_ids.remove(worker.id)
     del state.units[worker.id]
 
     # Claim adjacent tiles immediately — cities start at border radius 1.
@@ -2131,8 +2252,8 @@ def eliminate_player(state: GameState, player_id: PlayerId) -> None:
     for uid in unit_ids_to_remove:
         unit = state.units[uid]
         tile = state.get_tile(unit.loc)
-        if tile:
-            tile.unit_id = None
+        if tile and uid in tile.unit_ids:
+            tile.unit_ids.remove(uid)
         del state.units[uid]
 
     # Clear tile ownership and destroy improvements
@@ -2601,7 +2722,7 @@ def _find_scout_placement(state: GameState, worker_loc: Coord) -> Coord | None:
             y=(worker_loc.y + dy) % state.map_height,
         )
         tile = state.get_tile(coord)
-        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
             return coord
 
     for radius in range(2, 5):
@@ -2614,7 +2735,7 @@ def _find_scout_placement(state: GameState, worker_loc: Coord) -> Coord | None:
                     y=(worker_loc.y + dy) % state.map_height,
                 )
                 tile = state.get_tile(coord)
-                if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+                if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
                     return coord
 
     return None
@@ -2646,7 +2767,7 @@ def place_starting_units(
         y = rng.randint(margin, map_h - margin - 1)
         coord = Coord(x=x, y=y)
         tile = state.get_tile(coord)
-        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
             too_close = any(
                 coord.distance_to(u.loc) < min_distance for u in state.units.values()
             )
@@ -2656,7 +2777,7 @@ def place_starting_units(
 
     if worker_loc is None:
         for tile in state.tiles:
-            if tile.terrain in _PASSABLE_TERRAIN and not tile.unit_id:
+            if tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
                 worker_loc = tile.loc
                 break
 
@@ -2674,8 +2795,8 @@ def place_starting_units(
     )
     state.units[worker_id] = worker
     worker_tile = state.get_tile(worker_loc)
-    if worker_tile is not None:
-        worker_tile.unit_id = worker_id
+    if worker_tile is not None and worker_id not in worker_tile.unit_ids:
+        worker_tile.unit_ids.append(worker_id)
     state.next_unit_id = worker_id + 1
 
     scout_loc = _find_scout_placement(state, worker_loc)
@@ -2694,8 +2815,8 @@ def place_starting_units(
     )
     state.units[scout_id] = scout
     scout_tile = state.get_tile(scout_loc)
-    if scout_tile is not None:
-        scout_tile.unit_id = scout_id
+    if scout_tile is not None and scout_id not in scout_tile.unit_ids:
+        scout_tile.unit_ids.append(scout_id)
     state.next_unit_id = scout_id + 1
 
 
@@ -2735,11 +2856,13 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
                 city.build_queue.pop(0)
                 continue
 
-            # Stall if the city tile is occupied: hold progress at total_cost
-            # so the unit emerges the turn the tile frees up. Waiting queue
-            # entries behind it also wait — no reshuffling.
+            # Stall if the city tile is at stack cap: hold progress at
+            # total_cost so the unit emerges the turn the tile frees up.
+            # Waiting queue entries behind it also wait — no reshuffling.
+            # Phase 3: friendly units no longer block emergence individually,
+            # only the cap does.
             city_tile = state.get_tile(city.loc)
-            if city_tile is not None and city_tile.unit_id is not None:
+            if city_tile is not None and len(city_tile.unit_ids) >= STACK_CAP:
                 job.progress = job.total_cost
                 continue
 
@@ -2754,8 +2877,8 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
             )
             state.units[unit.id] = unit
             state.next_unit_id += 1
-            if city_tile is not None:
-                city_tile.unit_id = unit.id
+            if city_tile is not None and unit.id not in city_tile.unit_ids:
+                city_tile.unit_ids.append(unit.id)
 
         elif job.type == "building":
             try:

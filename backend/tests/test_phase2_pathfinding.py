@@ -73,7 +73,7 @@ def _add_unit(
     state.next_unit_id += 1
     tile = state.get_tile(unit.loc)
     assert tile is not None
-    tile.unit_id = unit.id
+    tile.unit_ids.append(unit.id)
     return unit
 
 
@@ -217,8 +217,8 @@ class TestIsValidMoveAndExecute:
         assert result.success is True
         old_tile = state.get_tile(Coord(x=3, y=3))
         new_tile = state.get_tile(Coord(x=5, y=3))
-        assert old_tile is not None and old_tile.unit_id is None
-        assert new_tile is not None and new_tile.unit_id == unit.id
+        assert old_tile is not None and old_tile.unit_ids == []
+        assert new_tile is not None and new_tile.unit_ids == [unit.id]
         assert unit.moves_left == 0
 
 

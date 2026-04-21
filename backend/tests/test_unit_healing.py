@@ -60,7 +60,7 @@ def _add_unit(
     state.next_unit_id += 1
     tile = state.get_tile(Coord(x=x, y=y))
     assert tile is not None
-    tile.unit_id = unit.id
+    tile.unit_ids.append(unit.id)
     return unit
 
 

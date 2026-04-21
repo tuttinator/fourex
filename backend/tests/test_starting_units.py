@@ -86,7 +86,7 @@ def test_starting_scout_on_passable_terrain():
     assert tile.terrain in (Terrain.PLAINS, Terrain.FOREST)
 
 
-def test_starting_units_register_on_tile_unit_id():
+def test_starting_units_register_on_tile_unit_ids():
     state = _fresh_state()
     rng = random.Random(42)
 
@@ -95,7 +95,7 @@ def test_starting_units_register_on_tile_unit_id():
     for unit in state.units.values():
         tile = state.get_tile(unit.loc)
         assert tile is not None
-        assert tile.unit_id == unit.id
+        assert unit.id in tile.unit_ids
 
 
 def test_next_unit_id_advances_past_starting_units():
@@ -125,12 +125,12 @@ def test_fallback_to_wider_search_when_cardinals_blocked():
         tile = state.get_tile(Coord(x=worker_loc.x + dx, y=worker_loc.y + dy))
         assert tile is not None
         tile.terrain = Terrain.MOUNTAIN
-        tile.unit_id = None
+        tile.unit_ids = []
     # Ensure at least one distance-2 plains tile exists.
     ring2 = state.get_tile(Coord(x=12, y=10))
     assert ring2 is not None
     ring2.terrain = Terrain.PLAINS
-    ring2.unit_id = None
+    ring2.unit_ids = []
 
     scout_loc = _find_scout_placement(state, worker_loc)
     assert scout_loc is not None

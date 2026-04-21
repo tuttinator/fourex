@@ -78,15 +78,15 @@ Migrate tile occupancy from a single `unit_id` to an ordered `unit_ids: list[int
 
 ### Acceptance criteria
 
-- [ ] `Tile.unit_ids: list[int]` replaces `Tile.unit_id` in models, database, and redaction.
-- [ ] Alembic migration converts existing data.
-- [ ] Up to 5 units may occupy a single tile; the 6th move is rejected.
-- [ ] `validate_actions` accepts moves onto friendly-occupied tiles under the cap.
-- [ ] `AttackAction.target_tile` picks a random defender via seeded RNG; same seed + actions produces identical defender choice across replays.
-- [ ] `AttackAction.target_id` still resolves against a specific stacked unit.
-- [ ] Units on a friendly city tile take 25% less damage when attacked.
-- [ ] Rules reference payload documents stack cap and fortification bonus.
-- [ ] Tests: stack cap enforcement; friendly pass-through; random defender determinism; fortification damage reduction; redacted state exposes only visible stacked units.
+- [x] `Tile.unit_ids: list[int]` replaces `Tile.unit_id` in models, database, and redaction.
+- [x] Alembic migration converts existing data. (No SQL migration required — `GameState` is stored as a JSON blob; a Pydantic `model_validator` on `Tile` normalises legacy `unit_id` payloads to `unit_ids` on load.)
+- [x] Up to 5 units may occupy a single tile; the 6th move is rejected.
+- [x] `validate_actions` accepts moves onto friendly-occupied tiles under the cap.
+- [x] `AttackAction.target_tile` picks a random defender via seeded RNG; same seed + actions produces identical defender choice across replays.
+- [x] `AttackAction.target_id` still resolves against a specific stacked unit.
+- [x] Units on a friendly city tile take 25% less damage when attacked.
+- [x] Rules reference payload documents stack cap and fortification bonus.
+- [x] Tests: stack cap enforcement; friendly pass-through; random defender determinism; fortification damage reduction; redacted state exposes only visible stacked units.
 
 ---
 

@@ -133,7 +133,7 @@ def simulate_player_actions(state: GameState, player: PlayerId) -> list[Action]:
                 target_tile = state.get_tile(new_loc)
                 if (
                     target_tile
-                    and not target_tile.unit_id
+                    and not target_tile.unit_ids
                     and target_tile.terrain.value in ["plains", "forest"]
                 ):
                     possible_moves.append(new_loc)
@@ -146,7 +146,7 @@ def simulate_player_actions(state: GameState, player: PlayerId) -> list[Action]:
     for city in player_cities:
         if random.random() < 0.3:  # 30% chance to train a unit
             city_tile = state.get_tile(city.loc)
-            if city_tile and not city_tile.unit_id:  # City tile is free
+            if city_tile and not city_tile.unit_ids:  # City tile is free
                 unit_types = [UnitType.SCOUT, UnitType.WORKER, UnitType.SOLDIER]
                 unit_type = random.choice(unit_types)
                 actions.append(TrainUnitAction(city_id=city.id, unit_type=unit_type))

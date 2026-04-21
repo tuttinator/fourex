@@ -98,7 +98,7 @@ def _add_unit(
     state.units[unit_id] = unit
     tile = state.get_tile(Coord(x=x, y=y))
     if tile:
-        tile.unit_id = unit_id
+        tile.unit_ids.append(unit_id)
     state.next_unit_id = max(state.next_unit_id, unit_id + 1)
     return unit
 
@@ -452,7 +452,8 @@ class TestElimination:
         # Remove the worker
         worker_id = list(state.units.keys())[0]
         tile = state.get_tile(state.units[worker_id].loc)
-        tile.unit_id = None
+        if worker_id in tile.unit_ids:
+            tile.unit_ids.remove(worker_id)
         del state.units[worker_id]
 
         # Now p1 should be eliminated

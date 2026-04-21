@@ -152,7 +152,7 @@ def test_invariants_unit_on_mountain_detected():
 
 def test_invariants_tile_unit_ref_mismatched():
     state = _mini_state()
-    state.tiles[0].unit_id = 42  # No such unit
+    state.tiles[0].unit_ids = [42]  # No such unit
     errors = check_state_invariants(state)
     assert any("nonexistent unit 42" in e for e in errors)
 
@@ -167,8 +167,8 @@ def test_invariants_unit_location_mismatch_detected():
         moves_left=3,
         loc=Coord(x=2, y=2),
     )
-    # Tile (0,0).unit_id points to unit-1, but unit-1 is at (2,2).
-    state.tiles[0].unit_id = 1
+    # Tile (0,0).unit_ids has unit-1, but unit-1 is at (2,2).
+    state.tiles[0].unit_ids = [1]
     errors = check_state_invariants(state)
     assert any("but unit is at" in e for e in errors)
 

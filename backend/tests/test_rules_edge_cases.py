@@ -92,7 +92,7 @@ def _add_unit(
     state.units[unit.id] = unit
     tile = state.get_tile(Coord(x=x, y=y))
     if tile:
-        tile.unit_id = unit.id
+        tile.unit_ids.append(unit.id)
     state.next_unit_id += 1
     return unit
 
@@ -111,7 +111,7 @@ class TestMovementEdgeCases:
         # Unit stays put.
         assert unit.loc == Coord(x=1, y=1)
         # Old tile still holds the unit.
-        assert state.get_tile(Coord(x=1, y=1)).unit_id == unit.id
+        assert state.get_tile(Coord(x=1, y=1)).unit_ids == [unit.id]
 
     def test_execute_move_rejects_mountain(self):
         state = _plains_state()
@@ -501,6 +501,6 @@ class TestResolveTurnInvariants:
         assert outcomes[1].success is True  # city founded
         # Worker consumed by founding; no dangling tile unit ref.
         assert worker.id not in state.units
-        assert state.get_tile(Coord(x=2, y=2)).unit_id is None
+        assert state.get_tile(Coord(x=2, y=2)).unit_ids == []
         # Stockpile deducted exactly once, not twice.
         assert state.stockpiles["p1"].food == 85 + 2  # 100 - 15 + collect (base 2)

@@ -63,7 +63,7 @@ def _add_unit(
     state.next_unit_id += 1
     tile = state.get_tile(Coord(x=x, y=y))
     assert tile is not None
-    tile.unit_id = unit.id
+    tile.unit_ids.append(unit.id)
     return unit
 
 
@@ -109,16 +109,26 @@ class TestGetValidMoves:
         assert (1, 2) in coords
         assert (2, 1) in coords
 
-    def test_occupied_tiles_excluded(self):
+    def test_enemy_occupied_tiles_excluded(self):
         state = _make_state()
-        unit = _add_unit(state, UnitType.SOLDIER, 2, 2)
-        _add_unit(state, UnitType.WORKER, 3, 2)
+        unit = _add_unit(state, UnitType.SOLDIER, 2, 2, owner="p1")
+        _add_unit(state, UnitType.WORKER, 3, 2, owner="p2")
 
         results = get_valid_moves(state, unit.id, _all_coords(state))
         coords = {(r["x"], r["y"]) for r in results}
 
         assert (3, 2) not in coords
         assert (1, 2) in coords
+
+    def test_friendly_occupied_tiles_allowed_under_stack_cap(self):
+        state = _make_state()
+        unit = _add_unit(state, UnitType.SOLDIER, 2, 2, owner="p1")
+        _add_unit(state, UnitType.WORKER, 3, 2, owner="p1")
+
+        results = get_valid_moves(state, unit.id, _all_coords(state))
+        coords = {(r["x"], r["y"]) for r in results}
+
+        assert (3, 2) in coords
 
     def test_fog_of_war_filters_invisible_tiles(self):
         state = _make_state()

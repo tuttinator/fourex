@@ -443,8 +443,9 @@ export function PixiMap({
         screenY: e.global.y,
       }
 
-      if (tile.unit_id && units[tile.unit_id]) {
-        const u = units[tile.unit_id]
+      const topUnitId = tile.unit_ids?.[tile.unit_ids.length - 1]
+      if (topUnitId !== undefined && units[topUnitId]) {
+        const u = units[topUnitId]
         hoverData.unit = { type: u.type, hp: u.hp, owner: u.owner, moves_left: u.moves_left }
       }
 
@@ -464,7 +465,8 @@ export function PixiMap({
       if (!tile) return
 
       onTileClick?.(tile)
-      if (tile.unit_id && units[tile.unit_id]) onUnitClick?.(units[tile.unit_id])
+      const clickedUnitId = tile.unit_ids?.[tile.unit_ids.length - 1]
+      if (clickedUnitId !== undefined && units[clickedUnitId]) onUnitClick?.(units[clickedUnitId])
       if (tile.city_id && cities[tile.city_id]) onCityClick?.(cities[tile.city_id])
     })
 

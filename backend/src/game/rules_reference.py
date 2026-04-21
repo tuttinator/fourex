@@ -132,8 +132,9 @@ def build_rules_reference() -> dict[str, Any]:
             "notes": (
                 "Units defending on a friendly city tile take "
                 f"{int(FORTIFICATION_CITY_DEFENCE_BONUS * 100)}% less "
-                "damage. Applied in combat resolution once stacking "
-                "lands (Phase 3)."
+                "damage (rounded). Counter-attacks receive the same "
+                "reduction when the counter-attacker is on a friendly "
+                "city tile."
             ),
         },
         "treacherous_attack": (

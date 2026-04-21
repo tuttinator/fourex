@@ -684,8 +684,9 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
 
   const lookupUnitAtTile = useCallback(
     (state: GameState, tile: Tile): Unit | null => {
-      if (!tile.unit_id) return null
-      return state.units[tile.unit_id] ?? null
+      const topId = tile.unit_ids?.[tile.unit_ids.length - 1]
+      if (topId === undefined) return null
+      return state.units[topId] ?? null
     },
     [],
   )

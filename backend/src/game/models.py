@@ -400,7 +400,15 @@ class ResearchState(BaseModel):
 
 
 class Tile(BaseModel):
-    """Map tile with terrain, resources, and occupants."""
+    """Map tile with terrain, resources, and occupants.
+
+    ``unit_ids`` (Phase 3) is the ordered list of units currently on the
+    tile. Stacking allows multiple friendly units to share a tile up to
+    :data:`STACK_CAP`; the cap is enforced at move validation, not here.
+    A legacy ``unit_id`` field is accepted on input and normalised to a
+    one-element (or empty) list so pre-Phase-3 persisted states still
+    deserialise.
+    """
 
     id: int
     loc: Coord
@@ -408,8 +416,18 @@ class Tile(BaseModel):
     resource: Resource | None = None
     owner: PlayerId | None = None
     city_id: int | None = None
-    unit_id: int | None = None
+    unit_ids: list[int] = Field(default_factory=list)
     improvement: ImprovementType | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_unit_id_to_unit_ids(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        if "unit_id" in data and "unit_ids" not in data:
+            legacy = data.pop("unit_id")
+            data["unit_ids"] = [legacy] if legacy is not None else []
+        return data
 
 
 class Unit(BaseModel):
@@ -827,12 +845,31 @@ class MoveAction(BaseModel):
 
 
 class AttackAction(BaseModel):
-    """Attack another unit or city."""
+    """Attack another unit or city.
+
+    Exactly one of ``target_id`` or ``target_tile`` must be supplied.
+    ``target_id`` names a specific unit or city for deterministic
+    targeting. ``target_tile`` (Phase 3) points at a tile and lets the
+    engine pick a defender — useful when the defender is part of an
+    enemy stack. With a stacked enemy tile the engine selects one
+    defender uniformly at random via a RNG seeded off the game's
+    ``rng_state`` + turn + attacker + tile, so replays stay deterministic.
+    ``target_type`` remains ``"unit"`` or ``"city"``.
+    """
 
     type: str = "ATTACK"
     attacker_id: int
-    target_id: int
+    target_id: int | None = None
+    target_tile: Coord | None = None
     target_type: str  # "unit" or "city"
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> AttackAction:
+        if (self.target_id is None) == (self.target_tile is None):
+            raise ValueError(
+                "AttackAction requires exactly one of target_id or target_tile"
+            )
+        return self
 
 
 class BuildImprovementAction(BaseModel):

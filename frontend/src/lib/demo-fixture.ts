@@ -38,6 +38,7 @@ export function createDemoGameState(width = 20, height = 20): GameState {
         id: tileId++,
         loc: { x, y },
         terrain,
+        unit_ids: [] as number[],
       }
       if (resource) tile.resource = resource
       tiles.push(tile)
@@ -117,7 +118,9 @@ export function createDemoGameState(width = 20, height = 20): GameState {
       loc: { x: ud.x, y: ud.y },
     }
     const tileIdx = ud.y * width + ud.x
-    ;(tiles[tileIdx] as Record<string, unknown>).unit_id = unitId
+    const tile = tiles[tileIdx] as Record<string, unknown>
+    const existing = (tile.unit_ids as number[] | undefined) ?? []
+    tile.unit_ids = [...existing, unitId]
   })
 
   // Place some improvements

@@ -119,22 +119,29 @@ def check_state_invariants(state: GameState) -> list[str]:
                 f"tile at ({unit.loc.x},{unit.loc.y})"
             )
 
-    # 3. Tile.unit_id references match a real unit at that location.
+    # 3. Tile.unit_ids references match real units at that location,
+    #    and the stack obeys STACK_CAP.
+    from ..game.models import STACK_CAP
+
     for tile in state.tiles:
-        if tile.unit_id is None:
-            continue
-        unit = state.units.get(tile.unit_id)
-        if unit is None:
+        if len(tile.unit_ids) > STACK_CAP:
             errors.append(
-                f"tile ({tile.loc.x},{tile.loc.y}) references nonexistent unit "
-                f"{tile.unit_id}"
+                f"tile ({tile.loc.x},{tile.loc.y}) has {len(tile.unit_ids)} "
+                f"units, exceeding STACK_CAP={STACK_CAP}"
             )
-            continue
-        if unit.loc.x != tile.loc.x or unit.loc.y != tile.loc.y:
-            errors.append(
-                f"tile ({tile.loc.x},{tile.loc.y}).unit_id={tile.unit_id} but "
-                f"unit is at ({unit.loc.x},{unit.loc.y})"
-            )
+        for uid in tile.unit_ids:
+            unit = state.units.get(uid)
+            if unit is None:
+                errors.append(
+                    f"tile ({tile.loc.x},{tile.loc.y}) references nonexistent "
+                    f"unit {uid}"
+                )
+                continue
+            if unit.loc.x != tile.loc.x or unit.loc.y != tile.loc.y:
+                errors.append(
+                    f"tile ({tile.loc.x},{tile.loc.y}).unit_ids contains {uid} "
+                    f"but unit is at ({unit.loc.x},{unit.loc.y})"
+                )
 
     # 4. Tile.city_id references match a real city at that location.
     #    (A tile within a city's border owns the same city_id without being

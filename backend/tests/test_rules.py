@@ -243,7 +243,7 @@ class TestMovement:
 
         # Set initial tile
         old_tile = state.get_tile(Coord(x=5, y=5))
-        old_tile.unit_id = 1
+        old_tile.unit_ids = [1]
 
         # Execute move
         action = MoveAction(unit_id=1, to=Coord(x=7, y=5))
@@ -254,9 +254,9 @@ class TestMovement:
         assert unit.moves_left == 1  # 3 - 2 (distance)
 
         # Check tiles updated
-        assert old_tile.unit_id is None
+        assert old_tile.unit_ids == []
         new_tile = state.get_tile(Coord(x=7, y=5))
-        assert new_tile.unit_id == 1
+        assert new_tile.unit_ids == [1]
 
 
 class TestCombat:
@@ -399,7 +399,7 @@ class TestCityManagement:
             loc=Coord(x=5, y=5),
         )
         state.units[1] = worker
-        tile.unit_id = 1
+        tile.unit_ids = [1]
 
         # Found city
         action = FoundCityAction(worker_id=1)
@@ -414,7 +414,7 @@ class TestCityManagement:
 
         # Worker should be consumed
         assert 1 not in state.units
-        assert tile.unit_id is None
+        assert tile.unit_ids == []
         assert tile.city_id == city.id
 
         # Resources consumed
