@@ -467,6 +467,210 @@ describe("GameplayView", () => {
 		);
 	});
 
+	it("per-unit affordance queries refetch when the turn advances (no stale valid-moves across turns)", async () => {
+		// Regression: the app's QueryClient uses staleTime: 5 minutes, so a
+		// re-selected unit in a later turn would otherwise return the prior
+		// turn's cached valid-moves, showing "9 legal moves" with highlighted
+		// tiles for a unit whose moves_left has since drained to 0.
+		// Keying the query on ``gameState.turn`` forces a fresh fetch.
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: {
+					retry: false,
+					refetchInterval: false,
+					// Match production: long staleTime would mask the bug
+					// without the turn-in-key fix.
+					staleTime: 5 * 60 * 1000,
+				},
+			},
+		});
+
+		let currentTurn = sampleState.turn;
+		vi.spyOn(api, "getGameState").mockImplementation(async () => ({
+			...sampleState,
+			turn: currentTurn,
+		}));
+		stubDiplomacy();
+		stubTurnSubmissions();
+		vi.spyOn(api, "getMySubmission").mockImplementation(async () => ({
+			game_id: "g1",
+			player: "alice",
+			turn: currentTurn,
+			submitted: false,
+			actions: [],
+		}));
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 1,
+			attack: 0,
+			targets: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: false,
+			reason: "stub",
+			cost: { food: 15 },
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		const validMovesSpy = vi
+			.spyOn(api, "getValidMoves")
+			.mockResolvedValue({
+				game_id: "g1",
+				unit_id: 1,
+				moves_left: 2,
+				moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+			});
+
+		const { rerender } = render(
+			<GameplayView gameId="g1" currentPlayer="alice" />,
+			{ wrapper: wrapper(client) },
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Turn 3: select, fetch #1.
+		fireEvent.click(screen.getByTestId("click-friendly-unit"));
+		await waitFor(() => expect(validMovesSpy).toHaveBeenCalledTimes(1));
+
+		// Simulate turn.resolved — WS handler clears selection and
+		// invalidates gameState; the new turn arrives via the refetch.
+		currentTurn = sampleState.turn + 1;
+		act(() => {
+			_lastEvent = {
+				type: "turn.resolved",
+				game_id: "g1",
+				// @ts-expect-error — the hook's shape is open
+				turn: currentTurn,
+			};
+		});
+		rerender(<GameplayView gameId="g1" currentPlayer="alice" />);
+
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent(
+				"none",
+			),
+		);
+
+		// Re-select the same unit on the new turn. With the turn-in-key
+		// fix, this causes a fresh fetch; without it, the cached turn-3
+		// response would be returned and the UI would show stale moves.
+		fireEvent.click(screen.getByTestId("click-friendly-unit"));
+		await waitFor(() => expect(validMovesSpy).toHaveBeenCalledTimes(2));
+	});
+
+	it("turn rollover detected via mySubmission refetch clears stale queue when turn.resolved WS is missed", async () => {
+		// Regression: if the turn.resolved WebSocket frame is missed
+		// (backgrounded tab, reconnect, polling fallback), the hydration
+		// effect is the only path that notices the new turn. It must mirror
+		// the WS handler's state reset so the user doesn't see last turn's
+		// orders still sitting in the queue.
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubDiplomacy();
+		stubTurnSubmissions();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [{ x: 1, y: 0, terrain: "plains", distance: 1 }],
+		});
+		vi.spyOn(api, "getValidAttacks").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			attack_range: 1,
+			attack: 0,
+			targets: [],
+		});
+		vi.spyOn(api, "getCanFoundCity").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			can_found: false,
+			reason: "stub",
+			cost: { food: 15 },
+		});
+		vi.spyOn(api, "getValidImprovements").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			tile: { x: 0, y: 0 },
+			improvements: [],
+		});
+		vi.spyOn(api, "getTrainableUnits").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			units: [],
+		});
+		vi.spyOn(api, "getBuildableBuildings").mockResolvedValue({
+			game_id: "g1",
+			city_id: 11,
+			buildings: [],
+		});
+		const mySubmissionSpy = vi
+			.spyOn(api, "getMySubmission")
+			.mockResolvedValue({
+				game_id: "g1",
+				player: "alice",
+				turn: sampleState.turn,
+				submitted: false,
+				actions: [],
+			});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Queue an order on the current turn.
+		fireEvent.click(screen.getByTestId("click-friendly-unit"));
+		await waitFor(() =>
+			expect(screen.getByTestId("highlight-count")).toHaveTextContent("1"),
+		);
+		fireEvent.click(screen.getByTestId("click-highlighted-tile"));
+		expect(screen.getByText(/Queued orders \(1\)/)).toBeInTheDocument();
+
+		// Simulate a turn rollover that we learn about only through
+		// mySubmission refetching with a higher turn — no turn.resolved
+		// WebSocket frame arrives.
+		mySubmissionSpy.mockResolvedValue({
+			game_id: "g1",
+			player: "alice",
+			turn: sampleState.turn + 1,
+			submitted: false,
+			actions: [],
+		});
+		await act(async () => {
+			await client.invalidateQueries({
+				queryKey: ["game", "g1", "mySubmission"],
+			});
+		});
+
+		await waitFor(() =>
+			expect(screen.getByText(/Queued orders \(0\)/)).toBeInTheDocument(),
+		);
+		expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("none");
+	});
+
 	it("clicking an attack-target tile queues an ATTACK", async () => {
 		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
 		stubDiplomacy();

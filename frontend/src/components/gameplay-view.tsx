@@ -343,6 +343,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   useEffect(() => {
     if (!mySubmission) return
     if (hydratedTurnRef.current === mySubmission.turn) return
+    const isFirstHydration = hydratedTurnRef.current === null
     hydratedTurnRef.current = mySubmission.turn
     if (mySubmission.submitted) {
       setQueue(
@@ -352,6 +353,18 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
         })),
       )
       setWaiting(true)
+    } else if (!isFirstHydration) {
+      // Turn rolled over and we haven't submitted yet — clear any stale
+      // queue, selection, and waiting flag left over from the previous
+      // turn in case the turn.resolved WS frame was missed (reconnect,
+      // tab backgrounded, polling fallback). Mirrors the WS handler's
+      // reset so the two paths converge on the same fresh-turn state.
+      // First hydration on mount is skipped so we don't race against
+      // user interactions that land before mySubmission resolves.
+      setQueue([])
+      setSelectedUnitId(null)
+      setSelectedCityId(null)
+      setWaiting(false)
     }
   }, [mySubmission])
 
@@ -396,41 +409,61 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       ? gameState.units[selectedUnitId] ?? null
       : null
 
+  // Affordance queries are keyed on ``gameState.turn`` so each turn gets
+  // its own cache bucket. Without the turn in the key the app's 5-minute
+  // staleTime would return the previous turn's valid-moves/attacks for a
+  // re-selected unit whose moves_left has since drained to 0 — the tiles
+  // would render as highlighted even though the server would now reject
+  // the move.
+  const affordanceTurn = gameState?.turn ?? null
+
   const { data: validMoves } = useQuery<ValidMovesResponse | null>({
-    queryKey: ['game', gameId, 'validMoves', selectedUnitId],
+    queryKey: ['game', gameId, 'validMoves', selectedUnitId, affordanceTurn],
     queryFn: () =>
       selectedUnitId == null
         ? Promise.resolve(null)
         : api.getValidMoves(gameId, selectedUnitId),
-    enabled: selectedUnitId != null,
+    enabled: selectedUnitId != null && affordanceTurn != null,
   })
 
   const { data: validAttacks } = useQuery<ValidAttacksResponse | null>({
-    queryKey: ['game', gameId, 'validAttacks', selectedUnitId],
+    queryKey: ['game', gameId, 'validAttacks', selectedUnitId, affordanceTurn],
     queryFn: () =>
       selectedUnitId == null
         ? Promise.resolve(null)
         : api.getValidAttacks(gameId, selectedUnitId),
-    enabled: selectedUnitId != null,
+    enabled: selectedUnitId != null && affordanceTurn != null,
   })
 
   const { data: canFoundCity } = useQuery<CanFoundCityResponse | null>({
-    queryKey: ['game', gameId, 'canFoundCity', selectedUnitId],
+    queryKey: ['game', gameId, 'canFoundCity', selectedUnitId, affordanceTurn],
     queryFn: () =>
       selectedUnitId == null
         ? Promise.resolve(null)
         : api.getCanFoundCity(gameId, selectedUnitId),
-    enabled: selectedUnitId != null && selectedUnit?.type === 'worker',
+    enabled:
+      selectedUnitId != null &&
+      affordanceTurn != null &&
+      selectedUnit?.type === 'worker',
   })
 
   const { data: validImprovements } =
     useQuery<ValidImprovementsResponse | null>({
-      queryKey: ['game', gameId, 'validImprovements', selectedUnitId],
+      queryKey: [
+        'game',
+        gameId,
+        'validImprovements',
+        selectedUnitId,
+        affordanceTurn,
+      ],
       queryFn: () =>
         selectedUnitId == null
           ? Promise.resolve(null)
           : api.getValidImprovements(gameId, selectedUnitId),
-      enabled: selectedUnitId != null && selectedUnit?.type === 'worker',
+      enabled:
+        selectedUnitId != null &&
+        affordanceTurn != null &&
+        selectedUnit?.type === 'worker',
     })
 
   // ---- Per-city affordance queries ---------------------------------------
@@ -441,22 +474,34 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       : null
 
   const { data: trainableUnits } = useQuery<TrainableUnitsResponse | null>({
-    queryKey: ['game', gameId, 'trainableUnits', selectedCityId],
+    queryKey: [
+      'game',
+      gameId,
+      'trainableUnits',
+      selectedCityId,
+      affordanceTurn,
+    ],
     queryFn: () =>
       selectedCityId == null
         ? Promise.resolve(null)
         : api.getTrainableUnits(gameId, selectedCityId),
-    enabled: selectedCityId != null,
+    enabled: selectedCityId != null && affordanceTurn != null,
   })
 
   const { data: buildableBuildings } =
     useQuery<BuildableBuildingsResponse | null>({
-      queryKey: ['game', gameId, 'buildableBuildings', selectedCityId],
+      queryKey: [
+        'game',
+        gameId,
+        'buildableBuildings',
+        selectedCityId,
+        affordanceTurn,
+      ],
       queryFn: () =>
         selectedCityId == null
           ? Promise.resolve(null)
           : api.getBuildableBuildings(gameId, selectedCityId),
-      enabled: selectedCityId != null,
+      enabled: selectedCityId != null && affordanceTurn != null,
     })
 
   // ---- Highlight derivation ----------------------------------------------

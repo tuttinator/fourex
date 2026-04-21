@@ -9,7 +9,7 @@ import json
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Terrain(str, Enum):
@@ -518,6 +518,28 @@ class GameState(BaseModel):
     diplomacy: dict[tuple[PlayerId, PlayerId], DiplomaticState] = Field(
         default_factory=dict
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_diplomacy_keys(cls, data: object) -> object:
+        # Pydantic serialises tuple-keyed dicts to JSON as comma-joined
+        # strings (e.g. ``("agent","caleb")`` → ``"agent,caleb"``) but
+        # does not parse them back on load. Reconstruct the tuple here so
+        # round-tripping through JSON storage works.
+        if not isinstance(data, dict):
+            return data
+        diplomacy = data.get("diplomacy")
+        if not isinstance(diplomacy, dict):
+            return data
+        fixed: dict[object, object] = {}
+        for key, value in diplomacy.items():
+            if isinstance(key, str) and "," in key:
+                a, b = key.split(",", 1)
+                fixed[(a, b)] = value
+            else:
+                fixed[key] = value
+        data["diplomacy"] = fixed
+        return data
     stockpiles: dict[PlayerId, ResourceBag] = Field(default_factory=dict)
     next_unit_id: int = 1
     next_city_id: int = 1
