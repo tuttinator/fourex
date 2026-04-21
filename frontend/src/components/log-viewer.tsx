@@ -108,31 +108,13 @@ export function LogViewer({ data, filename }: LogViewerProps) {
 	const isTurnLog = filename.includes("turn_");
 	const isGameLog = filename.includes("game_log_");
 
-	try {
-		if (isTurnLog) {
-			return <TurnLogViewer data={data as TurnLogData} filename={filename} />;
-		} else if (isGameLog) {
-			return <GameLogViewer data={data as GameLogData} filename={filename} />;
-		} else {
-			// Fallback to generic JSON viewer
-			return <JsonViewer data={data} />;
-		}
-	} catch {
-		return (
-			<Card className="border-destructive">
-				<CardContent className="pt-6">
-					<div className="text-center text-destructive">
-						<AlertTriangle className="w-8 h-8 mx-auto mb-2" />
-						<h3 className="font-medium mb-2">Error Rendering Log</h3>
-						<p className="text-sm mb-4">
-							Failed to render the specialized log viewer.
-						</p>
-						<JsonViewer data={data} />
-					</div>
-				</CardContent>
-			</Card>
-		);
+	if (isTurnLog) {
+		return <TurnLogViewer data={data as TurnLogData} filename={filename} />;
 	}
+	if (isGameLog) {
+		return <GameLogViewer data={data as GameLogData} filename={filename} />;
+	}
+	return <JsonViewer data={data} />;
 }
 
 function TurnLogViewer({

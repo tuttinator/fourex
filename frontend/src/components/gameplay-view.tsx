@@ -428,13 +428,14 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     const isFirstHydration = hydratedTurnRef.current === null
     hydratedTurnRef.current = mySubmission.turn
     if (mySubmission.submitted) {
-      setQueue(
-        mySubmission.actions.map((action) => ({
-          queue_id: newQueueId(),
-          action,
-        })),
-      )
-      setWaiting(true)
+      const restored = mySubmission.actions.map((action) => ({
+        queue_id: newQueueId(),
+        action,
+      }))
+      queueMicrotask(() => {
+        setQueue(restored)
+        setWaiting(true)
+      })
     } else if (!isFirstHydration) {
       // Turn rolled over and we haven't submitted yet — clear any stale
       // queue, selection, and waiting flag left over from the previous
@@ -443,10 +444,12 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       // reset so the two paths converge on the same fresh-turn state.
       // First hydration on mount is skipped so we don't race against
       // user interactions that land before mySubmission resolves.
-      setQueue([])
-      setSelectedUnitId(null)
-      setSelectedCityId(null)
-      setWaiting(false)
+      queueMicrotask(() => {
+        setQueue([])
+        setSelectedUnitId(null)
+        setSelectedCityId(null)
+        setWaiting(false)
+      })
     }
   }, [mySubmission])
 
@@ -839,14 +842,16 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     const turn = (lastEvent as unknown as { turn?: number }).turn
     if (turn != null && lastHandledTurn.current === turn) return
     if (turn != null) lastHandledTurn.current = turn
-    setQueue([])
-    setSelectedUnitId(null)
-    setSelectedCityId(null)
-    setWaiting(false)
-    // Clear the submission roster for the upcoming turn — the hydration
-    // query will reseed it (empty) on the next render, but resetting here
-    // avoids a flicker where last turn's "submitted" ticks linger.
-    setSubmittedPlayers(new Set())
+    queueMicrotask(() => {
+      setQueue([])
+      setSelectedUnitId(null)
+      setSelectedCityId(null)
+      setWaiting(false)
+      // Clear the submission roster for the upcoming turn — the hydration
+      // query will reseed it (empty) on the next render, but resetting here
+      // avoids a flicker where last turn's "submitted" ticks linger.
+      setSubmittedPlayers(new Set())
+    })
     queryClient.invalidateQueries({ queryKey: stateQueryKey })
     queryClient.invalidateQueries({
       queryKey: queryKeys.gameDetail(gameId),

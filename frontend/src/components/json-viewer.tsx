@@ -64,7 +64,7 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 	if (value === null) {
 		return (
 			<div style={{ marginLeft: indent }} className="flex items-center">
-				{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
+				{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
 				<span className="text-gray-500">null</span>
 				{!isLast && <span className="text-gray-400">,</span>}
 			</div>
@@ -74,8 +74,8 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 	if (typeof value === "string") {
 		return (
 			<div style={{ marginLeft: indent }} className="flex items-center">
-				{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
-				<span className="text-green-600">"{value}"</span>
+				{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
+				<span className="text-green-600">&quot;{value}&quot;</span>
 				{!isLast && <span className="text-gray-400">,</span>}
 			</div>
 		);
@@ -84,7 +84,7 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 	if (typeof value === "number" || typeof value === "boolean") {
 		return (
 			<div style={{ marginLeft: indent }} className="flex items-center">
-				{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
+				{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
 				<span className="text-purple-600">{String(value)}</span>
 				{!isLast && <span className="text-gray-400">,</span>}
 			</div>
@@ -97,7 +97,7 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 		return (
 			<div style={{ marginLeft: indent }}>
 				<div className="flex items-center">
-					{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
+					{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
 					{!isEmpty && (
 						<Button
 							variant="ghost"
@@ -146,7 +146,7 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 		return (
 			<div style={{ marginLeft: indent }}>
 				<div className="flex items-center">
-					{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
+					{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
 					{!isEmpty && (
 						<Button
 							variant="ghost"
@@ -193,7 +193,7 @@ function JsonNode({ value, keyName, level = 0, isLast = true }: JsonNodeProps) {
 
 	return (
 		<div style={{ marginLeft: indent }} className="flex items-center">
-			{keyName && <span className="text-blue-600 mr-2">"{keyName}":</span>}
+			{keyName && <span className="text-blue-600 mr-2">&quot;{keyName}&quot;:</span>}
 			<span className="text-red-600">{String(value)}</span>
 			{!isLast && <span className="text-gray-400">,</span>}
 		</div>
