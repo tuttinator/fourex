@@ -49,12 +49,26 @@ export interface Unit {
 	loc: Coord;
 }
 
+export interface BuildJob {
+	/** "unit" or "building" — discriminator matches the backend. */
+	type: string;
+	/** UnitType or BuildingType value (e.g. "scout" / "granary"). */
+	target: string;
+	/** Production points accrued so far. */
+	progress: number;
+	/** Production points required for completion. */
+	total_cost: number;
+}
+
 export interface City {
 	id: number;
 	owner: PlayerId;
 	loc: Coord;
 	hp: number;
 	buildings: BuildingType[];
+	/** Active multi-turn production slot (Phase 3). Only the owner sees
+	 * their own queue — redact_state nulls this for other viewers. */
+	build_queue?: BuildJob | null;
 }
 
 export interface GameState {

@@ -421,8 +421,9 @@ class TestCityManagement:
         remaining = state.stockpiles["player1"]
         assert remaining.food == 35  # 50 - 15
 
-    def test_execute_train_unit(self):
-        """Test unit training in cities."""
+    def test_execute_train_unit_enqueues_job(self):
+        """Training a unit enqueues a BuildJob and deducts resources — the
+        unit does not appear this turn."""
         state = GameState()
         state.players = ["player1"]
         state.stockpiles["player1"] = ResourceBag(food=50)
@@ -444,21 +445,19 @@ class TestCityManagement:
         state.cities[1] = city
         tile.city_id = 1
 
-        # Train unit
+        # Queue a scout — enqueue only; no unit yet.
         action = TrainUnitAction(city_id=1, unit_type=UnitType.SCOUT)
         result = execute_train_unit(state, action)
 
         assert result.success is True
-        assert len(state.units) == 1
+        assert len(state.units) == 0
+        assert city.build_queue is not None
+        assert city.build_queue.type == "unit"
+        assert city.build_queue.target == UnitType.SCOUT.value
+        assert city.build_queue.progress == 0
 
-        unit = list(state.units.values())[0]
-        assert unit.owner == "player1"
-        assert unit.type == UnitType.SCOUT
-        assert unit.loc == Coord(x=5, y=5)
-
-        # Resources consumed (scout costs 10 food)
-        remaining = state.stockpiles["player1"]
-        assert remaining.food == 40  # 50 - 10
+        # Resources consumed at queue time (scout costs 10 food).
+        assert state.stockpiles["player1"].food == 40
 
 
 class TestTurnResolution:

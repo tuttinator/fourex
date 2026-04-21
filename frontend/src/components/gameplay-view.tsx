@@ -73,6 +73,7 @@ import { useLobbyEvents } from '@/hooks/use-lobby-events'
 import type {
   BuildableBuilding,
   BuildableBuildingsResponse,
+  BuildJob,
   CanFoundCityResponse,
   Coord,
   DiplomacyMessage,
@@ -947,6 +948,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               trainable={trainableUnits?.units ?? null}
               buildable={buildableBuildings?.buildings ?? null}
               queuedBuildings={queuedBuildingsForCity}
+              productionRate={
+                2 +
+                (selectedCity.build_queue?.type === 'unit' &&
+                selectedCity.buildings?.includes('barracks')
+                  ? 1
+                  : 0)
+              }
               onTrainUnit={(unit_type) =>
                 appendToQueue({
                   type: 'TRAIN_UNIT',
@@ -1233,10 +1241,19 @@ function UnitPanel({
 }
 
 interface CityPanelProps {
-  city: { id: number; loc: Coord; hp: number; buildings: string[] }
+  city: {
+    id: number
+    loc: Coord
+    hp: number
+    buildings: string[]
+    build_queue?: BuildJob | null
+  }
   trainable: TrainableUnit[] | null
   buildable: BuildableBuilding[] | null
   queuedBuildings: Set<string>
+  /** Production points this city accrues per turn for the active job's
+   * kind. Used to render "N turns remaining" on the progress indicator. */
+  productionRate: number
   onTrainUnit: (unit_type: TrainableUnit['unit_type']) => void
   onBuildBuilding: (building_type: BuildableBuilding['building_type']) => void
 }
@@ -1246,9 +1263,23 @@ function CityPanel({
   trainable,
   buildable,
   queuedBuildings,
+  productionRate,
   onTrainUnit,
   onBuildBuilding,
 }: CityPanelProps) {
+  const activeJob = city.build_queue ?? null
+  const turnsRemaining = activeJob
+    ? Math.max(
+        1,
+        Math.ceil((activeJob.total_cost - activeJob.progress) / productionRate),
+      )
+    : 0
+  const progressPct = activeJob
+    ? Math.min(
+        100,
+        Math.round((activeJob.progress / activeJob.total_cost) * 100),
+      )
+    : 0
   return (
     <Card className="rounded-none border-0 border-b">
       <CardHeader className="py-3">
@@ -1263,6 +1294,32 @@ function CityPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
+        {activeJob && (
+          <div
+            data-testid="city-production-indicator"
+            className="mb-3 rounded-md border bg-muted/40 px-2 py-2 text-xs"
+          >
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1 font-medium">
+                <Clock className="h-3 w-3" />
+                Producing <span className="capitalize">{activeJob.target}</span>
+              </span>
+              <span className="text-muted-foreground">
+                {turnsRemaining} turn{turnsRemaining === 1 ? '' : 's'} left
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 w-full rounded bg-background">
+              <div
+                className="h-1.5 rounded bg-primary"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="mt-1 text-muted-foreground">
+              {activeJob.progress}/{activeJob.total_cost} production
+              &middot; {productionRate}/turn
+            </div>
+          </div>
+        )}
         <Tabs defaultValue="train" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="train">
@@ -1289,12 +1346,14 @@ function CityPanel({
                   variant="outline"
                   size="sm"
                   className="w-full justify-between text-xs"
-                  disabled={!u.affordable}
+                  disabled={!u.affordable || activeJob !== null}
                   onClick={() => onTrainUnit(u.unit_type)}
                   title={
-                    !u.affordable
-                      ? `Cannot afford (${formatCost(u.cost)})`
-                      : undefined
+                    activeJob
+                      ? `City busy producing ${activeJob.target}`
+                      : !u.affordable
+                        ? `Cannot afford (${formatCost(u.cost)})`
+                        : undefined
                   }
                 >
                   <span className="capitalize flex items-center gap-1">
@@ -1323,9 +1382,13 @@ function CityPanel({
                       variant="outline"
                       size="sm"
                       className="w-full justify-between text-xs"
-                      disabled={!b.affordable || queued}
+                      disabled={!b.affordable || queued || activeJob !== null}
                       onClick={() => onBuildBuilding(b.building_type)}
-                      title={b.effect}
+                      title={
+                        activeJob
+                          ? `City busy producing ${activeJob.target}`
+                          : b.effect
+                      }
                     >
                       <span className="capitalize">
                         {b.building_type}

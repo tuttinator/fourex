@@ -299,11 +299,41 @@ class Unit(BaseModel):
         return distance <= self.stats.attack_range and self.stats.attack > 0
 
 
-class BuildJob(BaseModel):
-    """Building/unit construction job."""
+UNIT_PRODUCTION_COST: dict[UnitType, int] = {
+    UnitType.SCOUT: 5,
+    UnitType.WORKER: 6,
+    UnitType.SOLDIER: 8,
+    UnitType.ARCHER: 7,
+}
 
-    type: str  # "unit" or "building"
-    target: str  # UnitType or BuildingType
+
+BUILDING_PRODUCTION_COST: dict[BuildingType, int] = {
+    BuildingType.MONUMENT: 6,
+    BuildingType.GRANARY: 8,
+    BuildingType.BARRACKS: 10,
+    BuildingType.WALLS: 10,
+    BuildingType.LIBRARY: 10,
+    BuildingType.TEMPLE: 12,
+}
+
+
+# Base per-turn production points for a city. Barracks boosts unit jobs.
+CITY_BASE_PRODUCTION_RATE = 2
+BARRACKS_UNIT_PRODUCTION_BONUS = 1
+
+
+class BuildJob(BaseModel):
+    """Building/unit construction job.
+
+    ``type`` is ``"unit"`` or ``"building"``. ``target`` is a ``UnitType`` or
+    ``BuildingType`` enum value (e.g. ``"scout"`` / ``"granary"``).
+    ``progress`` accrues each turn at the city's production rate until it
+    reaches ``total_cost``, at which point the item materialises and the
+    job clears.
+    """
+
+    type: str
+    target: str
     progress: int = 0
     total_cost: int = 1
 
@@ -342,6 +372,17 @@ class City(BaseModel):
         if BuildingType.TEMPLE in self.buildings:
             culture += 3
         return culture
+
+    def production_per_turn(self, job_kind: str = "unit") -> int:
+        """Production points this city accrues per turn for ``job_kind``.
+
+        Base rate is :data:`CITY_BASE_PRODUCTION_RATE`. Barracks adds
+        :data:`BARRACKS_UNIT_PRODUCTION_BONUS` to unit jobs only.
+        """
+        rate = CITY_BASE_PRODUCTION_RATE
+        if job_kind == "unit" and BuildingType.BARRACKS in self.buildings:
+            rate += BARRACKS_UNIT_PRODUCTION_BONUS
+        return rate
 
 
 class DiplomacyRequest(BaseModel):
@@ -719,6 +760,16 @@ class ActionResult(BaseModel):
     action: Action
 
 
+class ProductionCompletedEvent(BaseModel):
+    """A city finished building an item during this turn's resolution."""
+
+    city_id: int
+    owner: PlayerId
+    type: str  # "unit" or "building"
+    target: str  # UnitType or BuildingType value
+    turn: int
+
+
 class TurnResult(BaseModel):
     """Result of processing a complete turn."""
 
@@ -726,3 +777,4 @@ class TurnResult(BaseModel):
     player_actions: dict[PlayerId, list[ActionResult]]
     state_hash: str
     victory: VictoryResult | None = None
+    production_completed: list[ProductionCompletedEvent] = Field(default_factory=list)

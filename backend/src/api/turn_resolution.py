@@ -40,6 +40,7 @@ from ..game.models import (
 )
 from ..game.rules import redact_state, resolve_turn
 from .websocket import (
+    broadcast_city_production_completed,
     broadcast_diplomacy_message_received,
     broadcast_diplomacy_proposal_received,
     broadcast_diplomacy_proposal_responded,
@@ -190,6 +191,20 @@ async def check_and_resolve_turn(
 
     await broadcast_turn_end(game_id, state.turn)
     await broadcast_turn_resolved(game_id, state.turn)
+
+    # Phase 3: fan out per-city production completions. Scoped to the
+    # owner only — ``build_queue`` is private in ``redact_state`` so the
+    # completion itself shouldn't leak either. Third parties pick up the
+    # resulting unit/building via the ``turn.resolved`` state refetch.
+    for completion in turn_result.production_completed:
+        await broadcast_city_production_completed(
+            game_id,
+            city_id=completion.city_id,
+            owner=completion.owner,
+            item_type=completion.type,
+            target=completion.target,
+            turn=completion.turn,
+        )
 
     # Phase 7: emit one ``diplomacy.message_received`` per message the
     # resolver accepted this turn. Scoped to sender+recipient only so the

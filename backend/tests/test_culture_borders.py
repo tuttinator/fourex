@@ -98,6 +98,9 @@ class TestBuildBuilding:
     """Test execute_build_building()."""
 
     def test_build_monument(self):
+        """Queueing a building deducts resources immediately but does not
+        construct the building this turn — that's ``advance_production``'s
+        job once the ``BuildJob`` accrues enough production."""
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=20)
@@ -111,7 +114,9 @@ class TestBuildBuilding:
         result = execute_build_building(state, action)
 
         assert result.success is True
-        assert BuildingType.MONUMENT in city.buildings
+        assert BuildingType.MONUMENT not in city.buildings
+        assert city.build_queue is not None
+        assert city.build_queue.target == BuildingType.MONUMENT.value
         assert state.stockpiles["p1"].wood == 10
 
     def test_build_library(self):
@@ -125,7 +130,8 @@ class TestBuildBuilding:
         result = execute_build_building(state, action)
 
         assert result.success is True
-        assert BuildingType.LIBRARY in city.buildings
+        assert city.build_queue is not None
+        assert city.build_queue.target == BuildingType.LIBRARY.value
         assert state.stockpiles["p1"] == ResourceBag(wood=15, ore=5)
 
     def test_build_temple(self):
@@ -139,7 +145,8 @@ class TestBuildBuilding:
         result = execute_build_building(state, action)
 
         assert result.success is True
-        assert BuildingType.TEMPLE in city.buildings
+        assert city.build_queue is not None
+        assert city.build_queue.target == BuildingType.TEMPLE.value
 
     def test_cannot_afford(self):
         state = _make_state_with_grid()
@@ -183,7 +190,11 @@ class TestBuildBuilding:
         assert "not found" in result.message.lower()
 
     def test_stacking_buildings(self):
-        """All three cultural buildings can coexist in a single city."""
+        """All three cultural buildings can coexist in a single city, but
+        only one can be under construction at a time — each job must
+        complete before the next enqueues."""
+        from backend.src.game.rules import advance_production
+
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100, ore=50, crystal=20)
@@ -195,6 +206,11 @@ class TestBuildBuilding:
                 state, BuildBuildingAction(city_id=1, building_type=bt)
             )
             assert result.success is True
+            # Drive the active job to completion before enqueueing the
+            # next: base rate is 2/turn and all three cultural buildings
+            # cost at most 12 production points.
+            while city.build_queue is not None:
+                advance_production(state)
 
         assert city.buildings == {
             BuildingType.MONUMENT,
@@ -475,6 +491,9 @@ class TestBuildBuildingInResolveTurn:
     """Test that BUILD_BUILDING works through resolve_turn()."""
 
     def test_build_building_via_resolve_turn(self):
+        """BUILD_BUILDING submitted through resolve_turn enqueues a job;
+        the building materialises after enough turns for production to
+        accrue (Monument costs 6 production, base rate 2/turn → 3 turns)."""
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=20)
@@ -490,7 +509,20 @@ class TestBuildBuildingInResolveTurn:
         result = resolve_turn(state, actions)
 
         assert result.player_actions["p1"][0].success is True
+        # First turn resolves: job enqueued + advanced by 2 (Monument is
+        # 6 production, so 4 still to go).
+        assert BuildingType.MONUMENT not in city.buildings
+        assert city.build_queue is not None
+        assert city.build_queue.progress == 2
+
+        # Two more empty turns drive the job to completion on the third.
+        resolve_turn(state, {"p1": []})
+        assert BuildingType.MONUMENT not in city.buildings
+        final = resolve_turn(state, {"p1": []})
         assert BuildingType.MONUMENT in city.buildings
+        assert city.build_queue is None
+        assert len(final.production_completed) == 1
+        assert final.production_completed[0].target == BuildingType.MONUMENT.value
 
     def test_culture_accumulates_in_resolve_turn(self):
         """Culture accumulates during resolve_turn after actions."""

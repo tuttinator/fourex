@@ -409,6 +409,38 @@ async def broadcast_diplomacy_war_declared(
     )
 
 
+async def broadcast_city_production_completed(
+    game_id: str,
+    city_id: int,
+    owner: str,
+    item_type: str,
+    target: str,
+    turn: int,
+) -> None:
+    """Fan a production-completion event to the city owner only.
+
+    Phase 3 multi-turn production: when a city's ``BuildJob`` reaches
+    ``total_cost`` the item materialises and this event fires. Scoped to
+    the owner's connection because the ``build_queue`` itself is private
+    in ``redact_state`` — third parties only see the resulting unit or
+    building through ordinary fog-of-war on the next ``turn.resolved``
+    refetch.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "city.production_completed",
+            "game_id": game_id,
+            "city_id": city_id,
+            "owner": owner,
+            "item_type": item_type,
+            "target": target,
+            "turn": turn,
+        },
+        visible_to=(owner,),
+    )
+
+
 async def broadcast_diplomacy_treaty_cancelled(
     game_id: str,
     treaty_id: int,
