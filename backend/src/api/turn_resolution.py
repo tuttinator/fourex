@@ -27,6 +27,7 @@ from ..game.models import (
     BuildBuildingAction,
     BuildImprovementAction,
     CancelCityProductionAction,
+    CancelOrderAction,
     CancelTreatyAction,
     DeclareWarAction,
     DiplomaticEventType,
@@ -34,6 +35,7 @@ from ..game.models import (
     GameState,
     MoveAction,
     ProposeTreatyAction,
+    QueueOrderAction,
     ReorderCityQueueAction,
     RespondToTreatyAction,
     SendMessageAction,
@@ -96,6 +98,10 @@ def parse_action(raw: dict[str, Any]) -> Action:
         return ReorderCityQueueAction.model_validate(raw)
     elif action_type == "SET_ACTIVE_RESEARCH":
         return SetActiveResearchAction.model_validate(raw)
+    elif action_type == "QUEUE_ORDER":
+        return QueueOrderAction.model_validate(raw)
+    elif action_type == "CANCEL_ORDER":
+        return CancelOrderAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 

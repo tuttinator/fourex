@@ -58,6 +58,29 @@ export interface Tile {
 	improvement?: ImprovementType;
 }
 
+export interface QueuedMoveOrder {
+	type: "move";
+	destination: Coord;
+	known_enemy_ids: number[];
+}
+
+export type QueuedOrder = QueuedMoveOrder;
+
+export type OrderCancellationReason =
+	| "enemy_sighted"
+	| "obstructed"
+	| "attacked"
+	| "completed";
+
+export interface OrderCancelledEvent {
+	id: number;
+	turn: number;
+	unit_id: number;
+	owner: PlayerId;
+	reason: OrderCancellationReason;
+	destination?: Coord | null;
+}
+
 export interface Unit {
 	id: number;
 	owner: PlayerId;
@@ -65,6 +88,12 @@ export interface Unit {
 	hp: number;
 	moves_left: number;
 	loc: Coord;
+	/** Phase 5: server-persisted multi-turn move orders. Scrubbed for
+	 * non-owners by ``redact_state``. */
+	orders_queue?: QueuedOrder[];
+	/** Phase 5: true if the unit took damage on the previous turn —
+	 * causes queued orders to cancel with reason ``attacked``. */
+	took_damage_last_turn?: boolean;
 }
 
 export interface BuildJob {
@@ -105,6 +134,10 @@ export interface GameState {
 	next_unit_id: number;
 	next_city_id: number;
 	max_turns: number;
+	/** Phase 5: owner-scoped queued-order cancellation events. Redacted
+	 * per-viewer so only the order owner sees events for their units. */
+	order_events?: OrderCancelledEvent[];
+	next_order_event_id?: number;
 }
 
 export interface PromptLog {
@@ -299,6 +332,16 @@ export interface MapCanvasProps {
 	movePathsByTile?: Record<string, Coord[]>;
 	/** Tiles to render a red hostile-target highlight on (attack targets). */
 	attackTiles?: Coord[];
+	/** Phase 5 queued-order destinations (tiles beyond this turn's budget). */
+	queueableTiles?: Coord[];
+	/** Paths keyed by ``"x,y"`` for queueable destinations. */
+	queueablePathsByTile?: Record<string, Coord[]>;
+	/** Active queued path for the selected unit (destination first in
+	 * tuple order), rendered as a persistent preview so the player can
+	 * see where a queued unit is heading. */
+	queuedOrderPath?: Coord[] | null;
+	/** Active queued destination for the selected unit. */
+	queuedOrderDestination?: Coord | null;
 }
 
 export interface PlayerListProps {
@@ -436,6 +479,23 @@ export interface ValidMovesResponse {
 	moves: ValidMoveTile[];
 }
 
+export interface QueueableTile {
+	x: number;
+	y: number;
+	terrain: Terrain;
+	cost: number;
+	path: Coord[];
+	distance: number;
+	/** Minimum turns required at the unit's max move speed. */
+	turns_required: number;
+}
+
+export interface QueueableTilesResponse {
+	game_id: string;
+	unit_id: number;
+	tiles: QueueableTile[];
+}
+
 export interface MoveActionPayload {
 	type: "MOVE";
 	unit_id: number;
@@ -534,6 +594,17 @@ export interface SetActiveResearchActionPayload {
 	tech_id: TechId | null;
 }
 
+export interface QueueOrderActionPayload {
+	type: "QUEUE_ORDER";
+	unit_id: number;
+	destination: Coord;
+}
+
+export interface CancelOrderActionPayload {
+	type: "CANCEL_ORDER";
+	unit_id: number;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -550,7 +621,9 @@ export type GameAction =
 	| SetCityProductionActionPayload
 	| CancelCityProductionActionPayload
 	| ReorderCityQueueActionPayload
-	| SetActiveResearchActionPayload;
+	| SetActiveResearchActionPayload
+	| QueueOrderActionPayload
+	| CancelOrderActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

@@ -14,6 +14,7 @@ import type {
 	LobbyKeyResponse,
 	MessageListResponse,
 	MySubmissionResponse,
+	QueueableTilesResponse,
 	RulesReference,
 	TechTreeResponse,
 	TrainableUnitsResponse,
@@ -206,6 +207,16 @@ export const api = {
 	): Promise<ValidAttacksResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/units/${unitId}/valid-attacks`,
+			{ gameId },
+		);
+	},
+
+	async getQueueableTiles(
+		gameId: string,
+		unitId: number,
+	): Promise<QueueableTilesResponse> {
+		return fetchApi(
+			`/games/${encodeURIComponent(gameId)}/units/${unitId}/queueable-tiles`,
 			{ gameId },
 		);
 	},

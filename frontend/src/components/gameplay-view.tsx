@@ -87,8 +87,10 @@ import type {
   DiplomacyStateResponse,
   GameAction,
   GameState,
+  OrderCancelledEvent,
   PlayerId,
   QueuedAction,
+  QueueableTilesResponse,
   ResearchState,
   ResourceBag,
   Tech,
@@ -174,6 +176,10 @@ function describeAction(action: GameAction): string {
       return action.tech_id
         ? `Research ${action.tech_id}`
         : 'Clear active research'
+    case 'QUEUE_ORDER':
+      return `Queue move unit #${action.unit_id} → (${action.destination.x}, ${action.destination.y})`
+    case 'CANCEL_ORDER':
+      return `Cancel queued order for unit #${action.unit_id}`
   }
 }
 
@@ -625,6 +631,26 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     enabled: selectedUnitId != null && affordanceTurn != null,
   })
 
+  // Phase 5: multi-turn queueable destinations for the selected unit.
+  // Independent of ``validMoves`` because this endpoint ignores
+  // ``moves_left`` — it returns every reachable tile so the player can
+  // click a far-off tile to enqueue a ``QUEUE_ORDER`` action.
+  const { data: queueableTilesData } =
+    useQuery<QueueableTilesResponse | null>({
+      queryKey: [
+        'game',
+        gameId,
+        'queueableTiles',
+        selectedUnitId,
+        affordanceTurn,
+      ],
+      queryFn: () =>
+        selectedUnitId == null
+          ? Promise.resolve(null)
+          : api.getQueueableTiles(gameId, selectedUnitId),
+      enabled: selectedUnitId != null && affordanceTurn != null,
+    })
+
   const { data: canFoundCity } = useQuery<CanFoundCityResponse | null>({
     queryKey: ['game', gameId, 'canFoundCity', selectedUnitId, affordanceTurn],
     queryFn: () =>
@@ -708,6 +734,22 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     return out
   }, [queue, selectedUnitId])
 
+  // Phase 5: tiles already targeted by a locally-queued QUEUE_ORDER for
+  // the selected unit — removed from the queueable-tile highlight so
+  // clicks aren't no-ops.
+  const queuedOrderKeys = useMemo(() => {
+    const out = new Set<string>()
+    for (const q of queue) {
+      if (
+        q.action.type === 'QUEUE_ORDER' &&
+        q.action.unit_id === selectedUnitId
+      ) {
+        out.add(`${q.action.destination.x},${q.action.destination.y}`)
+      }
+    }
+    return out
+  }, [queue, selectedUnitId])
+
   // Attack targets already queued for this attacker — subtract from the
   // attack highlight set so one hostile isn't double-clicked.
   const queuedAttackKeys = useMemo(() => {
@@ -752,6 +794,91 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       .filter((t) => !queuedAttackKeys.has(`${t.x},${t.y}`))
       .map((t) => ({ x: t.x, y: t.y }))
   }, [validAttacks, queuedAttackKeys])
+
+  // Phase 5: split the queueable-tiles response into tiles the user can
+  // still click (not within this turn's budget, not already queued, not
+  // flagged as a move/attack in the same turn). Pre-compute the path
+  // lookup for hover preview and the committed-order overlay.
+  const queueableTilesCoords: Coord[] = useMemo(() => {
+    if (!queueableTilesData) return []
+    const budgetLeft = validMoves?.moves_left ?? 0
+    return queueableTilesData.tiles
+      .filter((t) => {
+        const key = `${t.x},${t.y}`
+        if (queuedOrderKeys.has(key)) return false
+        if (queuedMoveKeys.has(key)) return false
+        if (t.cost <= budgetLeft) return false
+        return true
+      })
+      .map((t) => ({ x: t.x, y: t.y }))
+  }, [queueableTilesData, validMoves, queuedOrderKeys, queuedMoveKeys])
+
+  const queueableKeys = useMemo(
+    () => new Set(queueableTilesCoords.map((t) => `${t.x},${t.y}`)),
+    [queueableTilesCoords],
+  )
+
+  const queueablePathsByTile = useMemo(() => {
+    const out: Record<string, Coord[]> = {}
+    if (!queueableTilesData) return out
+    for (const t of queueableTilesData.tiles) {
+      const key = `${t.x},${t.y}`
+      if (!queueableKeys.has(key)) continue
+      out[key] = t.path
+    }
+    return out
+  }, [queueableTilesData, queueableKeys])
+
+  // The server-persisted queued order (head of the unit's orders_queue)
+  // for the selected unit. Used to render the committed blue path so
+  // the player always sees where a queued unit is heading, even after a
+  // page refresh.
+  const queuedOrderForSelected = useMemo(() => {
+    if (!selectedUnit) return null
+    const head = selectedUnit.orders_queue?.[0]
+    return head ?? null
+  }, [selectedUnit])
+
+  const queuedOrderPath = useMemo<Coord[] | null>(() => {
+    if (!queuedOrderForSelected || !queueableTilesData) return null
+    const key = `${queuedOrderForSelected.destination.x},${queuedOrderForSelected.destination.y}`
+    const match = queueableTilesData.tiles.find(
+      (t) => `${t.x},${t.y}` === key,
+    )
+    return match?.path ?? null
+  }, [queuedOrderForSelected, queueableTilesData])
+
+  // Also surface locally-queued (pre-submit) QUEUE_ORDER for the
+  // selected unit as a path overlay so the player gets immediate visual
+  // feedback after clicking.
+  const locallyQueuedOrderForSelected = useMemo(() => {
+    if (selectedUnitId == null) return null
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const a = queue[i].action
+      if (a.type === 'QUEUE_ORDER' && a.unit_id === selectedUnitId) return a
+      if (a.type === 'CANCEL_ORDER' && a.unit_id === selectedUnitId) return null
+    }
+    return null
+  }, [queue, selectedUnitId])
+
+  const committedOrderPath = useMemo<Coord[] | null>(() => {
+    const localOrder = locallyQueuedOrderForSelected
+    if (localOrder && queueableTilesData) {
+      const key = `${localOrder.destination.x},${localOrder.destination.y}`
+      const match = queueableTilesData.tiles.find(
+        (t) => `${t.x},${t.y}` === key,
+      )
+      if (match) return match.path
+    }
+    return queuedOrderPath
+  }, [locallyQueuedOrderForSelected, queueableTilesData, queuedOrderPath])
+
+  const committedOrderDestination = useMemo<Coord | null>(() => {
+    if (locallyQueuedOrderForSelected)
+      return locallyQueuedOrderForSelected.destination
+    if (queuedOrderForSelected) return queuedOrderForSelected.destination
+    return null
+  }, [locallyQueuedOrderForSelected, queuedOrderForSelected])
 
   const highlightedKeys = useMemo(
     () => new Set(highlightedTiles.map((t) => `${t.x},${t.y}`)),
@@ -849,6 +976,35 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
         return
       }
 
+      // Phase 5 multi-turn queueable destination — tiles beyond this
+      // turn's budget but reachable. Replaces any prior QUEUE_ORDER for
+      // the same unit in the pending queue so rapid clicks don't pile up
+      // stale orders.
+      if (selectedUnitId != null && queueableKeys.has(key)) {
+        setQueue((prev) => {
+          const filtered = prev.filter(
+            (q) =>
+              !(
+                q.action.type === 'QUEUE_ORDER' &&
+                q.action.unit_id === selectedUnitId
+              ),
+          )
+          return [
+            ...filtered,
+            {
+              queue_id: newQueueId(),
+              action: {
+                type: 'QUEUE_ORDER',
+                unit_id: selectedUnitId,
+                destination: { x: tile.loc.x, y: tile.loc.y },
+              },
+            },
+          ]
+        })
+        setStackSelector(null)
+        return
+      }
+
       // Phase 4 gameplay-improvements: if the clicked tile has 2+
       // friendly selectable entities, open the stack selector so the
       // player picks which entity to command.
@@ -889,6 +1045,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       selectedUnitId,
       highlightedKeys,
       attackTargetByKey,
+      queueableKeys,
       lookupUnitAtTile,
       collectFriendlyEntities,
       currentPlayer,
@@ -1222,6 +1379,36 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     queueMicrotask(() => setSubmittedPlayers(next))
   }, [lastEvent, gameState])
 
+  // Phase 5: surface queued-order cancellations as toasts. Owner-scoped
+  // ``order_events`` accumulate in ``GameState`` — track the highest id
+  // we've already shown so the user sees each event exactly once, even
+  // across refetches.
+  const lastShownOrderEventIdRef = useRef<number>(0)
+  useEffect(() => {
+    const events: OrderCancelledEvent[] = gameState?.order_events ?? []
+    if (events.length === 0) return
+    let maxSeen = lastShownOrderEventIdRef.current
+    const fresh = events.filter((e) => e.id > lastShownOrderEventIdRef.current)
+    for (const ev of fresh) {
+      if (ev.id > maxSeen) maxSeen = ev.id
+      const reasonText: Record<OrderCancelledEvent['reason'], string> = {
+        enemy_sighted: 'enemy spotted',
+        obstructed: 'path obstructed',
+        attacked: 'unit was attacked',
+        completed: 'destination reached',
+      }
+      toast({
+        title: `Queued move cancelled (unit #${ev.unit_id})`,
+        description:
+          ev.reason === 'completed'
+            ? 'Unit reached its destination.'
+            : `Cancelled: ${reasonText[ev.reason]}.`,
+        variant: ev.reason === 'completed' ? 'default' : 'destructive',
+      })
+    }
+    lastShownOrderEventIdRef.current = maxSeen
+  }, [gameState?.order_events, toast])
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[400px]">
@@ -1334,6 +1521,10 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             highlightedTiles={highlightedTiles}
             movePathsByTile={movePathsByTile}
             attackTiles={attackTiles}
+            queueableTiles={queueableTilesCoords}
+            queueablePathsByTile={queueablePathsByTile}
+            queuedOrderPath={committedOrderPath}
+            queuedOrderDestination={committedOrderDestination}
             onTileClick={handleTileClick}
           />
           {stackSelector && stackSelectorEntries.length >= 2 ? (
@@ -1400,6 +1591,8 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               validImprovements={validImprovements?.improvements ?? null}
               foundCityQueued={alreadyQueuedFoundCity}
               improvementQueued={alreadyQueuedImprovement}
+              queuedOrderDestination={committedOrderDestination}
+              queueableCount={queueableTilesCoords.length}
               onFoundCity={() =>
                 selectedUnit &&
                 appendToQueue({
@@ -1415,6 +1608,44 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                   improvement,
                 })
               }
+              onCancelQueuedOrder={() => {
+                if (!selectedUnit) return
+                // Drop any locally-buffered QUEUE_ORDER for this unit and
+                // append a CANCEL_ORDER for any server-persisted queue.
+                setQueue((prev) => {
+                  const filtered = prev.filter(
+                    (q) =>
+                      !(
+                        q.action.type === 'QUEUE_ORDER' &&
+                        q.action.unit_id === selectedUnit.id
+                      ),
+                  )
+                  // Only append CANCEL_ORDER if the server actually has a
+                  // queue — otherwise we'd send a no-op the validator
+                  // rejects.
+                  const hasServerQueue =
+                    (selectedUnit.orders_queue?.length ?? 0) > 0
+                  if (!hasServerQueue) return filtered
+                  // De-dupe: don't append a second CANCEL_ORDER if one is
+                  // already queued.
+                  const alreadyCancelling = filtered.some(
+                    (q) =>
+                      q.action.type === 'CANCEL_ORDER' &&
+                      q.action.unit_id === selectedUnit.id,
+                  )
+                  if (alreadyCancelling) return filtered
+                  return [
+                    ...filtered,
+                    {
+                      queue_id: newQueueId(),
+                      action: {
+                        type: 'CANCEL_ORDER',
+                        unit_id: selectedUnit.id,
+                      },
+                    },
+                  ]
+                })
+              }}
             />
           )}
 
@@ -1562,8 +1793,15 @@ interface UnitPanelProps {
   validImprovements: ValidImprovement[] | null
   foundCityQueued: boolean
   improvementQueued: boolean
+  /** Phase 5: active queued-order destination (server or locally
+   * buffered). When present, the panel shows a one-click cancel. */
+  queuedOrderDestination: Coord | null
+  /** Phase 5: count of reachable destinations beyond this turn's budget.
+   * Used to explain the blue tile highlight to the player. */
+  queueableCount: number
   onFoundCity: () => void
   onBuildImprovement: (improvement: ValidImprovement['improvement']) => void
+  onCancelQueuedOrder: () => void
 }
 
 function UnitPanel({
@@ -1574,8 +1812,11 @@ function UnitPanel({
   validImprovements,
   foundCityQueued,
   improvementQueued,
+  queuedOrderDestination,
+  queueableCount,
   onFoundCity,
   onBuildImprovement,
+  onCancelQueuedOrder,
 }: UnitPanelProps) {
   return (
     <Card className="rounded-none border-0 border-b">
@@ -1610,8 +1851,37 @@ function UnitPanel({
                     {attackCount === 1 ? '' : 's'}
                   </>
                 )}
+                {queueableCount > 0 && (
+                  <>
+                    {' '}
+                    &middot; {queueableCount} queueable
+                  </>
+                )}
               </div>
             </div>
+
+            {queuedOrderDestination && (
+              <div className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    Queued move → ({queuedOrderDestination.x},{' '}
+                    {queuedOrderDestination.y})
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={onCancelQueuedOrder}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                <p className="text-muted-foreground mt-1">
+                  Cancels automatically on newly visible enemies,
+                  obstruction, or combat damage.
+                </p>
+              </div>
+            )}
 
             {canFoundCity && (
               <div>

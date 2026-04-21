@@ -44,6 +44,7 @@ from ..game.models import (
 from ..game.rules import (
     can_found_city_here,
     get_buildable_buildings,
+    get_queueable_tiles,
     get_trainable_units,
     get_valid_attacks,
     get_valid_improvements,
@@ -260,6 +261,39 @@ async def get_unit_valid_moves(
         "unit_id": unit_id,
         "moves_left": unit.moves_left,
         "moves": moves,
+    }
+
+
+@router.get("/games/{game_id}/units/{unit_id}/queueable-tiles", tags=["state"])
+async def get_unit_queueable_tiles(
+    game_id: str,
+    unit_id: int,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """List every tile the unit can reach (Phase 5 multi-turn queueing).
+
+    Ignores ``moves_left`` so the client can offer destinations beyond
+    the current turn's budget. Each tile includes the server-computed
+    path and a ``turns_required`` estimate. The path may change each
+    resume cycle if the map state evolves — this endpoint is a UX
+    convenience, not a commitment.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    unit = state.get_unit(unit_id)
+    if unit is None or unit.owner != current_player:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    visible = get_visible_tiles(state, current_player)
+    tiles = get_queueable_tiles(state, unit_id, visible_coords=visible)
+    return {
+        "game_id": game_id,
+        "unit_id": unit_id,
+        "tiles": tiles,
     }
 
 

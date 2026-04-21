@@ -430,8 +430,62 @@ class Tile(BaseModel):
         return data
 
 
+class QueuedMoveOrder(BaseModel):
+    """A persisted multi-turn move order (Phase 5).
+
+    The engine resumes the head of each unit's ``orders_queue`` at the
+    start of every turn, walking it along the shortest path to
+    ``destination`` until the turn's movement budget is exhausted or the
+    destination is reached. ``known_enemy_ids`` tracks the enemy unit ids
+    already within the moving unit's sight; a new id appearing in sight
+    triggers a newly-visible-enemy cancellation so the player isn't
+    walked into an ambush they didn't know about when the order was
+    issued. The list updates as the unit moves so seeing the *same*
+    enemy again on later steps does not re-cancel.
+    """
+
+    type: Literal["move"] = "move"
+    destination: Coord
+    known_enemy_ids: list[int] = Field(default_factory=list)
+
+
+QueuedOrder = Annotated[QueuedMoveOrder, Field(discriminator="type")]
+
+
+class OrderCancellationReason(str, Enum):
+    """Why a queued order was cancelled during turn resolution."""
+
+    ENEMY_SIGHTED = "enemy_sighted"
+    OBSTRUCTED = "obstructed"
+    ATTACKED = "attacked"
+    COMPLETED = "completed"
+
+
+class OrderCancelledEvent(BaseModel):
+    """A unit's queued order was cancelled (or completed) during turn resolution.
+
+    Scoped to the owning player via ``redact_state`` — other players
+    never see order events for units that aren't theirs.
+    """
+
+    id: int
+    turn: int
+    unit_id: int
+    owner: PlayerId
+    reason: OrderCancellationReason
+    destination: Coord | None = None
+
+
 class Unit(BaseModel):
-    """Game unit with stats and current state."""
+    """Game unit with stats and current state.
+
+    ``orders_queue`` (Phase 5) holds multi-turn orders the engine
+    resumes at turn start. ``took_damage_last_turn`` is set by
+    ``execute_attack`` when this unit's HP drops from an incoming attack
+    or a counter-attack; on the next turn's resume phase it cancels any
+    active queued order ("don't keep marching, you just got hit") and is
+    then cleared before the new turn's actions are processed.
+    """
 
     id: int
     owner: PlayerId
@@ -439,6 +493,8 @@ class Unit(BaseModel):
     hp: int
     moves_left: int
     loc: Coord
+    orders_queue: list[QueuedOrder] = Field(default_factory=list)
+    took_damage_last_turn: bool = False
 
     @property
     def stats(self) -> UnitStats:
@@ -790,6 +846,7 @@ class GameState(BaseModel):
     next_message_id: int = 1
     next_proposal_id: int = 1
     next_treaty_id: int = 1
+    next_order_event_id: int = 1
     max_turns: int = 100
     victory_conditions: list[str] = Field(
         default_factory=lambda: ["domination", "economic", "elimination", "score"]
@@ -801,6 +858,7 @@ class GameState(BaseModel):
     pending_proposals: list[TreatyProposal] = Field(default_factory=list)
     active_treaties: list[Treaty] = Field(default_factory=list)
     research: dict[PlayerId, ResearchState] = Field(default_factory=dict)
+    order_events: list[OrderCancelledEvent] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -1002,6 +1060,28 @@ class ReorderCityQueueAction(BaseModel):
     new_order: list[int]
 
 
+class QueueOrderAction(BaseModel):
+    """Queue a multi-turn move order on a unit (Phase 5).
+
+    The engine advances the unit along the shortest path to
+    ``destination`` at the start of every turn, consuming that turn's
+    movement budget until the destination is reached or a cancellation
+    condition fires. Validation rejects unreachable destinations
+    (impassable terrain, no path) at submission time.
+    """
+
+    type: str = "QUEUE_ORDER"
+    unit_id: int
+    destination: Coord
+
+
+class CancelOrderAction(BaseModel):
+    """Clear a unit's queued orders (Phase 5)."""
+
+    type: str = "CANCEL_ORDER"
+    unit_id: int
+
+
 class SetActiveResearchAction(BaseModel):
     """Set the player's active research tech.
 
@@ -1033,6 +1113,8 @@ Action = (
     | CancelCityProductionAction
     | ReorderCityQueueAction
     | SetActiveResearchAction
+    | QueueOrderAction
+    | CancelOrderAction
 )
 
 

@@ -377,6 +377,38 @@ describe("api.getValidMoves", () => {
 	});
 });
 
+describe("api.getQueueableTiles", () => {
+	it("GETs the per-unit queueable-tiles endpoint with game-scoped bearer", async () => {
+		localStorage.clear();
+		localStorage.setItem("parley.gamekey.g1", "fx_aliceKey");
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				unit_id: 7,
+				tiles: [
+					{
+						x: 5,
+						y: 3,
+						terrain: "plains",
+						cost: 5,
+						distance: 5,
+						path: [{ x: 1, y: 0 }],
+						turns_required: 2,
+					},
+				],
+			}),
+		});
+
+		const result = await api.getQueueableTiles("g1", 7);
+		expect(result.tiles).toHaveLength(1);
+		expect(result.tiles[0].turns_required).toBe(2);
+
+		const [calledUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(calledUrl).toContain("/games/g1/units/7/queueable-tiles");
+	});
+});
+
 describe("api.submitActions", () => {
 	it("POSTs the batch to /actions with game_id query and bearer", async () => {
 		localStorage.clear();

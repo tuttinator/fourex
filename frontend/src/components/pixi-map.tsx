@@ -49,6 +49,10 @@ export function PixiMap({
   highlightedTiles,
   movePathsByTile,
   attackTiles,
+  queueableTiles,
+  queueablePathsByTile,
+  queuedOrderPath,
+  queuedOrderDestination,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
@@ -339,6 +343,68 @@ export function PixiMap({
       }
     }
 
+    // Queueable-destination overlay (Phase 5 queued orders) — tiles
+    // reachable beyond this turn's movement budget. Rendered in blue so
+    // it's visually distinct from the yellow "move this turn" set.
+    if (queueableTiles && queueableTiles.length > 0) {
+      const queueGfx = new Graphics()
+      for (const coord of queueableTiles) {
+        const hx = coord.x * TILE_SIZE
+        const hy = coord.y * TILE_SIZE
+        queueGfx.rect(hx + 3, hy + 3, TILE_SIZE - 6, TILE_SIZE - 6)
+        queueGfx.fill({ color: 0x60a5fa, alpha: 0.2 })
+        queueGfx.setStrokeStyle({ width: 1.5, color: 0x60a5fa, alpha: 0.7 })
+        queueGfx.rect(hx + 3, hy + 3, TILE_SIZE - 6, TILE_SIZE - 6)
+        queueGfx.stroke()
+      }
+      world.addChild(queueGfx)
+    }
+
+    // Queueable hover preview — same pattern as movePathsByTile but with
+    // the queue-blue tint so the player sees the full multi-turn route
+    // before clicking.
+    if (hover && queueablePathsByTile) {
+      const hoverKey = `${hover.tile.loc.x},${hover.tile.loc.y}`
+      const path = queueablePathsByTile[hoverKey]
+      if (path && path.length > 0) {
+        const pathGfx = new Graphics()
+        for (const step of path) {
+          const px = step.x * TILE_SIZE
+          const py = step.y * TILE_SIZE
+          pathGfx.setStrokeStyle({ width: 3, color: 0x3b82f6, alpha: 1 })
+          pathGfx.rect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6)
+          pathGfx.stroke()
+        }
+        world.addChild(pathGfx)
+      }
+    }
+
+    // Persistent queued-order path for the selected unit — drawn so the
+    // player can see their committed multi-turn route at a glance.
+    if (queuedOrderPath && queuedOrderPath.length > 0) {
+      const committedGfx = new Graphics()
+      for (const step of queuedOrderPath) {
+        const px = step.x * TILE_SIZE
+        const py = step.y * TILE_SIZE
+        committedGfx.setStrokeStyle({ width: 3, color: 0x2563eb, alpha: 0.95 })
+        committedGfx.rect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4)
+        committedGfx.stroke()
+      }
+      world.addChild(committedGfx)
+    }
+
+    if (queuedOrderDestination) {
+      const flagGfx = new Graphics()
+      const fx = queuedOrderDestination.x * TILE_SIZE
+      const fy = queuedOrderDestination.y * TILE_SIZE
+      flagGfx.rect(fx + 4, fy + 4, TILE_SIZE - 8, TILE_SIZE - 8)
+      flagGfx.fill({ color: 0x2563eb, alpha: 0.35 })
+      flagGfx.setStrokeStyle({ width: 2.5, color: 0x1d4ed8, alpha: 1 })
+      flagGfx.rect(fx + 4, fy + 4, TILE_SIZE - 8, TILE_SIZE - 8)
+      flagGfx.stroke()
+      world.addChild(flagGfx)
+    }
+
     // Attack-target overlay (Phase 5) — red tile for each hostile in range.
     if (attackTiles && attackTiles.length > 0) {
       const attackGfx = new Graphics()
@@ -505,7 +571,7 @@ export function PixiMap({
     })
 
     world.addChild(interactiveLayer)
-  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, movePathsByTile, attackTiles, hover])
+  }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, movePathsByTile, attackTiles, queueableTiles, queueablePathsByTile, queuedOrderPath, queuedOrderDestination, hover])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {

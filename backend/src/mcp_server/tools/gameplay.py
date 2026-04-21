@@ -26,12 +26,14 @@ from ...game.models import (
     BuildBuildingAction,
     BuildImprovementAction,
     CancelCityProductionAction,
+    CancelOrderAction,
     CancelTreatyAction,
     DeclareWarAction,
     FoundCityAction,
     GameState,
     MoveAction,
     ProposeTreatyAction,
+    QueueOrderAction,
     ReorderCityQueueAction,
     ResearchState,
     RespondToTreatyAction,
@@ -56,11 +58,13 @@ def _validate_actions_against_state(
         execute_build_building,
         execute_build_improvement,
         execute_cancel_city_production,
+        execute_cancel_order,
         execute_cancel_treaty,
         execute_declare_war,
         execute_found_city,
         execute_move,
         execute_propose_treaty,
+        execute_queue_order,
         execute_reorder_city_queue,
         execute_respond_to_treaty,
         execute_send_message,
@@ -109,6 +113,10 @@ def _validate_actions_against_state(
             r = execute_reorder_city_queue(test_state, player_id, action)
         elif isinstance(action, SetActiveResearchAction):
             r = execute_set_active_research(test_state, player_id, action)
+        elif isinstance(action, QueueOrderAction):
+            r = execute_queue_order(test_state, player_id, action)
+        elif isinstance(action, CancelOrderAction):
+            r = execute_cancel_order(test_state, player_id, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}
@@ -194,7 +202,8 @@ def register(mcp: FastMCP) -> None:
                 BUILD_IMPROVEMENT, BUILD_BUILDING, SET_CITY_PRODUCTION,
                 CANCEL_CITY_PRODUCTION, REORDER_CITY_QUEUE, DECLARE_WAR,
                 SEND_MESSAGE, PROPOSE_TREATY, RESPOND_TO_TREATY,
-                WITHDRAW_TREATY, CANCEL_TREATY, SET_ACTIVE_RESEARCH.
+                WITHDRAW_TREATY, CANCEL_TREATY, SET_ACTIVE_RESEARCH,
+                QUEUE_ORDER, CANCEL_ORDER.
 
         Returns:
             Confirmation of submission and whether the turn resolved.

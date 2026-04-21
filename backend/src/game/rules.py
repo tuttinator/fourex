@@ -28,6 +28,7 @@ from .models import (
     BuildingType,
     BuildJob,
     CancelCityProductionAction,
+    CancelOrderAction,
     CancelTreatyAction,
     City,
     Coord,
@@ -41,10 +42,14 @@ from .models import (
     ImprovementType,
     Message,
     MoveAction,
+    OrderCancellationReason,
+    OrderCancelledEvent,
     PeaceClause,
     PlayerId,
     ProductionCompletedEvent,
     ProposeTreatyAction,
+    QueuedMoveOrder,
+    QueueOrderAction,
     RecurringTributeClause,
     ReorderCityQueueAction,
     ResearchCompletedEvent,
@@ -200,10 +205,16 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
     # Filter tiles to only visible ones
     redacted.tiles = [tile for tile in redacted.tiles if tile.loc in visible_tiles]
 
-    # Filter units to only visible ones
+    # Filter units to only visible ones. Non-owners never see another
+    # player's ``orders_queue`` even when the unit itself is visible —
+    # queued plans are private. Clear it to an empty list for non-owners
+    # so the redacted shape stays serialisation-stable across owners and
+    # observers.
     visible_units = {}
     for unit_id, unit in redacted.units.items():
         if unit.loc in visible_tiles:
+            if unit.owner != player_id:
+                unit.orders_queue = []
             visible_units[unit_id] = unit
     redacted.units = visible_units
 
@@ -269,6 +280,12 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
     redacted.research = (
         {player_id: own_research.model_copy(deep=True)} if own_research else {}
     )
+
+    # Phase 5 queued-order events: scoped to the owning player so other
+    # players can't see who cancelled what or whose plans are in motion.
+    redacted.order_events = [
+        event for event in state.order_events if event.owner == player_id
+    ]
 
     return redacted
 
@@ -1090,14 +1107,17 @@ def resolve_diplomacy_phase(state: GameState) -> None:
 def compute_paths(
     state: GameState,
     unit: Unit,
-    budget: int,
+    budget: int | None,
 ) -> dict[Coord, tuple[int, list[Coord]]]:
     """Dijkstra from ``unit.loc`` over ``TERRAIN_ENTRY_COST``.
 
     Returns ``{destination: (cumulative_cost, path)}`` for every tile
     reachable within ``budget`` movement points. ``path`` lists the
     tiles stepped through from the unit's current location, excluding
-    the start and including the destination.
+    the start and including the destination. Passing ``budget=None``
+    disables the budget cap and returns every reachable tile — used by
+    the Phase 5 queued-order resume phase to recompute multi-turn
+    routes.
 
     A tile is reachable when the cumulative entry cost along a shortest
     4-connected path from ``unit.loc`` stays at or below ``budget`` and
@@ -1110,7 +1130,7 @@ def compute_paths(
     ``AttackAction`` instead). The unit's own tile is excluded from the
     result.
     """
-    if budget <= 0:
+    if budget is not None and budget <= 0:
         return {}
 
     tiles_by_coord: dict[Coord, Tile] = {tile.loc: tile for tile in state.tiles}
@@ -1167,7 +1187,7 @@ def compute_paths(
                 # exhaustion, so skip entirely.
                 continue
             new_cost = cost + entry
-            if new_cost > budget:
+            if budget is not None and new_cost > budget:
                 continue
             if new_cost < dist.get(neighbour, new_cost + 1):
                 dist[neighbour] = new_cost
@@ -1280,6 +1300,285 @@ def execute_move(state: GameState, action: MoveAction) -> ActionResult:
         message=f"Unit {unit.id} moved to {action.to}",
         action=action,
     )
+
+
+def _enemy_ids_in_sight(state: GameState, unit: Unit) -> list[int]:
+    """Enemy unit ids whose position sits inside ``unit``'s sight radius.
+
+    Uses Manhattan distance to match the rest of the engine's sight
+    calculations. "Enemy" means any unit whose owner is not ``unit.owner``
+    and whose diplomatic state is not ALLIANCE.
+    """
+    sight = unit.stats.sight
+    result: list[int] = []
+    for other in state.units.values():
+        if other.id == unit.id or other.owner == unit.owner:
+            continue
+        if (
+            state.get_diplomatic_state(unit.owner, other.owner)
+            == DiplomaticState.ALLIANCE
+        ):
+            continue
+        if unit.loc.distance_to(other.loc) <= sight:
+            result.append(other.id)
+    return result
+
+
+def _emit_order_cancelled(
+    state: GameState,
+    unit: Unit,
+    reason: OrderCancellationReason,
+    order: QueuedMoveOrder,
+) -> None:
+    """Append an ``OrderCancelledEvent`` with a deterministic id."""
+    event = OrderCancelledEvent(
+        id=state.next_order_event_id,
+        turn=state.turn,
+        unit_id=unit.id,
+        owner=unit.owner,
+        reason=reason,
+        destination=order.destination,
+    )
+    state.order_events.append(event)
+    state.next_order_event_id += 1
+
+
+def execute_queue_order(
+    state: GameState, player_id: PlayerId, action: QueueOrderAction
+) -> ActionResult:
+    """Queue a multi-turn move order on one of the caller's units.
+
+    Validation:
+    - The unit must exist and belong to ``player_id``.
+    - The destination must not be the unit's current tile.
+    - The destination tile must exist and be passable for land units.
+    - A path must exist from the unit's current location to the
+      destination under current map conditions. Impassable terrain or
+      enemy-occupied chokepoints reject the order at submission time.
+
+    Queuing replaces any existing queue on the unit — "queue a new
+    order" means "throw out the old one", matching the single-click
+    cancel-and-reissue UX.
+    """
+    unit = state.get_unit(action.unit_id)
+    if unit is None:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} not found",
+            action=action,
+        )
+    if unit.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} is not owned by {player_id}",
+            action=action,
+        )
+    if action.destination == unit.loc:
+        return ActionResult(
+            success=False,
+            message="Destination is the unit's current tile",
+            action=action,
+        )
+    dest_tile = state.get_tile(action.destination)
+    if dest_tile is None:
+        return ActionResult(
+            success=False,
+            message=f"Destination {action.destination} is invalid",
+            action=action,
+        )
+    if TERRAIN_ENTRY_COST.get(dest_tile.terrain) is None:
+        return ActionResult(
+            success=False,
+            message=f"Destination {action.destination} is impassable terrain",
+            action=action,
+        )
+
+    paths = compute_paths(state, unit, None)
+    if action.destination not in paths:
+        return ActionResult(
+            success=False,
+            message=f"No path from {unit.loc} to {action.destination}",
+            action=action,
+        )
+
+    known = _enemy_ids_in_sight(state, unit)
+    unit.orders_queue = [
+        QueuedMoveOrder(destination=action.destination, known_enemy_ids=known)
+    ]
+    return ActionResult(
+        success=True,
+        message=f"Unit {unit.id} queued order to {action.destination}",
+        action=action,
+    )
+
+
+def execute_cancel_order(
+    state: GameState, player_id: PlayerId, action: CancelOrderAction
+) -> ActionResult:
+    """Clear the caller's unit orders queue."""
+    unit = state.get_unit(action.unit_id)
+    if unit is None:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} not found",
+            action=action,
+        )
+    if unit.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} is not owned by {player_id}",
+            action=action,
+        )
+    unit.orders_queue.clear()
+    return ActionResult(
+        success=True,
+        message=f"Unit {unit.id} orders cleared",
+        action=action,
+    )
+
+
+def _advance_queued_orders_for_unit(state: GameState, unit: Unit) -> None:
+    """Walk the head of ``unit.orders_queue`` along the shortest path.
+
+    Implements the cancellation ladder from the PRD:
+    - took damage last turn → cancel (``ATTACKED``)
+    - newly visible enemy in sight → cancel (``ENEMY_SIGHTED``)
+    - next step obstructed (terrain change, enemy, at-cap stack) →
+      cancel (``OBSTRUCTED``)
+
+    Otherwise consumes this turn's movement budget stepping along the
+    route, popping the order when the unit arrives at the destination.
+    """
+    if not unit.orders_queue:
+        return
+
+    if unit.took_damage_last_turn:
+        order = unit.orders_queue[0]
+        if isinstance(order, QueuedMoveOrder):
+            _emit_order_cancelled(state, unit, OrderCancellationReason.ATTACKED, order)
+        unit.orders_queue.clear()
+        return
+
+    while unit.orders_queue and unit.moves_left > 0:
+        order = unit.orders_queue[0]
+        if not isinstance(order, QueuedMoveOrder):
+            break
+
+        paths = compute_paths(state, unit, None)
+        if order.destination not in paths:
+            _emit_order_cancelled(
+                state, unit, OrderCancellationReason.OBSTRUCTED, order
+            )
+            unit.orders_queue.clear()
+            break
+
+        _cost, full_path = paths[order.destination]
+        advanced_this_order = False
+
+        for next_step in full_path:
+            if unit.moves_left <= 0:
+                break
+
+            current_enemies = _enemy_ids_in_sight(state, unit)
+            new_enemies = [
+                eid for eid in current_enemies if eid not in order.known_enemy_ids
+            ]
+            if new_enemies:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.ENEMY_SIGHTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            tile = state.get_tile(next_step)
+            if tile is None:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.OBSTRUCTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            entry = TERRAIN_ENTRY_COST.get(tile.terrain)
+            if entry is None:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.OBSTRUCTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            has_enemy = False
+            for oid in tile.unit_ids:
+                if oid == unit.id:
+                    continue
+                other = state.units.get(oid)
+                if other is not None and other.owner != unit.owner:
+                    has_enemy = True
+                    break
+            if has_enemy:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.OBSTRUCTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            friendly_count = sum(1 for uid in tile.unit_ids if uid != unit.id)
+            if friendly_count + 1 > STACK_CAP:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.OBSTRUCTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            if unit.moves_left < entry:
+                break
+
+            old_tile = state.get_tile(unit.loc)
+            if old_tile and unit.id in old_tile.unit_ids:
+                old_tile.unit_ids.remove(unit.id)
+            if unit.id not in tile.unit_ids:
+                tile.unit_ids.append(unit.id)
+            unit.loc = next_step
+            unit.moves_left -= entry
+            advanced_this_order = True
+
+            # After stepping, re-check for newly visible enemies — the
+            # unit's new position may reveal tiles (and enemies) that the
+            # pre-step check at the old position missed.
+            post_step_enemies = _enemy_ids_in_sight(state, unit)
+            post_step_new = [
+                eid for eid in post_step_enemies if eid not in order.known_enemy_ids
+            ]
+            if post_step_new:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.ENEMY_SIGHTED, order
+                )
+                unit.orders_queue.clear()
+                return
+
+            if unit.loc == order.destination:
+                _emit_order_cancelled(
+                    state, unit, OrderCancellationReason.COMPLETED, order
+                )
+                unit.orders_queue.pop(0)
+                break
+
+        if not advanced_this_order:
+            break
+
+
+def resume_queued_orders(state: GameState) -> None:
+    """Resume every unit's order queue for one turn of movement.
+
+    Called at turn start after :func:`reset_unit_moves` and before any
+    player actions are processed. After resuming, clears
+    ``took_damage_last_turn`` on every unit so damage taken *this* turn
+    (i.e. from attacks that resolve during the upcoming player-action
+    phase) is what the *next* turn's resume reads.
+    """
+    for unit in list(state.units.values()):
+        _advance_queued_orders_for_unit(state, unit)
+    for unit in state.units.values():
+        unit.took_damage_last_turn = False
 
 
 def _resolve_attack_target_unit(
@@ -1412,6 +1711,7 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
             damage = max(1, int(round(damage * (1 - FORTIFICATION_CITY_DEFENCE_BONUS))))
 
         target.hp -= damage
+        target.took_damage_last_turn = True
         message = f"Unit {attacker.id} attacks unit {target.id} for {damage} damage"
 
         # Counter-attack if target survives and can counter.
@@ -1423,6 +1723,7 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
                     int(round(counter_damage * (1 - FORTIFICATION_CITY_DEFENCE_BONUS))),
                 )
             attacker.hp -= counter_damage
+            attacker.took_damage_last_turn = True
             message += f", unit {target.id} counters for {counter_damage} damage"
 
         # Remove destroyed units
@@ -1522,6 +1823,7 @@ def execute_attack(state: GameState, action: AttackAction) -> ActionResult:
         if target_city.has_walls() and target_city.hp > 0:
             counter_damage = 2  # Wall counter-fire
             attacker.hp -= counter_damage
+            attacker.took_damage_last_turn = True
             message += f", city {target_city.id} counters for {counter_damage} damage"
 
         # Remove destroyed units
@@ -2409,6 +2711,51 @@ def get_valid_moves(
     return results
 
 
+def get_queueable_tiles(
+    state: GameState,
+    unit_id: int,
+    visible_coords: set[Coord] | None = None,
+) -> list[dict]:
+    """Tiles reachable by a unit over multiple turns (Phase 5 queued moves).
+
+    Runs Dijkstra with no movement budget so every reachable destination
+    — including those beyond this turn's ``moves_left`` — is returned.
+    The frontend uses this to let the player click a far-off tile and
+    emit a ``QueueOrderAction``. Same filtering and schema as
+    ``get_valid_moves``; ``turns_required`` estimates how many turns the
+    unit will take at its current max speed (min 1).
+    """
+    unit = state.get_unit(unit_id)
+    if unit is None:
+        return []
+
+    tiles_by_coord = {tile.loc: tile for tile in state.tiles}
+    paths = compute_paths(state, unit, budget=None)
+    max_moves = max(1, unit.stats.moves)
+
+    results: list[dict] = []
+    for dest, (cost, path) in paths.items():
+        if visible_coords is not None and dest not in visible_coords:
+            continue
+        tile = tiles_by_coord.get(dest)
+        if tile is None:
+            continue
+        results.append(
+            {
+                "x": dest.x,
+                "y": dest.y,
+                "terrain": tile.terrain.value,
+                "cost": cost,
+                "path": [{"x": step.x, "y": step.y} for step in path],
+                "distance": cost,
+                "turns_required": max(1, (cost + max_moves - 1) // max_moves),
+            }
+        )
+
+    results.sort(key=lambda r: (r["cost"], r["x"], r["y"]))
+    return results
+
+
 def get_valid_attacks(
     state: GameState,
     unit_id: int,
@@ -3095,6 +3442,12 @@ def resolve_turn(
     # Reset unit movement at start of turn
     reset_unit_moves(state)
 
+    # Phase 5: resume each unit's multi-turn order queue before processing
+    # player actions. This clears damage flags from the *previous* turn
+    # after checking them, so damage taken during this turn's action
+    # phase below applies to the *next* turn's resume.
+    resume_queued_orders(state)
+
     # Process all actions
     results: dict[PlayerId, list[ActionResult]] = {}
 
@@ -3135,6 +3488,10 @@ def resolve_turn(
                 result = execute_reorder_city_queue(state, player_id, action)
             elif isinstance(action, SetActiveResearchAction):
                 result = execute_set_active_research(state, player_id, action)
+            elif isinstance(action, QueueOrderAction):
+                result = execute_queue_order(state, player_id, action)
+            elif isinstance(action, CancelOrderAction):
+                result = execute_cancel_order(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,
