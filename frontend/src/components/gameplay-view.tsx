@@ -21,6 +21,7 @@
  * and triggers a game-state refetch.
  */
 
+import type React from 'react'
 import {
   useCallback,
   useEffect,
@@ -46,6 +47,7 @@ import {
   Handshake,
   Landmark,
   Loader2,
+  Lock,
   MessageSquare,
   RefreshCw,
   Send,
@@ -87,6 +89,9 @@ import type {
   QueuedAction,
   ResearchState,
   ResourceBag,
+  Tech,
+  TechId,
+  TechTreeResponse,
   Tile,
   TrainableUnit,
   TrainableUnitsResponse,
@@ -163,6 +168,10 @@ function describeAction(action: GameAction): string {
       return `Cancel treaty #${action.treaty_id}`
     case 'DECLARE_WAR':
       return `Declare war on ${action.target_player}`
+    case 'SET_ACTIVE_RESEARCH':
+      return action.tech_id
+        ? `Research ${action.tech_id}`
+        : 'Clear active research'
   }
 }
 
@@ -475,6 +484,16 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     enabled: gameState != null,
   })
 
+  // Phase 6 — tech tree panel data. Invalidated on turn.resolved (below)
+  // and on research.completed so the UI reflects the unlock the moment
+  // it lands rather than waiting for the next poll.
+  const techTreeQueryKey = queryKeys.techTree(gameId)
+  const { data: techTreeData } = useQuery<TechTreeResponse | null>({
+    queryKey: techTreeQueryKey,
+    queryFn: () => api.getTechTree(gameId),
+    enabled: gameState != null,
+  })
+
   // ---- Per-unit affordance queries ---------------------------------------
 
   const selectedUnit: Unit | null =
@@ -773,6 +792,19 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     return out
   }, [queue, selectedCityId])
 
+  // Last SET_ACTIVE_RESEARCH in the queue wins — the tech panel shows
+  // the queued pick as "selected" ahead of server confirmation so the
+  // click-to-set-active interaction feels immediate. ``undefined`` when
+  // nothing is queued (the research indicator falls back to the
+  // server-reported active tech).
+  const queuedResearchTechId = useMemo<TechId | null | undefined>(() => {
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const a = queue[i].action
+      if (a.type === 'SET_ACTIVE_RESEARCH') return a.tech_id
+    }
+    return undefined
+  }, [queue])
+
   // ---- End Turn -----------------------------------------------------------
 
   const submitMutation = useMutation({
@@ -820,7 +852,44 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
       queryKey: queryKeys.gameDetail(gameId),
     })
     queryClient.invalidateQueries({ queryKey: diplomacyQueryKey })
-  }, [lastEvent, queryClient, stateQueryKey, gameId, diplomacyQueryKey])
+    queryClient.invalidateQueries({ queryKey: techTreeQueryKey })
+  }, [
+    lastEvent,
+    queryClient,
+    stateQueryKey,
+    gameId,
+    diplomacyQueryKey,
+    techTreeQueryKey,
+  ])
+
+  // Phase 6: research.completed — the backend emits this owner-scoped
+  // the moment a tech lands. Invalidate the tech-tree query so the
+  // panel and the city menus reflect the unlock immediately, and
+  // surface a toast naming the unlocked items so the player gets the
+  // reward feedback without hunting through the panel.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.type !== 'research.completed') return
+    const payload = lastEvent as unknown as {
+      tech_id?: TechId
+      tech_name?: string
+      unlocks_units?: string[]
+      unlocks_buildings?: string[]
+    }
+    const name = payload.tech_name ?? payload.tech_id ?? 'Unknown tech'
+    const unlocks = [
+      ...(payload.unlocks_units ?? []),
+      ...(payload.unlocks_buildings ?? []),
+    ]
+    toast({
+      title: `Researched: ${name}`,
+      description:
+        unlocks.length > 0
+          ? `Unlocked ${unlocks.join(', ')}`
+          : 'No new unlocks.',
+    })
+    queryClient.invalidateQueries({ queryKey: techTreeQueryKey })
+    queryClient.invalidateQueries({ queryKey: stateQueryKey })
+  }, [lastEvent, queryClient, techTreeQueryKey, stateQueryKey, toast])
 
   // Phase 7: diplomacy.message_received. The backend scopes this event
   // to sender+recipient connections only, so we can invalidate the
@@ -1145,6 +1214,19 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             }
             onQueueDeclareWar={(target_player) =>
               appendToQueue({ type: 'DECLARE_WAR', target_player })
+            }
+          />
+
+          {/* Tech tree panel (Phase 6) */}
+          <TechTreePanel
+            techTree={techTreeData?.tech_tree ?? null}
+            research={techTreeData?.research ?? null}
+            sciencePerTurn={
+              computeYieldBreakdown(gameState, currentPlayer).total.science
+            }
+            queuedResearchTechId={queuedResearchTechId}
+            onSelectActive={(tech_id) =>
+              appendToQueue({ type: 'SET_ACTIVE_RESEARCH', tech_id })
             }
           />
 
@@ -1526,22 +1608,32 @@ function CityPanel({
                   variant="outline"
                   size="sm"
                   className="w-full justify-between text-xs"
-                  disabled={!u.affordable}
+                  disabled={!u.affordable || u.locked}
                   onClick={() => onTrainUnit(u.unit_type)}
                   title={
-                    !u.affordable
-                      ? `Cannot afford (${formatCost(u.cost)})`
-                      : activeJob
-                        ? `Queues behind ${activeJob.target}`
-                        : undefined
+                    u.locked
+                      ? `Requires: ${u.required_tech_name ?? u.required_tech}`
+                      : !u.affordable
+                        ? `Cannot afford (${formatCost(u.cost)})`
+                        : activeJob
+                          ? `Queues behind ${activeJob.target}`
+                          : undefined
                   }
                 >
                   <span className="capitalize flex items-center gap-1">
                     <Swords className="h-3 w-3" />
                     {u.unit_type}
+                    {u.locked && (
+                      <Lock
+                        aria-label={`Requires ${u.required_tech_name ?? u.required_tech}`}
+                        className="h-3 w-3 text-muted-foreground"
+                      />
+                    )}
                   </span>
                   <span className="text-muted-foreground">
-                    {formatCost(u.cost)}
+                    {u.locked
+                      ? `Requires ${u.required_tech_name ?? u.required_tech}`
+                      : formatCost(u.cost)}
                   </span>
                 </Button>
               ))
@@ -1562,22 +1654,32 @@ function CityPanel({
                       variant="outline"
                       size="sm"
                       className="w-full justify-between text-xs"
-                      disabled={!b.affordable || queued}
+                      disabled={!b.affordable || queued || b.locked}
                       onClick={() => onBuildBuilding(b.building_type)}
                       title={
-                        queued
-                          ? `${b.building_type} already in queue`
-                          : activeJob
-                            ? `Queues behind ${activeJob.target}`
-                            : b.effect
+                        b.locked
+                          ? `Requires: ${b.required_tech_name ?? b.required_tech}`
+                          : queued
+                            ? `${b.building_type} already in queue`
+                            : activeJob
+                              ? `Queues behind ${activeJob.target}`
+                              : b.effect
                       }
                     >
-                      <span className="capitalize">
+                      <span className="capitalize flex items-center gap-1">
                         {b.building_type}
+                        {b.locked && (
+                          <Lock
+                            aria-label={`Requires ${b.required_tech_name ?? b.required_tech}`}
+                            className="h-3 w-3 text-muted-foreground"
+                          />
+                        )}
                         {queued && ' — queued'}
                       </span>
                       <span className="text-muted-foreground">
-                        {formatCost(b.cost)}
+                        {b.locked
+                          ? `Requires ${b.required_tech_name ?? b.required_tech}`
+                          : formatCost(b.cost)}
                       </span>
                     </Button>
                   )
@@ -1592,6 +1694,237 @@ function CityPanel({
         </Tabs>
       </CardContent>
     </Card>
+  )
+}
+
+/** Phase 6 — tech tree panel. One card with every tech grouped by state
+ * (researched / in-progress / available / locked). Clicking an entry in
+ * the available group queues ``SET_ACTIVE_RESEARCH``; the queued pick
+ * is shown as the active selection pre-submit so the interaction feels
+ * immediate. Parallels the diplomacy panel in layout and styling. */
+interface TechTreePanelProps {
+  techTree: Record<TechId, Tech> | null
+  research: ResearchState | null
+  sciencePerTurn: number
+  /** If the queue already holds a SET_ACTIVE_RESEARCH, this is its
+   * ``tech_id`` (or null for a clear action). ``undefined`` means no
+   * queued change — fall back to ``research.active``. */
+  queuedResearchTechId: TechId | null | undefined
+  onSelectActive: (techId: TechId | null) => void
+}
+
+type TechState = 'researched' | 'in_progress' | 'available' | 'locked'
+
+function techState(
+  tech: Tech,
+  completed: Set<TechId>,
+  active: TechId | null,
+): TechState {
+  if (completed.has(tech.id)) return 'researched'
+  if (active === tech.id) return 'in_progress'
+  const unlocked = tech.requires.every((r) => completed.has(r))
+  return unlocked ? 'available' : 'locked'
+}
+
+function TechTreePanel({
+  techTree,
+  research,
+  sciencePerTurn,
+  queuedResearchTechId,
+  onSelectActive,
+}: TechTreePanelProps) {
+  const completed = useMemo<Set<TechId>>(
+    () => new Set(research?.completed ?? []),
+    [research?.completed],
+  )
+  // Queued pick wins over the server's active value: the player's just-
+  // clicked selection is the intent; it'll land next turn.
+  const effectiveActive =
+    queuedResearchTechId === undefined
+      ? research?.active ?? null
+      : queuedResearchTechId
+  const progress = research?.progress ?? 0
+
+  const techs = useMemo(() => {
+    if (!techTree) return [] as Tech[]
+    return Object.values(techTree).sort(
+      (a, b) => a.cost_science - b.cost_science || a.name.localeCompare(b.name),
+    )
+  }, [techTree])
+
+  const groups = useMemo(() => {
+    const g: Record<TechState, Tech[]> = {
+      researched: [],
+      in_progress: [],
+      available: [],
+      locked: [],
+    }
+    for (const tech of techs) {
+      g[techState(tech, completed, effectiveActive)].push(tech)
+    }
+    return g
+  }, [techs, completed, effectiveActive])
+
+  return (
+    <Card className="rounded-none border-0 border-b">
+      <CardHeader className="py-3">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-1">
+            <span aria-hidden="true">🔬</span>
+            Tech tree
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            +{sciencePerTurn}/turn
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-3 text-xs">
+        {!techTree || !research ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : (
+          <>
+            {groups.in_progress.length > 0 && (
+              <TechGroup
+                title="Researching"
+                techs={groups.in_progress}
+                renderRow={(tech) => {
+                  const remaining = Math.max(0, tech.cost_science - progress)
+                  const eta =
+                    sciencePerTurn > 0
+                      ? Math.max(1, Math.ceil(remaining / sciencePerTurn))
+                      : null
+                  return (
+                    <div
+                      key={tech.id}
+                      className="rounded-md border bg-primary/10 px-2 py-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{tech.name}</span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {progress}/{tech.cost_science}
+                          {eta != null && ` · ${eta}t`}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1 rounded bg-background">
+                        <div
+                          className="h-1 rounded bg-primary"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round(
+                                (progress / tech.cost_science) * 100,
+                              ),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                }}
+              />
+            )}
+
+            {groups.available.length > 0 && (
+              <TechGroup
+                title="Available"
+                techs={groups.available}
+                renderRow={(tech) => {
+                  const eta =
+                    sciencePerTurn > 0
+                      ? Math.max(1, Math.ceil(tech.cost_science / sciencePerTurn))
+                      : null
+                  return (
+                    <Button
+                      key={tech.id}
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-between text-xs"
+                      onClick={() => onSelectActive(tech.id)}
+                      title={describeTechUnlocks(tech)}
+                    >
+                      <span>{tech.name}</span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {tech.cost_science}🔬
+                        {eta != null && ` · ${eta}t`}
+                      </span>
+                    </Button>
+                  )
+                }}
+              />
+            )}
+
+            {groups.locked.length > 0 && (
+              <TechGroup
+                title="Locked"
+                techs={groups.locked}
+                renderRow={(tech) => (
+                  <div
+                    key={tech.id}
+                    className="flex items-center justify-between rounded-md border bg-muted/20 px-2 py-1 text-muted-foreground"
+                    title={`Requires: ${tech.requires.join(', ')}`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <Lock className="h-3 w-3" />
+                      {tech.name}
+                    </span>
+                    <span className="tabular-nums">
+                      {tech.cost_science}🔬
+                    </span>
+                  </div>
+                )}
+              />
+            )}
+
+            {groups.researched.length > 0 && (
+              <TechGroup
+                title="Researched"
+                techs={groups.researched}
+                renderRow={(tech) => (
+                  <div
+                    key={tech.id}
+                    className="flex items-center justify-between rounded-md border bg-muted/40 px-2 py-1"
+                    title={describeTechUnlocks(tech)}
+                  >
+                    <span className="flex items-center gap-1">
+                      <Check className="h-3 w-3" />
+                      {tech.name}
+                    </span>
+                  </div>
+                )}
+              />
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function describeTechUnlocks(tech: Tech): string {
+  const parts: string[] = []
+  if (tech.unlocks_units.length > 0) {
+    parts.push(`Units: ${tech.unlocks_units.join(', ')}`)
+  }
+  if (tech.unlocks_buildings.length > 0) {
+    parts.push(`Buildings: ${tech.unlocks_buildings.join(', ')}`)
+  }
+  return parts.length > 0 ? parts.join('\n') : 'No direct unlocks'
+}
+
+function TechGroup({
+  title,
+  techs,
+  renderRow,
+}: {
+  title: string
+  techs: Tech[]
+  renderRow: (tech: Tech) => React.ReactNode
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-muted-foreground font-medium">{title}</div>
+      {techs.map(renderRow)}
+    </div>
   )
 }
 

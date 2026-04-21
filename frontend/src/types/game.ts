@@ -510,6 +510,13 @@ export interface ReorderCityQueueActionPayload {
 	new_order: number[];
 }
 
+export interface SetActiveResearchActionPayload {
+	type: "SET_ACTIVE_RESEARCH";
+	/** Tech id to make active. ``null`` clears the active slot and
+	 * freezes accumulated progress. */
+	tech_id: TechId | null;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -525,7 +532,8 @@ export type GameAction =
 	| DeclareWarActionPayload
 	| SetCityProductionActionPayload
 	| CancelCityProductionActionPayload
-	| ReorderCityQueueActionPayload;
+	| ReorderCityQueueActionPayload
+	| SetActiveResearchActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 
@@ -575,6 +583,15 @@ export interface TrainableUnit {
 	unit_type: UnitType;
 	cost: ResourceBag;
 	affordable: boolean;
+	/** Phase 6: the unit is gated on ``required_tech`` and the owning
+	 * player has not completed that tech yet. UI should render locked
+	 * entries greyed with a "Requires: <name>" tooltip rather than
+	 * hiding them. */
+	locked: boolean;
+	/** Phase 6: tech id gating this unit, or null if always-available. */
+	required_tech: TechId | null;
+	/** Phase 6: display name for ``required_tech`` (e.g. "Archery"). */
+	required_tech_name: string | null;
 	stats: {
 		hp: number;
 		moves: number;
@@ -596,12 +613,25 @@ export interface BuildableBuilding {
 	affordable: boolean;
 	already_built: boolean;
 	effect: string;
+	/** Phase 6: same semantics as ``TrainableUnit.locked``. */
+	locked: boolean;
+	required_tech: TechId | null;
+	required_tech_name: string | null;
 }
 
 export interface BuildableBuildingsResponse {
 	game_id: string;
 	city_id: number;
 	buildings: BuildableBuilding[];
+}
+
+/** Phase 6 tech-tree endpoint response. Mirrors the MCP ``get_tech_tree``
+ * shape so either front door can drive the same panel. */
+export interface TechTreeResponse {
+	game_id: string;
+	player: PlayerId;
+	tech_tree: Record<TechId, Tech>;
+	research: ResearchState;
 }
 
 export interface QueuedAction {

@@ -22,6 +22,7 @@ from ..game.models import (
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
     PEACE_CLAUSE_MAX_DURATION,
+    TECH_TREE,
     Action,
     CancelTreatyAction,
     CreateGameRequest,
@@ -33,6 +34,7 @@ from ..game.models import (
     PromptLog,
     ProposeTreatyAction,
     RecurringTributeClause,
+    ResearchState,
     ResourceBag,
     ResourceSwapClause,
     RespondToTreatyAction,
@@ -375,6 +377,50 @@ async def get_city_trainable_units(
         "game_id": game_id,
         "city_id": city_id,
         "units": units,
+    }
+
+
+@router.get("/games/{game_id}/tech-tree", tags=["state"])
+async def get_game_tech_tree(
+    game_id: str,
+    current_player: PlayerId = Depends(get_current_player),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Return the full static tech graph plus the caller's research state.
+
+    Phase 6 tech-tree panel — lists every tech with prerequisites and
+    unlocks so the UI can render node states (researched/in-progress/
+    available/locked). ``research`` is the caller's per-player block;
+    other players' research is not exposed here.
+    """
+    controller = get_persistent_game_controller(session)
+    state = await controller.get_game_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if current_player not in state.players:
+        raise HTTPException(status_code=404, detail="Player not in game")
+
+    research = state.research.get(current_player) or ResearchState()
+    tech_tree_dump = {
+        tech_id: {
+            "id": tech.id,
+            "name": tech.name,
+            "cost_science": tech.cost_science,
+            "requires": list(tech.requires),
+            "unlocks_units": [u.value for u in tech.unlocks_units],
+            "unlocks_buildings": [b.value for b in tech.unlocks_buildings],
+        }
+        for tech_id, tech in TECH_TREE.items()
+    }
+    return {
+        "game_id": game_id,
+        "player": current_player,
+        "tech_tree": tech_tree_dump,
+        "research": {
+            "completed": list(research.completed),
+            "active": research.active,
+            "progress": research.progress,
+        },
     }
 
 

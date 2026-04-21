@@ -14,12 +14,14 @@ as the Phase 3 invariants above.
 
 from backend.src.game.models import (
     BUILDING_PRODUCTION_COST,
+    TECH_TREE,
     UNIT_PRODUCTION_COST,
     BuildBuildingAction,
     BuildingType,
     City,
     Coord,
     GameState,
+    ResearchState,
     ResourceBag,
     Terrain,
     Tile,
@@ -33,6 +35,14 @@ from backend.src.game.rules import (
     redact_state,
     resolve_turn,
 )
+
+
+def _seed_all_research(state: GameState, player: str) -> None:
+    """Mark every tech complete so Phase 3 tests that build
+    non-starter-gated items (e.g. MONUMENT) aren't blocked by the Phase 6
+    tech gate — these tests predate the gate and focus on production
+    mechanics, not tech."""
+    state.research[player] = ResearchState(completed=list(TECH_TREE.keys()))
 
 
 def _plains_grid(width: int = 10, height: int = 10) -> GameState:
@@ -144,6 +154,7 @@ class TestAdvanceProduction:
         state = _plains_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(food=100, ore=100, wood=100, crystal=50)
+        _seed_all_research(state, "p1")
         city = _seed_city(state, "p1", 5, 5)
         city.buildings.add(BuildingType.BARRACKS)
 
@@ -174,6 +185,7 @@ class TestAdvanceProduction:
         state = _plains_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
+        _seed_all_research(state, "p1")
         city = _seed_city(state, "p1", 5, 5)
 
         from backend.src.game.rules import execute_build_building

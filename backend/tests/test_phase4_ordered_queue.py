@@ -12,6 +12,7 @@ These tests hit each acceptance criterion from
 """
 
 from backend.src.game.models import (
+    TECH_TREE,
     UNIT_PRODUCTION_COST,
     BuildingType,
     CancelCityProductionAction,
@@ -19,6 +20,7 @@ from backend.src.game.models import (
     Coord,
     GameState,
     ReorderCityQueueAction,
+    ResearchState,
     ResourceBag,
     SetCityProductionAction,
     Terrain,
@@ -47,6 +49,13 @@ def _plains_grid(width: int = 10, height: int = 10) -> GameState:
             )
             tile_id += 1
     return state
+
+
+def _seed_all_research(state: GameState, player: str) -> None:
+    """Mark every tech complete so Phase 4 tests that exercise ordered-queue
+    mechanics with non-starter-gated items (e.g. ARCHER) aren't blocked by
+    the Phase 6 tech gate."""
+    state.research[player] = ResearchState(completed=list(TECH_TREE.keys()))
 
 
 def _seed_city(state: GameState, player: str, x: int, y: int, city_id: int = 1) -> City:
@@ -245,6 +254,7 @@ class TestReorderCityQueue:
         state = _plains_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(food=100, ore=100, wood=100)
+        _seed_all_research(state, "p1")
         city = _seed_city(state, "p1", 5, 5)
 
         # Build a 3-item queue.

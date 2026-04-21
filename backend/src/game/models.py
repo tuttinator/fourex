@@ -149,8 +149,18 @@ class ResourceBag(BaseModel):
         )
 
 
+TechId = str
+
+
 class UnitStats(BaseModel):
-    """Base stats for unit types."""
+    """Base stats for unit types.
+
+    ``required_tech`` (Phase 6) names the tech that must be in the player's
+    ``ResearchState.completed`` set before a city may queue this unit. A
+    ``None`` value means the unit is always available. Starter-tier techs
+    (``bronze_working`` etc.) are pre-completed at game creation so they
+    function as "unlocked from turn 1" for the purposes of this gate.
+    """
 
     cost: ResourceBag
     moves: int
@@ -159,6 +169,7 @@ class UnitStats(BaseModel):
     attack: int
     attack_range: int
     special: str = ""
+    required_tech: TechId | None = None
 
 
 UNIT_STATS = {
@@ -170,6 +181,7 @@ UNIT_STATS = {
         attack=1,
         attack_range=1,
         special="Ignores forest movement penalty",
+        required_tech=None,
     ),
     UnitType.WORKER: UnitStats(
         cost=ResourceBag(food=15),
@@ -179,6 +191,7 @@ UNIT_STATS = {
         attack=0,
         attack_range=0,
         special="Builds improvements, cities",
+        required_tech=None,
     ),
     UnitType.SOLDIER: UnitStats(
         cost=ResourceBag(food=15, ore=5),
@@ -188,6 +201,7 @@ UNIT_STATS = {
         attack=2,
         attack_range=1,
         special="+25% vs cities",
+        required_tech="bronze_working",
     ),
     UnitType.ARCHER: UnitStats(
         cost=ResourceBag(food=15, wood=5),
@@ -197,6 +211,7 @@ UNIT_STATS = {
         attack=2,
         attack_range=2,
         special="Ranged; no counter-attack",
+        required_tech="archery",
     ),
 }
 
@@ -239,38 +254,59 @@ IMPROVEMENT_STATS = {
 
 
 class BuildingStats(BaseModel):
-    """Base stats for building types."""
+    """Base stats for building types.
+
+    ``required_tech`` (Phase 6) gates the building behind a tech in the
+    player's ``ResearchState.completed`` set. Starter-tier techs are
+    pre-completed at game creation, so buildings gated on ``pottery`` or
+    ``bronze_working`` are available from turn 1 and the gate is purely
+    shaping the later game.
+    """
 
     cost: ResourceBag
     hp: int
     effect: str
+    required_tech: TechId | None = None
 
 
 BUILDING_STATS = {
     BuildingType.GRANARY: BuildingStats(
-        cost=ResourceBag(wood=20), hp=10, effect="+50% food output"
+        cost=ResourceBag(wood=20),
+        hp=10,
+        effect="+50% food output",
+        required_tech="pottery",
     ),
     BuildingType.BARRACKS: BuildingStats(
-        cost=ResourceBag(wood=25), hp=10, effect="-25% unit training cost"
+        cost=ResourceBag(wood=25),
+        hp=10,
+        effect="-25% unit training cost",
+        required_tech="bronze_working",
     ),
     BuildingType.WALLS: BuildingStats(
-        cost=ResourceBag(ore=20), hp=15, effect="City gains +5 HP & ranged counter-fire"
+        cost=ResourceBag(ore=20),
+        hp=15,
+        effect="City gains +5 HP & ranged counter-fire",
+        required_tech="masonry",
     ),
     BuildingType.MONUMENT: BuildingStats(
-        cost=ResourceBag(wood=10), hp=5, effect="+1 culture/turn"
+        cost=ResourceBag(wood=10),
+        hp=5,
+        effect="+1 culture/turn",
+        required_tech="writing",
     ),
     BuildingType.LIBRARY: BuildingStats(
-        cost=ResourceBag(wood=15, ore=5), hp=5, effect="+2 culture/turn"
+        cost=ResourceBag(wood=15, ore=5),
+        hp=5,
+        effect="+2 culture/turn",
+        required_tech="writing",
     ),
     BuildingType.TEMPLE: BuildingStats(
         cost=ResourceBag(wood=15, ore=10, crystal=5),
         hp=5,
         effect="+3 culture/turn",
+        required_tech="mysticism",
     ),
 }
-
-
-TechId = str
 
 
 class Tech(BaseModel):

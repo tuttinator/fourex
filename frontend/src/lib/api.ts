@@ -14,6 +14,7 @@ import type {
 	LobbyKeyResponse,
 	MessageListResponse,
 	MySubmissionResponse,
+	TechTreeResponse,
 	TrainableUnitsResponse,
 	TreatyClause,
 	TurnDetailResponse,
@@ -248,6 +249,12 @@ export const api = {
 		);
 	},
 
+	async getTechTree(gameId: string): Promise<TechTreeResponse> {
+		return fetchApi(`/games/${encodeURIComponent(gameId)}/tech-tree`, {
+			gameId,
+		});
+	},
+
 	async submitActions(
 		gameId: string,
 		actions: GameAction[],
@@ -460,6 +467,7 @@ export const queryKeys = {
 	turnPrompts: (gameId: string, turnNumber: number) =>
 		["game", gameId, "turn", turnNumber, "prompts"] as const,
 	diplomacy: (gameId: string) => ["game", gameId, "diplomacy"] as const,
+	techTree: (gameId: string) => ["game", gameId, "techTree"] as const,
 };
 
 // Utility functions

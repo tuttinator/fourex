@@ -1445,6 +1445,34 @@ def _enqueue_unit(
             action=action,
         )
 
+    # Phase 6: tech gate. The unit's ``required_tech`` must be in the
+    # player's ``completed`` set before we enqueue. Starter-tier techs are
+    # pre-completed at game creation via ``seed_research``, so units
+    # gated on starter techs (e.g. SOLDIER on bronze_working) stay
+    # buildable from turn 1. A missing tech is surfaced with a per-item
+    # message naming the gate so the UI / MCP agent can react. We
+    # ``_ensure_research_state`` to auto-seed starter techs for any
+    # player missing an entry — mirrors the resolver's behaviour so
+    # states built by test harnesses without ``seed_research`` still
+    # respect the gate with the expected starter set.
+    required_tech = UNIT_STATS[unit_type].required_tech
+    if required_tech is not None:
+        research = _ensure_research_state(state, city.owner)
+        if required_tech not in research.completed:
+            tech_name = (
+                TECH_TREE[required_tech].name
+                if required_tech in TECH_TREE
+                else required_tech
+            )
+            return ActionResult(
+                success=False,
+                message=(
+                    f"{unit_type.value} requires {tech_name} "
+                    f"({required_tech}) to be researched first"
+                ),
+                action=action,
+            )
+
     actual_cost = _unit_cost_for_city(city, unit_type)
     player_resources = state.stockpiles.get(city.owner, ResourceBag())
     if not player_resources.can_afford(actual_cost):
@@ -1608,6 +1636,31 @@ def _enqueue_building(
             message=f"City {city.id} already has {building_type}",
             action=action,
         )
+
+    # Phase 6: tech gate. Same semantics as ``_enqueue_unit`` — the
+    # building's ``required_tech`` must be in the player's ``completed``
+    # set. Starter techs are pre-completed, so gated-but-starter
+    # buildings (e.g. GRANARY on pottery) stay buildable from turn 1.
+    # ``_ensure_research_state`` auto-seeds the starter set for any
+    # missing entry so unit-test harnesses stay consistent with the
+    # resolver path.
+    required_tech = BUILDING_STATS[building_type].required_tech
+    if required_tech is not None:
+        research = _ensure_research_state(state, city.owner)
+        if required_tech not in research.completed:
+            tech_name = (
+                TECH_TREE[required_tech].name
+                if required_tech in TECH_TREE
+                else required_tech
+            )
+            return ActionResult(
+                success=False,
+                message=(
+                    f"{building_type.value} requires {tech_name} "
+                    f"({required_tech}) to be researched first"
+                ),
+                action=action,
+            )
 
     # Reject enqueueing the same building twice — a player pressing the
     # button twice is almost certainly a mistake, and the semantics of a
@@ -2329,14 +2382,22 @@ def get_trainable_units(state: GameState, city_id: int) -> list[dict]:
 
     Costs reflect the city's ``unit_cost_multiplier`` (BARRACKS discount).
     The list is exhaustive over ``UNIT_STATS`` so the UI can render every
-    variant and grey the unaffordable ones; ``affordable`` reflects the
-    city owner's current stockpile.
+    variant and grey the unaffordable/locked ones; ``affordable`` reflects
+    the city owner's current stockpile. Phase 6: ``locked`` and
+    ``required_tech`` surface the tech gate so the UI can render a
+    greyed-out "Requires: <tech name>" tooltip instead of silently hiding
+    entries.
     """
     city = state.get_city(city_id)
     if city is None:
         return []
     player_resources = state.stockpiles.get(city.owner, ResourceBag())
     cost_multiplier = city.unit_cost_multiplier()
+    research = state.research.get(city.owner)
+    # Match the enqueue-side semantics: a missing entry is treated as if
+    # the starter set were seeded (the resolver + enqueue helpers
+    # auto-seed via ``_ensure_research_state``).
+    completed: set[str] = set(research.completed) if research else set(STARTER_TECHS)
 
     results: list[dict] = []
     for unit_type, stats in UNIT_STATS.items():
@@ -2346,6 +2407,12 @@ def get_trainable_units(state: GameState, city_id: int) -> list[dict]:
             ore=int(stats.cost.ore * cost_multiplier),
             crystal=int(stats.cost.crystal * cost_multiplier),
         )
+        required_tech = stats.required_tech
+        locked = required_tech is not None and required_tech not in completed
+        required_tech_name: str | None = None
+        if required_tech is not None:
+            tech = TECH_TREE.get(required_tech)
+            required_tech_name = tech.name if tech is not None else required_tech
         results.append(
             {
                 "unit_type": unit_type.value,
@@ -2356,6 +2423,9 @@ def get_trainable_units(state: GameState, city_id: int) -> list[dict]:
                     "crystal": actual_cost.crystal,
                 },
                 "affordable": player_resources.can_afford(actual_cost),
+                "locked": locked,
+                "required_tech": required_tech,
+                "required_tech_name": required_tech_name,
                 "stats": {
                     "hp": stats.hp,
                     "moves": stats.moves,
@@ -2375,16 +2445,29 @@ def get_buildable_buildings(state: GameState, city_id: int) -> list[dict]:
     Exhaustive over ``BUILDING_STATS``. ``already_built`` flags buildings
     the city has; the UI hides/greys those. ``affordable`` reflects the
     city owner's current stockpile against the flat cost (no multipliers
-    apply to buildings today).
+    apply to buildings today). Phase 6: ``locked`` and ``required_tech``
+    surface the tech gate so the UI can render the greyed-out
+    "Requires: <tech name>" affordance the PRD specifies.
     """
     city = state.get_city(city_id)
     if city is None:
         return []
     player_resources = state.stockpiles.get(city.owner, ResourceBag())
+    research = state.research.get(city.owner)
+    # Mirror the enqueue-side auto-seed behaviour: a missing entry is
+    # treated as the starter set so the UI doesn't grey starter-gated
+    # buildings for games predating Phase 5's research population.
+    completed: set[str] = set(research.completed) if research else set(STARTER_TECHS)
 
     results: list[dict] = []
     for building_type, stats in BUILDING_STATS.items():
         already = building_type in city.buildings
+        required_tech = stats.required_tech
+        locked = required_tech is not None and required_tech not in completed
+        required_tech_name: str | None = None
+        if required_tech is not None:
+            tech = TECH_TREE.get(required_tech)
+            required_tech_name = tech.name if tech is not None else required_tech
         results.append(
             {
                 "building_type": building_type.value,
@@ -2397,6 +2480,9 @@ def get_buildable_buildings(state: GameState, city_id: int) -> list[dict]:
                 "affordable": player_resources.can_afford(stats.cost),
                 "already_built": already,
                 "effect": stats.effect,
+                "locked": locked,
+                "required_tech": required_tech,
+                "required_tech_name": required_tech_name,
             }
         )
     results.sort(key=lambda r: r["building_type"])

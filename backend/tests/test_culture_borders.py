@@ -3,11 +3,13 @@ Tests for Phase 1: Culture model and border expansion.
 """
 
 from backend.src.game.models import (
+    TECH_TREE,
     BuildBuildingAction,
     BuildingType,
     City,
     Coord,
     GameState,
+    ResearchState,
     ResourceBag,
     Terrain,
     Tile,
@@ -19,6 +21,14 @@ from backend.src.game.rules import (
     execute_build_building,
     resolve_turn,
 )
+
+
+def _seed_all_research(state: GameState, player: str) -> None:
+    """Mark every tech complete for a player so tests that build
+    non-starter-gated cultural buildings (MONUMENT/LIBRARY/TEMPLE) aren't
+    blocked by the Phase 6 gate. Keeps these legacy tests focused on
+    culture/border semantics rather than the tech gate itself."""
+    state.research[player] = ResearchState(completed=list(TECH_TREE.keys()))
 
 
 def _make_state_with_grid(width: int = 10, height: int = 10) -> GameState:
@@ -104,6 +114,7 @@ class TestBuildBuilding:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=20)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
@@ -123,6 +134,7 @@ class TestBuildBuilding:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=30, ore=10)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
 
@@ -138,6 +150,7 @@ class TestBuildBuilding:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=30, ore=20, crystal=10)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
 
@@ -152,6 +165,7 @@ class TestBuildBuilding:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=5)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
 
@@ -198,6 +212,7 @@ class TestBuildBuilding:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100, ore=50, crystal=20)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
 
@@ -497,6 +512,7 @@ class TestBuildBuildingInResolveTurn:
         state = _make_state_with_grid()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=20)
+        _seed_all_research(state, "p1")
         city = City(id=1, owner="p1", loc=Coord(x=5, y=5))
         state.cities[1] = city
         tile = state.get_tile(Coord(x=5, y=5))
