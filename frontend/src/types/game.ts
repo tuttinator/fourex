@@ -1,7 +1,7 @@
 export type PlayerId = string;
 
 export type Terrain = "plains" | "forest" | "mountain" | "water";
-export type Resource = "food" | "wood" | "ore" | "crystal";
+export type Resource = "food" | "wood" | "ore" | "crystal" | "science";
 export type UnitType = "scout" | "worker" | "soldier" | "archer";
 export type BuildingType =
 	| "granary"
@@ -27,6 +27,24 @@ export interface ResourceBag {
 	wood: number;
 	ore: number;
 	crystal: number;
+	science: number;
+}
+
+export type TechId = string;
+
+export interface Tech {
+	id: TechId;
+	name: string;
+	cost_science: number;
+	requires: TechId[];
+	unlocks_units: UnitType[];
+	unlocks_buildings: BuildingType[];
+}
+
+export interface ResearchState {
+	completed: TechId[];
+	active: TechId | null;
+	progress: number;
 }
 
 export interface Tile {
@@ -83,6 +101,7 @@ export interface GameState {
 	players: PlayerId[];
 	diplomacy: Record<string, DiplomaticState>;
 	stockpiles: Record<PlayerId, ResourceBag>;
+	research: Record<PlayerId, ResearchState>;
 	next_unit_id: number;
 	next_city_id: number;
 	max_turns: number;

@@ -441,6 +441,40 @@ async def broadcast_city_production_completed(
     )
 
 
+async def broadcast_research_completed(
+    game_id: str,
+    player_id: str,
+    tech_id: str,
+    turn: int,
+    unlocks_units: list[str],
+    unlocks_buildings: list[str],
+) -> None:
+    """Fan a research-completion event to the researching player only.
+
+    Phase 5 tech tree: when a player's active tech reaches its science
+    cost the tech moves from ``active`` to ``completed`` and this event
+    fires. Scoped to the owning player's connection because the
+    ``research`` state is private in ``redact_state`` — other players
+    cannot observe which techs have been completed without a future
+    mechanic (espionage/diplomacy leak) that Phase 5 deliberately omits.
+    The flat ``unlocks_*`` lists are carried on the event so the client
+    can surface a toast without re-fetching ``TECH_TREE``.
+    """
+    await _send_scoped(
+        game_id,
+        {
+            "type": "research.completed",
+            "game_id": game_id,
+            "player_id": player_id,
+            "tech_id": tech_id,
+            "turn": turn,
+            "unlocks_units": list(unlocks_units),
+            "unlocks_buildings": list(unlocks_buildings),
+        },
+        visible_to=(player_id,),
+    )
+
+
 async def broadcast_diplomacy_treaty_cancelled(
     game_id: str,
     treaty_id: int,

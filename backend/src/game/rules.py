@@ -11,6 +11,8 @@ from .models import (
     IMPROVEMENT_STATS,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
+    STARTER_TECHS,
+    TECH_TREE,
     TREATY_PROPOSAL_EXPIRY_TURNS,
     UNIT_PRODUCTION_COST,
     UNIT_STATS,
@@ -41,11 +43,14 @@ from .models import (
     ProposeTreatyAction,
     RecurringTributeClause,
     ReorderCityQueueAction,
+    ResearchCompletedEvent,
+    ResearchState,
     Resource,
     ResourceBag,
     ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
+    SetActiveResearchAction,
     SetCityProductionAction,
     Terrain,
     Tile,
@@ -250,6 +255,16 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
         for p in state.pending_proposals
         if p.proposer == player_id or p.recipient == player_id
     ]
+
+    # Phase 5: research state is strictly per-player. Third parties see
+    # nothing about what another player has researched or is researching,
+    # not even the fact that they have an active tech. The caller still
+    # sees their own state (or an empty ResearchState if the game
+    # predates research being populated).
+    own_research = state.research.get(player_id)
+    redacted.research = (
+        {player_id: own_research.model_copy(deep=True)} if own_research else {}
+    )
 
     return redacted
 
@@ -1929,6 +1944,7 @@ def collect_resources(state: GameState) -> None:
 
         current_resources = state.stockpiles.get(city.owner, ResourceBag())
         current_resources.food += food_production
+        current_resources.science += city.science_per_turn()
         state.stockpiles[city.owner] = current_resources
 
     # Collect yields from all owned tiles (within city borders)
@@ -2590,6 +2606,147 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
     return completions
 
 
+def _ensure_research_state(state: GameState, player_id: PlayerId) -> ResearchState:
+    """Return ``player_id``'s ``ResearchState``, creating+seeding if absent.
+
+    Games created before Phase 5 (or any code path that skipped the
+    seeding hook) may reach the resolver with no research entry for a
+    player. Auto-seeding with the starter-tech set keeps the deterministic
+    invariant — any replay starts from the same base — without forcing
+    every creation site to thread the init through.
+    """
+    research = state.research.get(player_id)
+    if research is None:
+        research = ResearchState(completed=list(STARTER_TECHS))
+        state.research[player_id] = research
+    return research
+
+
+def execute_set_active_research(
+    state: GameState, player_id: PlayerId, action: SetActiveResearchAction
+) -> ActionResult:
+    """Set the player's active research tech.
+
+    ``tech_id = None`` clears the active slot. Any non-None value is
+    validated: the tech must exist in ``TECH_TREE``, must not already be
+    completed, and every prerequisite must be completed. On a successful
+    switch between two in-progress techs, ``progress`` is clamped to the
+    new tech's ``cost_science`` — the invested science carries across
+    but cannot exceed the target cost.
+    """
+    research = _ensure_research_state(state, player_id)
+
+    if action.tech_id is None:
+        research.active = None
+        return ActionResult(
+            success=True,
+            message=f"{player_id} cleared active research (progress preserved).",
+            action=action,
+        )
+
+    tech = TECH_TREE.get(action.tech_id)
+    if tech is None:
+        return ActionResult(
+            success=False,
+            message=f"Unknown tech id: {action.tech_id}",
+            action=action,
+        )
+
+    if action.tech_id in research.completed:
+        return ActionResult(
+            success=False,
+            message=f"Tech {action.tech_id} already researched.",
+            action=action,
+        )
+
+    missing = [req for req in tech.requires if req not in research.completed]
+    if missing:
+        return ActionResult(
+            success=False,
+            message=(
+                f"Tech {action.tech_id} requires {missing} to be researched first."
+            ),
+            action=action,
+        )
+
+    research.active = action.tech_id
+    if research.progress > tech.cost_science:
+        research.progress = tech.cost_science
+    return ActionResult(
+        success=True,
+        message=(
+            f"{player_id} now researching {tech.name} "
+            f"({research.progress}/{tech.cost_science} science)."
+        ),
+        action=action,
+    )
+
+
+def advance_research(state: GameState) -> list[ResearchCompletedEvent]:
+    """Drain science stockpile into the active tech for each player.
+
+    Iterates players in sorted ``player_id`` order so replays stay
+    deterministic. The transfer is bounded by both the player's current
+    science stockpile and the remaining cost of the active tech, so a
+    tech never overshoots its cost and the player cannot "save up"
+    beyond what they have banked. Zero-cost techs (starter-tier-ish
+    cheap techs not seeded into ``completed``) complete immediately on
+    the turn they're set active.
+    """
+    completions: list[ResearchCompletedEvent] = []
+    for player_id in sorted(state.research.keys()):
+        research = state.research[player_id]
+        if research.active is None:
+            continue
+        tech = TECH_TREE.get(research.active)
+        if tech is None:
+            # Unknown tech id in state — clear the slot rather than
+            # stall forever. This shouldn't happen in well-formed states
+            # because ``execute_set_active_research`` rejects unknown ids.
+            research.active = None
+            research.progress = 0
+            continue
+
+        stockpile = state.stockpiles.get(player_id, ResourceBag())
+        remaining = tech.cost_science - research.progress
+        if remaining > 0:
+            transfer = min(stockpile.science, remaining)
+            if transfer > 0:
+                stockpile.science -= transfer
+                state.stockpiles[player_id] = stockpile
+                research.progress += transfer
+
+        if research.progress >= tech.cost_science:
+            completed_id = research.active
+            if completed_id not in research.completed:
+                research.completed.append(completed_id)
+            research.active = None
+            research.progress = 0
+            completions.append(
+                ResearchCompletedEvent(
+                    player_id=player_id,
+                    tech_id=completed_id,
+                    turn=state.turn,
+                    unlocks_units=list(tech.unlocks_units),
+                    unlocks_buildings=list(tech.unlocks_buildings),
+                )
+            )
+
+    return completions
+
+
+def seed_research(state: GameState, players: list[PlayerId]) -> None:
+    """Seed ``state.research`` for ``players`` with the starter-tech set.
+
+    Idempotent: existing entries are left untouched so re-runs (e.g.
+    adding a player to a ``created`` game after the others started) do
+    not reset research progress.
+    """
+    for player in players:
+        if player not in state.research:
+            state.research[player] = ResearchState(completed=list(STARTER_TECHS))
+
+
 def reset_unit_moves(state: GameState) -> None:
     """Reset movement points for all units at turn start."""
     for unit in state.units.values():
@@ -2675,6 +2832,8 @@ def resolve_turn(
                 result = execute_cancel_city_production(state, player_id, action)
             elif isinstance(action, ReorderCityQueueAction):
                 result = execute_reorder_city_queue(state, player_id, action)
+            elif isinstance(action, SetActiveResearchAction):
+                result = execute_set_active_research(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,
@@ -2713,6 +2872,16 @@ def resolve_turn(
     # Collect resources at end of turn
     collect_resources(state)
 
+    # Phase 5: drain per-player science stockpiles into active research.
+    # Runs after ``collect_resources`` so science produced this turn is
+    # immediately available to fund the active tech — matching the PRD's
+    # "income flows into progress each turn" framing. Auto-seeds research
+    # entries for any player missing one so replays of pre-Phase-5 games
+    # stay deterministic.
+    for player_id in state.players:
+        _ensure_research_state(state, player_id)
+    research_completed = advance_research(state)
+
     # Update each player's discovered-players set based on end-of-turn visibility.
     # Discovery is permanent; this only adds entries, never removes them.
     update_discovery(state)
@@ -2737,4 +2906,5 @@ def resolve_turn(
         state_hash=state.hash_state(),
         victory=victory if victory.victory_type != "none" else None,
         production_completed=production_completed,
+        research_completed=research_completed,
     )

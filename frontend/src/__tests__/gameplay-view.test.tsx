@@ -162,8 +162,12 @@ const sampleState: GameState = {
 	players: ["alice", "bob"],
 	diplomacy: {},
 	stockpiles: {
-		alice: { food: 50, wood: 50, ore: 10, crystal: 0 },
-		bob: { food: 0, wood: 0, ore: 0, crystal: 0 },
+		alice: { food: 50, wood: 50, ore: 10, crystal: 0, science: 0 },
+		bob: { food: 0, wood: 0, ore: 0, crystal: 0, science: 0 },
+	},
+	research: {
+		alice: { completed: [], active: null, progress: 0 },
+		bob: { completed: [], active: null, progress: 0 },
 	},
 	next_unit_id: 2,
 	next_city_id: 1,
@@ -993,7 +997,7 @@ describe("GameplayView", () => {
 			units: [
 				{
 					unit_type: "scout",
-					cost: { food: 10, wood: 5, ore: 0, crystal: 0 },
+					cost: { food: 10, wood: 5, ore: 0, crystal: 0, science: 0 },
 					affordable: true,
 					stats: { hp: 8, moves: 3, sight: 3, attack: 1, attack_range: 1 },
 				},

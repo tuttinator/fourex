@@ -18,6 +18,7 @@ from ..game.rules import (
     STARTING_STOCKPILE,
     generate_map,
     place_starting_units,
+    seed_research,
     update_discovery,
 )
 from .turn_resolution import check_and_resolve_turn
@@ -142,6 +143,7 @@ class PersistentGameController:
 
             state.players = list(players)
             state.stockpiles[player_id] = STARTING_STOCKPILE.model_copy()
+            seed_research(state, [player_id])
 
             # Avoid colliding with pre-placed unit ids from the original
             # create_game roster.
@@ -218,6 +220,7 @@ class PersistentGameController:
         # Initialize player stockpiles
         for player in players:
             state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
+        seed_research(state, players)
 
         # Place starting units
         self._place_starting_units(state, players, db_game.seed)
@@ -274,6 +277,7 @@ class PersistentGameController:
         # Initialize player stockpiles
         for player in players:
             state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
+        seed_research(state, players)
 
         # Place starting units
         self._place_starting_units(state, players, seed)

@@ -85,6 +85,7 @@ import type {
   GameState,
   PlayerId,
   QueuedAction,
+  ResearchState,
   ResourceBag,
   Tile,
   TrainableUnit,
@@ -178,6 +179,7 @@ const RESOURCE_META: Array<{
   { key: 'wood', emoji: '🪵', label: 'Wood' },
   { key: 'ore', emoji: '⛏️', label: 'Ore' },
   { key: 'crystal', emoji: '💎', label: 'Crystal' },
+  { key: 'science', emoji: '🔬', label: 'Science' },
 ]
 
 interface YieldBreakdown {
@@ -196,7 +198,13 @@ function computeYieldBreakdown(
   state: GameState,
   player: PlayerId,
 ): YieldBreakdown {
-  const total: ResourceBag = { food: 0, wood: 0, ore: 0, crystal: 0 }
+  const total: ResourceBag = {
+    food: 0,
+    wood: 0,
+    ore: 0,
+    crystal: 0,
+    science: 0,
+  }
   const lines: string[] = []
 
   const myCities = Object.values(state.cities).filter((c) => c.owner === player)
@@ -204,6 +212,15 @@ function computeYieldBreakdown(
     const cityFood = myCities.length * 2
     total.food += cityFood
     lines.push(`+${cityFood} food from ${myCities.length} city base`)
+
+    let cityScience = 0
+    for (const city of myCities) {
+      cityScience += 1
+      if (city.buildings.includes('library')) cityScience += 2
+      if (city.buildings.includes('temple')) cityScience += 1
+    }
+    total.science += cityScience
+    lines.push(`+${cityScience} science from ${myCities.length} city base`)
   }
 
   const cityTileKeys = new Set(
@@ -263,6 +280,52 @@ interface ResourceBarProps {
   yieldBreakdown: YieldBreakdown
 }
 
+interface ResearchIndicatorProps {
+  research: ResearchState | null
+  scienceStockpile: number
+  sciencePerTurn: number
+}
+
+/** Minimal Phase 5 research indicator. Shows the active tech and the
+ * accumulated progress in science points; the full tech-tree panel
+ * with click-to-select and an ETA-in-turns lands in Phase 6.
+ */
+function ResearchIndicator({
+  research,
+  scienceStockpile,
+  sciencePerTurn,
+}: ResearchIndicatorProps) {
+  const active = research?.active ?? null
+  const progress = research?.progress ?? 0
+  const label = active
+    ? active
+        .split('_')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+    : null
+
+  const tooltip = active
+    ? `Researching: ${label}\nProgress: ${progress} science\nStockpile: ${scienceStockpile} · +${sciencePerTurn}/turn`
+    : `No active research\nStockpile: ${scienceStockpile} · +${sciencePerTurn}/turn`
+
+  return (
+    <span
+      title={tooltip}
+      className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums"
+    >
+      <span aria-hidden="true">🔬</span>
+      {active ? (
+        <span>
+          Researching <span className="font-medium">{label}</span>
+          <span className="ml-1">({progress})</span>
+        </span>
+      ) : (
+        <span className="italic">No research</span>
+      )}
+    </span>
+  )
+}
+
 function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
   return (
     <div className="flex items-center gap-3 text-sm">
@@ -271,7 +334,8 @@ function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
         const delta = yieldBreakdown.total[key] ?? 0
         const relevantLines = yieldBreakdown.lines.filter((l) =>
           l.endsWith(` ${key} from tile yields`) ||
-          (key === 'food' && l.endsWith('city base')),
+          (key === 'food' && l.includes(' food from ') && l.endsWith('city base')) ||
+          (key === 'science' && l.includes(' science from ') && l.endsWith('city base')),
         )
         const tooltip =
           `${label}: ${amount}\n` +
@@ -921,9 +985,19 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                 wood: 0,
                 ore: 0,
                 crystal: 0,
+                science: 0,
               }
             }
             yieldBreakdown={computeYieldBreakdown(gameState, currentPlayer)}
+          />
+          <ResearchIndicator
+            research={gameState.research?.[currentPlayer] ?? null}
+            scienceStockpile={
+              gameState.stockpiles[currentPlayer]?.science ?? 0
+            }
+            sciencePerTurn={
+              computeYieldBreakdown(gameState, currentPlayer).total.science
+            }
           />
           <div className="text-xs text-muted-foreground">
             {Object.keys(gameState.units).length} units &middot;{' '}
@@ -2044,12 +2118,14 @@ function ProposeTreatyForm({
             wood: Math.max(0, Math.floor(proposerWood)),
             ore: Math.max(0, Math.floor(proposerOre)),
             crystal: Math.max(0, Math.floor(proposerCrystal)),
+            science: 0,
           },
           recipient_gives: {
             food: Math.max(0, Math.floor(recipientFood)),
             wood: Math.max(0, Math.floor(recipientWood)),
             ore: Math.max(0, Math.floor(recipientOre)),
             crystal: Math.max(0, Math.floor(recipientCrystal)),
+            science: 0,
           },
         }
       case 'recurring_tribute':
@@ -2061,6 +2137,7 @@ function ProposeTreatyForm({
             wood: Math.max(0, Math.floor(proposerWood)),
             ore: Math.max(0, Math.floor(proposerOre)),
             crystal: Math.max(0, Math.floor(proposerCrystal)),
+            science: 0,
           },
           duration_turns: clampedDuration,
           turns_remaining: clampedDuration,

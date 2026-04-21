@@ -37,6 +37,7 @@ from ..game.models import (
     ReorderCityQueueAction,
     RespondToTreatyAction,
     SendMessageAction,
+    SetActiveResearchAction,
     SetCityProductionAction,
     TrainUnitAction,
     WithdrawTreatyAction,
@@ -50,6 +51,7 @@ from .websocket import (
     broadcast_diplomacy_treaty_cancelled,
     broadcast_diplomacy_war_declared,
     broadcast_player_action,
+    broadcast_research_completed,
     broadcast_turn_end,
     broadcast_turn_resolved,
     broadcast_turn_start,
@@ -92,6 +94,8 @@ def parse_action(raw: dict[str, Any]) -> Action:
         return CancelCityProductionAction.model_validate(raw)
     elif action_type == "REORDER_CITY_QUEUE":
         return ReorderCityQueueAction.model_validate(raw)
+    elif action_type == "SET_ACTIVE_RESEARCH":
+        return SetActiveResearchAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 
@@ -213,6 +217,20 @@ async def check_and_resolve_turn(
             item_type=completion.type,
             target=completion.target,
             turn=completion.turn,
+        )
+
+    # Phase 5: fan out per-player research completions. Scoped to the
+    # researching player only — research state is private in
+    # ``redact_state`` so other players must not learn what anyone else
+    # has unlocked via the event stream either.
+    for research_event in turn_result.research_completed:
+        await broadcast_research_completed(
+            game_id,
+            player_id=research_event.player_id,
+            tech_id=research_event.tech_id,
+            turn=research_event.turn,
+            unlocks_units=[u.value for u in research_event.unlocks_units],
+            unlocks_buildings=[b.value for b in research_event.unlocks_buildings],
         )
 
     # Phase 7: emit one ``diplomacy.message_received`` per message the

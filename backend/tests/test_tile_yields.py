@@ -264,7 +264,9 @@ class TestCollectResources:
         _set_tile(state, 5, 6, owner="p1", city_id=city.id)
 
         collect_resources(state)
-        assert state.stockpiles["p1"] == ResourceBag(food=2)
+        # City still produces its base science (1/turn); tile contributes
+        # nothing because it carries no resource.
+        assert state.stockpiles["p1"] == ResourceBag(food=2, science=1)
 
     def test_improved_farm_yields_3_food(self):
         """Farm on a food tile within borders yields +3 food total."""

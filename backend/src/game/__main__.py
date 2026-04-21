@@ -25,6 +25,7 @@ from .rules import (
     generate_map,
     place_starting_units,
     resolve_turn,
+    seed_research,
     update_discovery,
 )
 
@@ -46,6 +47,7 @@ def create_test_game(players: list[PlayerId], seed: int) -> GameState:
     # Initialize player stockpiles with starting resources
     for player in players:
         state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
+    seed_research(state, players)
 
     # Place starting worker + scout for each player
     rng = random.Random(seed + 1000)

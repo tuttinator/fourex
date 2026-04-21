@@ -13,6 +13,7 @@ const makeGameState = (turn: number): GameState => ({
 	players: ["player_1", "player_2"],
 	diplomacy: {},
 	stockpiles: {},
+	research: {},
 	next_unit_id: 1,
 	next_city_id: 1,
 	max_turns: 100,

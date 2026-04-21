@@ -18,6 +18,7 @@ from ...game.rules import (
     calculate_scores,
     generate_map,
     place_starting_units,
+    seed_research,
     update_discovery,
 )
 
@@ -107,6 +108,7 @@ def register(mcp: FastMCP) -> None:
             # Initialise stockpiles
             for player in players:
                 state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
+            seed_research(state, list(players))
 
             # Place starting worker + scout per player
             rng = random.Random(seed)

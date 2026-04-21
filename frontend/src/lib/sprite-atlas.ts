@@ -20,6 +20,11 @@ const RESOURCE_SPRITE_URLS: Record<Resource, string> = {
   wood: '/sprites/resource-wood.svg',
   ore: '/sprites/resource-ore.svg',
   crystal: '/sprites/resource-crystal.svg',
+  // Science is a synthetic resource produced by cities; it never appears
+  // on a tile so this entry exists only to keep the `Record<Resource,...>`
+  // type exhaustive. Rendering code gates on `tile.resource` so this is
+  // never actually loaded.
+  science: '/sprites/resource-crystal.svg',
 }
 
 const UNIT_SPRITE_URLS: Record<UnitType, string> = {

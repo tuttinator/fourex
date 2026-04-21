@@ -17,6 +17,7 @@ from ..game.rules import (
     generate_map,
     place_starting_units,
     resolve_turn,
+    seed_research,
     update_discovery,
 )
 
@@ -55,6 +56,7 @@ class GameController:
         # Initialize player stockpiles
         for player in players:
             state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
+        seed_research(state, players)
 
         # Place starting worker + scout per player
         rng = random.Random(seed)

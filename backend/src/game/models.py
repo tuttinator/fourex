@@ -28,6 +28,7 @@ class Resource(str, Enum):
     WOOD = "wood"
     ORE = "ore"
     CRYSTAL = "crystal"
+    SCIENCE = "science"
 
 
 class UnitType(str, Enum):
@@ -117,6 +118,7 @@ class ResourceBag(BaseModel):
     wood: int = 0
     ore: int = 0
     crystal: int = 0
+    science: int = 0
 
     def __add__(self, other: ResourceBag) -> ResourceBag:
         return ResourceBag(
@@ -124,6 +126,7 @@ class ResourceBag(BaseModel):
             wood=self.wood + other.wood,
             ore=self.ore + other.ore,
             crystal=self.crystal + other.crystal,
+            science=self.science + other.science,
         )
 
     def __sub__(self, other: ResourceBag) -> ResourceBag:
@@ -132,6 +135,7 @@ class ResourceBag(BaseModel):
             wood=self.wood - other.wood,
             ore=self.ore - other.ore,
             crystal=self.crystal - other.crystal,
+            science=self.science - other.science,
         )
 
     def can_afford(self, cost: ResourceBag) -> bool:
@@ -141,6 +145,7 @@ class ResourceBag(BaseModel):
             and self.wood >= cost.wood
             and self.ore >= cost.ore
             and self.crystal >= cost.crystal
+            and self.science >= cost.science
         )
 
 
@@ -265,6 +270,99 @@ BUILDING_STATS = {
 }
 
 
+TechId = str
+
+
+class Tech(BaseModel):
+    """Static record describing a single tech in the tech tree.
+
+    ``requires`` lists the prerequisite tech ids; a tech is researchable
+    once every prereq is in the player's ``completed`` set. Starter techs
+    have an empty ``requires`` list and are pre-populated into every
+    player's ``completed`` set at game creation so turn 1 is playable.
+    """
+
+    id: TechId
+    name: str
+    cost_science: int
+    requires: list[TechId] = Field(default_factory=list)
+    unlocks_units: list[UnitType] = Field(default_factory=list)
+    unlocks_buildings: list[BuildingType] = Field(default_factory=list)
+
+
+# Static tech-tree graph. Phase 5 establishes the resource flow + research
+# loop without gating any gameplay yet (``required_tech`` on units and
+# buildings lands in Phase 6). The starter tier (empty ``requires``) is
+# seeded into every player's ``completed`` set at game creation.
+TECH_TREE: dict[TechId, Tech] = {
+    "pottery": Tech(
+        id="pottery",
+        name="Pottery",
+        cost_science=0,
+        requires=[],
+        unlocks_buildings=[BuildingType.GRANARY],
+    ),
+    "bronze_working": Tech(
+        id="bronze_working",
+        name="Bronze Working",
+        cost_science=0,
+        requires=[],
+        unlocks_units=[UnitType.SOLDIER],
+        unlocks_buildings=[BuildingType.BARRACKS],
+    ),
+    "masonry": Tech(
+        id="masonry",
+        name="Masonry",
+        cost_science=10,
+        requires=["bronze_working"],
+        unlocks_buildings=[BuildingType.WALLS],
+    ),
+    "archery": Tech(
+        id="archery",
+        name="Archery",
+        cost_science=10,
+        requires=["bronze_working"],
+        unlocks_units=[UnitType.ARCHER],
+    ),
+    "writing": Tech(
+        id="writing",
+        name="Writing",
+        cost_science=15,
+        requires=["pottery"],
+        unlocks_buildings=[BuildingType.LIBRARY, BuildingType.MONUMENT],
+    ),
+    "mysticism": Tech(
+        id="mysticism",
+        name="Mysticism",
+        cost_science=20,
+        requires=["writing"],
+        unlocks_buildings=[BuildingType.TEMPLE],
+    ),
+}
+
+
+STARTER_TECHS: list[TechId] = [
+    tech.id for tech in TECH_TREE.values() if not tech.requires
+]
+
+
+class ResearchState(BaseModel):
+    """Per-player research state.
+
+    ``completed`` tracks every tech the player has finished (starter techs
+    are seeded here at game creation). ``active`` is the currently-chosen
+    tech — ``None`` means no research is accruing. ``progress`` is the
+    science points accumulated toward the active tech; on completion it
+    resets to 0 and ``active`` clears. Switching ``active`` mid-research
+    preserves ``progress`` (it applies to whichever tech is active next,
+    clamped to that tech's cost).
+    """
+
+    completed: list[TechId] = Field(default_factory=list)
+    active: TechId | None = None
+    progress: int = 0
+
+
 class Tile(BaseModel):
     """Map tile with terrain, resources, and occupants."""
 
@@ -322,6 +420,13 @@ CITY_BASE_PRODUCTION_RATE = 2
 BARRACKS_UNIT_PRODUCTION_BONUS = 1
 
 
+# Per-turn science income from a city. Library and Temple add on top of
+# the base trickle — see ``City.science_per_turn``.
+CITY_BASE_SCIENCE_PER_TURN = 1
+LIBRARY_SCIENCE_BONUS = 2
+TEMPLE_SCIENCE_BONUS = 1
+
+
 class BuildJob(BaseModel):
     """Building/unit construction job.
 
@@ -372,6 +477,22 @@ class City(BaseModel):
         if BuildingType.TEMPLE in self.buildings:
             culture += 3
         return culture
+
+    def science_per_turn(self) -> int:
+        """Science output per turn from base + culture-building bonuses.
+
+        Phase 5 wires science as a first-class resource. Every city
+        contributes a base trickle so a player without Library or Temple
+        still makes progress on research; Library and Temple add on top
+        of that — the same buildings that boost culture also fuel
+        research, reinforcing the "invest in culture" lever.
+        """
+        science = CITY_BASE_SCIENCE_PER_TURN
+        if BuildingType.LIBRARY in self.buildings:
+            science += LIBRARY_SCIENCE_BONUS
+        if BuildingType.TEMPLE in self.buildings:
+            science += TEMPLE_SCIENCE_BONUS
+        return science
 
     def production_per_turn(self, job_kind: str = "unit") -> int:
         """Production points this city accrues per turn for ``job_kind``.
@@ -599,6 +720,7 @@ class GameState(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     pending_proposals: list[TreatyProposal] = Field(default_factory=list)
     active_treaties: list[Treaty] = Field(default_factory=list)
+    research: dict[PlayerId, ResearchState] = Field(default_factory=dict)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -781,6 +903,20 @@ class ReorderCityQueueAction(BaseModel):
     new_order: list[int]
 
 
+class SetActiveResearchAction(BaseModel):
+    """Set the player's active research tech.
+
+    ``tech_id`` must be a real tech in ``TECH_TREE``, not already in the
+    player's ``completed`` set, and must have all its prerequisites
+    completed. Passing ``None`` clears the active slot without
+    forfeiting accumulated ``progress`` — progress sits with the player
+    and re-applies to whatever tech is active next (clamped to its cost).
+    """
+
+    type: str = "SET_ACTIVE_RESEARCH"
+    tech_id: TechId | None = None
+
+
 Action = (
     MoveAction
     | AttackAction
@@ -797,6 +933,7 @@ Action = (
     | SetCityProductionAction
     | CancelCityProductionAction
     | ReorderCityQueueAction
+    | SetActiveResearchAction
 )
 
 
@@ -818,6 +955,22 @@ class ProductionCompletedEvent(BaseModel):
     turn: int
 
 
+class ResearchCompletedEvent(BaseModel):
+    """A player completed a tech during this turn's resolution.
+
+    Scoped to the researching player's WebSocket connection only —
+    research state is private per ``redact_state``. Carries the flat
+    unlock lists so the client can surface "X is now buildable" without
+    re-fetching ``TECH_TREE``.
+    """
+
+    player_id: PlayerId
+    tech_id: TechId
+    turn: int
+    unlocks_units: list[UnitType] = Field(default_factory=list)
+    unlocks_buildings: list[BuildingType] = Field(default_factory=list)
+
+
 class TurnResult(BaseModel):
     """Result of processing a complete turn."""
 
@@ -826,3 +979,4 @@ class TurnResult(BaseModel):
     state_hash: str
     victory: VictoryResult | None = None
     production_completed: list[ProductionCompletedEvent] = Field(default_factory=list)
+    research_completed: list[ResearchCompletedEvent] = Field(default_factory=list)

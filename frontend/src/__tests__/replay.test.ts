@@ -76,8 +76,12 @@ const mockGameState: GameState = {
 	players: ["alice", "bob"],
 	diplomacy: {},
 	stockpiles: {
-		alice: { food: 100, wood: 50, ore: 30, crystal: 10 },
-		bob: { food: 80, wood: 60, ore: 20, crystal: 5 },
+		alice: { food: 100, wood: 50, ore: 30, crystal: 10, science: 0 },
+		bob: { food: 80, wood: 60, ore: 20, crystal: 5, science: 0 },
+	},
+	research: {
+		alice: { completed: [], active: null, progress: 0 },
+		bob: { completed: [], active: null, progress: 0 },
 	},
 	next_unit_id: 2,
 	next_city_id: 1,

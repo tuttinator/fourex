@@ -20,6 +20,7 @@ from ...auth import AuthError, authenticate
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
 from ...game.models import (
+    TECH_TREE,
     Action,
     AttackAction,
     BuildBuildingAction,
@@ -32,8 +33,10 @@ from ...game.models import (
     MoveAction,
     ProposeTreatyAction,
     ReorderCityQueueAction,
+    ResearchState,
     RespondToTreatyAction,
     SendMessageAction,
+    SetActiveResearchAction,
     SetCityProductionAction,
     TrainUnitAction,
     WithdrawTreatyAction,
@@ -60,6 +63,7 @@ def _validate_actions_against_state(
         execute_reorder_city_queue,
         execute_respond_to_treaty,
         execute_send_message,
+        execute_set_active_research,
         execute_set_city_production,
         execute_train_unit,
         execute_withdraw_treaty,
@@ -102,6 +106,8 @@ def _validate_actions_against_state(
             r = execute_cancel_city_production(test_state, player_id, action)
         elif isinstance(action, ReorderCityQueueAction):
             r = execute_reorder_city_queue(test_state, player_id, action)
+        elif isinstance(action, SetActiveResearchAction):
+            r = execute_set_active_research(test_state, player_id, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}
@@ -187,7 +193,7 @@ def register(mcp: FastMCP) -> None:
                 BUILD_IMPROVEMENT, BUILD_BUILDING, SET_CITY_PRODUCTION,
                 CANCEL_CITY_PRODUCTION, REORDER_CITY_QUEUE, DECLARE_WAR,
                 SEND_MESSAGE, PROPOSE_TREATY, RESPOND_TO_TREATY,
-                WITHDRAW_TREATY, CANCEL_TREATY.
+                WITHDRAW_TREATY, CANCEL_TREATY, SET_ACTIVE_RESEARCH.
 
         Returns:
             Confirmation of submission and whether the turn resolved.
@@ -444,4 +450,68 @@ def register(mcp: FastMCP) -> None:
             "seconds_remaining": (
                 round(seconds_remaining, 1) if seconds_remaining is not None else None
             ),
+        }
+
+    @mcp.tool(
+        name="get_tech_tree",
+        description=(
+            "Return the full static tech graph plus the caller's research "
+            "state (completed techs, active tech, and accumulated science "
+            "progress). Read-only — use set_active_research via "
+            "submit_actions to change research focus."
+        ),
+        annotations=ToolAnnotations(
+            title="Get Tech Tree",
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["gameplay", "research", "query"]},
+    )
+    async def get_tech_tree(api_key: str) -> dict[str, Any]:
+        """Return the tech graph plus the caller's research state.
+
+        Args:
+            api_key: Your player API key.
+
+        Returns:
+            ``tech_tree``: dict of ``tech_id -> {name, cost_science,
+            requires, unlocks_units, unlocks_buildings}`` covering every
+            tech in the game. ``research``: the caller's completed set,
+            active tech (or null), and accumulated science progress.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+            state = GameState.model_validate(game.state)
+            research = state.research.get(auth.player_id) or ResearchState()
+
+        tech_tree_dump = {
+            tech_id: {
+                "id": tech.id,
+                "name": tech.name,
+                "cost_science": tech.cost_science,
+                "requires": list(tech.requires),
+                "unlocks_units": [u.value for u in tech.unlocks_units],
+                "unlocks_buildings": [b.value for b in tech.unlocks_buildings],
+            }
+            for tech_id, tech in TECH_TREE.items()
+        }
+
+        return {
+            "game_id": auth.game_id,
+            "player": auth.player_id,
+            "tech_tree": tech_tree_dump,
+            "research": {
+                "completed": list(research.completed),
+                "active": research.active,
+                "progress": research.progress,
+            },
         }

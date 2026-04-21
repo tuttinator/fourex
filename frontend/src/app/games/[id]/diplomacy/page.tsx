@@ -200,7 +200,7 @@ function bagIsValid(bag: ResourceBag | undefined): boolean {
 }
 
 function emptyBag(): ResourceBag {
-  return { food: 0, wood: 0, ore: 0, crystal: 0 }
+  return { food: 0, wood: 0, ore: 0, crystal: 0, science: 0 }
 }
 
 const BAG_KEYS: (keyof ResourceBag)[] = ['food', 'wood', 'ore', 'crystal']
