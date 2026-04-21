@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <!-- fortress: walled city. Selected when the 'walls' building is built, -->
+  <!-- regardless of total building count. -->
+  <!-- outer walls (left + right) -->
+  <rect x="1" y="14" width="3" height="10" fill="#7e7e7e"/>
+  <rect x="28" y="14" width="3" height="10" fill="#7e7e7e"/>
+  <!-- wall crenellations -->
+  <rect x="1" y="12" width="1" height="2" fill="#7e7e7e"/>
+  <rect x="3" y="12" width="1" height="2" fill="#7e7e7e"/>
+  <rect x="28" y="12" width="1" height="2" fill="#7e7e7e"/>
+  <rect x="30" y="12" width="1" height="2" fill="#7e7e7e"/>
+  <!-- front wall with gate -->
+  <rect x="4" y="18" width="24" height="6" fill="#8b8b8b"/>
+  <rect x="4" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <rect x="8" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <rect x="12" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <rect x="18" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <rect x="22" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <rect x="26" y="17" width="2" height="1" fill="#8b8b8b"/>
+  <!-- gate -->
+  <rect x="14" y="19" width="4" height="5" fill="#3a230d"/>
+  <rect x="14" y="19" width="4" height="1" fill="#2a1808"/>
+  <!-- central keep behind walls -->
+  <rect x="12" y="7" width="8" height="11" fill="#9e8660"/>
+  <rect x="12" y="7" width="1" height="11" fill="#7d6a4d"/>
+  <rect x="19" y="7" width="1" height="11" fill="#7d6a4d"/>
+  <rect x="11" y="5" width="2" height="2" fill="#8b7555"/>
+  <rect x="14" y="5" width="2" height="2" fill="#8b7555"/>
+  <rect x="17" y="5" width="2" height="2" fill="#8b7555"/>
+  <rect x="19" y="5" width="2" height="2" fill="#8b7555"/>
+  <rect x="11" y="7" width="10" height="1" fill="#8b7555"/>
+  <rect x="14" y="11" width="1" height="2" fill="#2a1f14"/>
+  <rect x="17" y="11" width="1" height="2" fill="#2a1f14"/>
+  <!-- banner on keep -->
+  <rect x="15" y="2" width="1" height="5" fill="#5a3a14"/>
+  <rect x="16" y="2" width="3" height="3" fill="#c62828"/>
+  <!-- ground -->
+  <rect x="0" y="24" width="32" height="1" fill="#5a432a"/>
+</svg>

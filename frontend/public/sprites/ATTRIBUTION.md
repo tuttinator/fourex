@@ -17,6 +17,25 @@ licence. Attribution is not required.
 | `resource-wood.svg`    | Wood resource indicator | 16×16 |
 | `resource-ore.svg`     | Ore resource indicator  | 16×16 |
 | `resource-crystal.svg` | Crystal resource icon   | 16×16 |
+| `unit-scout.svg`       | Scout unit              | 32×32 |
+| `unit-worker.svg`      | Worker unit             | 32×32 |
+| `unit-soldier.svg`     | Soldier unit            | 32×32 |
+| `unit-archer.svg`      | Archer unit             | 32×32 |
+| `unit-banner.svg`      | Per-player tint frame for units (white; tinted at render) | 32×32 |
+| `city-outpost.svg`     | City variant — frontier outpost (0–1 buildings, no walls) | 32×32 |
+| `city-town.svg`        | City variant — two-building town (no walls)               | 32×32 |
+| `city-fortress.svg`    | City variant — walled fortress (walls ∈ buildings)        | 32×32 |
+| `city-banner.svg`      | Per-player tint frame for cities (white; tinted at render) | 32×32 |
+| `building-granary.svg` | Granary indicator                                         | 10×10 |
+| `building-barracks.svg`| Barracks indicator                                        | 10×10 |
+| `building-walls.svg`   | Walls indicator                                           | 10×10 |
+| `building-monument.svg`| Monument indicator                                        | 10×10 |
+| `building-library.svg` | Library indicator                                         | 10×10 |
+| `building-temple.svg`  | Temple indicator                                          | 10×10 |
+| `improvement-farm.svg` | Farm worker improvement                                   | 20×20 |
+| `improvement-mine.svg` | Mine worker improvement                                   | 20×20 |
+| `improvement-lumber-mill.svg`       | Lumber-mill worker improvement               | 20×20 |
+| `improvement-crystal-extractor.svg` | Crystal-extractor worker improvement         | 20×20 |
 
 ## Swapping in a different pack
 

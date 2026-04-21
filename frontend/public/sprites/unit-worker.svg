@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <!-- worker: hard-hat builder with pickaxe -->
+  <!-- hard hat -->
+  <rect x="13" y="5" width="6" height="2" fill="#f9b233"/>
+  <rect x="12" y="7" width="8" height="1" fill="#f9b233"/>
+  <!-- face -->
+  <rect x="14" y="8" width="4" height="3" fill="#e8d6a5"/>
+  <!-- torso: blue overalls -->
+  <rect x="12" y="11" width="8" height="7" fill="#1976d2"/>
+  <rect x="15" y="12" width="2" height="6" fill="#e8d6a5"/>
+  <!-- belt -->
+  <rect x="12" y="17" width="8" height="1" fill="#0d47a1"/>
+  <!-- legs -->
+  <rect x="12" y="18" width="3" height="6" fill="#0d47a1"/>
+  <rect x="17" y="18" width="3" height="6" fill="#0d47a1"/>
+  <!-- boots -->
+  <rect x="11" y="24" width="4" height="2" fill="#3e2a14"/>
+  <rect x="17" y="24" width="4" height="2" fill="#3e2a14"/>
+  <!-- pickaxe shaft -->
+  <rect x="22" y="9" width="1" height="10" fill="#8a5a1b"/>
+  <!-- pickaxe head -->
+  <rect x="20" y="8" width="5" height="2" fill="#9e9e9e"/>
+  <rect x="21" y="7" width="3" height="1" fill="#bdbdbd"/>
+</svg>

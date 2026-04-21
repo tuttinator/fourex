@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" shape-rendering="crispEdges">
+  <!-- farm: ploughed furrows with crops -->
+  <rect x="1" y="4" width="18" height="14" fill="#8a5a1b"/>
+  <!-- furrow lines -->
+  <rect x="1" y="6" width="18" height="1" fill="#6b4513"/>
+  <rect x="1" y="10" width="18" height="1" fill="#6b4513"/>
+  <rect x="1" y="14" width="18" height="1" fill="#6b4513"/>
+  <!-- crops -->
+  <rect x="3" y="4" width="1" height="2" fill="#ffd700"/>
+  <rect x="7" y="4" width="1" height="2" fill="#ffd700"/>
+  <rect x="11" y="4" width="1" height="2" fill="#ffd700"/>
+  <rect x="15" y="4" width="1" height="2" fill="#ffd700"/>
+  <rect x="3" y="8" width="1" height="2" fill="#ffd700"/>
+  <rect x="7" y="8" width="1" height="2" fill="#ffd700"/>
+  <rect x="11" y="8" width="1" height="2" fill="#ffd700"/>
+  <rect x="15" y="8" width="1" height="2" fill="#ffd700"/>
+  <rect x="3" y="12" width="1" height="2" fill="#ffd700"/>
+  <rect x="7" y="12" width="1" height="2" fill="#ffd700"/>
+  <rect x="11" y="12" width="1" height="2" fill="#ffd700"/>
+  <rect x="15" y="12" width="1" height="2" fill="#ffd700"/>
+</svg>

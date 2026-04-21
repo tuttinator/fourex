@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" shape-rendering="crispEdges">
+  <!-- lumber mill: sawmill shed with a waterwheel -->
+  <!-- shed body -->
+  <rect x="3" y="8" width="12" height="9" fill="#8a5a1b"/>
+  <!-- shed roof -->
+  <polygon points="2,8 9,3 16,8" fill="#4a2f14"/>
+  <!-- door -->
+  <rect x="7" y="12" width="4" height="5" fill="#2a1f14"/>
+  <!-- planks texture -->
+  <rect x="3" y="10" width="12" height="1" fill="#6b4513"/>
+  <rect x="3" y="14" width="12" height="1" fill="#6b4513"/>
+  <!-- waterwheel -->
+  <rect x="15" y="10" width="4" height="6" fill="#7e7e7e"/>
+  <rect x="16" y="9" width="2" height="1" fill="#5a5a5a"/>
+  <rect x="16" y="16" width="2" height="1" fill="#5a5a5a"/>
+  <rect x="15" y="12" width="4" height="1" fill="#5a5a5a"/>
+  <rect x="15" y="13" width="4" height="1" fill="#5a5a5a"/>
+</svg>

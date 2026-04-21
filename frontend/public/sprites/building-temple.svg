@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" shape-rendering="crispEdges">
+  <!-- temple: columned shrine with pediment -->
+  <polygon points="0,3 5,0 10,3" fill="#fbcfe8"/>
+  <rect x="0" y="3" width="10" height="1" fill="#f472b6"/>
+  <!-- columns -->
+  <rect x="1" y="4" width="2" height="5" fill="#fde4f1"/>
+  <rect x="4" y="4" width="2" height="5" fill="#fde4f1"/>
+  <rect x="7" y="4" width="2" height="5" fill="#fde4f1"/>
+  <!-- base -->
+  <rect x="0" y="9" width="10" height="1" fill="#f472b6"/>
+</svg>

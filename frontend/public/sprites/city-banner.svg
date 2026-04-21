@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <!-- 32x32 player-colour frame for city tiles. Drawn pure white so -->
+  <!-- Pixi.tint paints the player colour without bleed. -->
+  <!-- top edge -->
+  <rect x="2" y="2" width="28" height="2" fill="#ffffff"/>
+  <!-- bottom edge -->
+  <rect x="2" y="28" width="28" height="2" fill="#ffffff"/>
+  <!-- left edge -->
+  <rect x="2" y="2" width="2" height="28" fill="#ffffff"/>
+  <!-- right edge -->
+  <rect x="28" y="2" width="2" height="28" fill="#ffffff"/>
+</svg>

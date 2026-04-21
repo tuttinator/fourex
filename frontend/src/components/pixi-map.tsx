@@ -2,25 +2,19 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react'
 import type { MapCanvasProps, Tile } from '@/types/game'
-import { TERRAIN_COLORS, UNIT_COLORS, PLAYER_COLORS } from '@/types/game'
-import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js'
-import { loadSpriteAtlas, type SpriteAtlas } from '@/lib/sprite-atlas'
+import { TERRAIN_COLORS, PLAYER_COLORS } from '@/types/game'
+import { Application, Container, Graphics, Sprite } from 'pixi.js'
+import {
+  cityVariantFor,
+  loadSpriteAtlas,
+  type SpriteAtlas,
+} from '@/lib/sprite-atlas'
 
 const TILE_SIZE = 32
 const RESOURCE_SPRITE_SIZE = 14
-
-const UNIT_ICONS: Record<string, string> = {
-  scout: 'Sc',
-  worker: 'Wk',
-  soldier: 'So',
-  archer: 'Ar',
-}
-
-const IMPROVEMENT_ICONS: Record<string, string> = {
-  farm: '~',
-  mine: '^',
-  crystal_extractor: '*',
-}
+const IMPROVEMENT_SPRITE_SIZE = 20
+const CITY_SPRITE_SIZE = 32
+const BUILDING_INDICATOR_SIZE = 10
 
 function hexToNumber(hex: string): number {
   return parseInt(hex.replace('#', ''), 16)
@@ -222,22 +216,17 @@ export function PixiMap({
       world.addChild(sprite)
     }
 
-    // Improvements
-    const improvementStyle = new TextStyle({
-      fontFamily: 'monospace',
-      fontSize: 10,
-      fill: 0xcccccc,
-    })
+    // Improvements — sprite per tile, bottom-left anchored (Phase 2).
     for (const tile of tiles) {
-      if (tile.improvement) {
-        const label = new Text({
-          text: IMPROVEMENT_ICONS[tile.improvement] || '?',
-          style: improvementStyle,
-        })
-        label.x = tile.loc.x * TILE_SIZE + 2
-        label.y = tile.loc.y * TILE_SIZE + TILE_SIZE - 13
-        world.addChild(label)
-      }
+      if (!tile.improvement) continue
+      const texture = atlas?.improvement[tile.improvement]
+      if (!texture) continue
+      const sprite = new Sprite(texture)
+      sprite.width = IMPROVEMENT_SPRITE_SIZE
+      sprite.height = IMPROVEMENT_SPRITE_SIZE
+      sprite.x = tile.loc.x * TILE_SIZE + 1
+      sprite.y = tile.loc.y * TILE_SIZE + TILE_SIZE - IMPROVEMENT_SPRITE_SIZE - 1
+      world.addChild(sprite)
     }
 
     // Owner borders
@@ -256,57 +245,61 @@ export function PixiMap({
     }
     world.addChild(ownerGfx)
 
-    // Cities
-    const cityLabelStyle = new TextStyle({
-      fontFamily: 'monospace',
-      fontSize: 9,
-      fill: 0xffffff,
-      fontWeight: 'bold',
-    })
+    // Cities — variant sprite + player-coloured banner overlay + per-building
+    // indicator sprites arranged around the tile (Phase 2).
     for (const city of Object.values(cities)) {
-      const cx = city.loc.x * TILE_SIZE + TILE_SIZE / 2
-      const cy = city.loc.y * TILE_SIZE + TILE_SIZE / 2
+      const tileX = city.loc.x * TILE_SIZE
+      const tileY = city.loc.y * TILE_SIZE
+      const cx = tileX + TILE_SIZE / 2
+      const cy = tileY + TILE_SIZE / 2
       const playerIndex = players.indexOf(city.owner)
-      const colour = hexToNumber(PLAYER_COLORS[playerIndex] ?? '#666666')
+      const playerColour = hexToNumber(PLAYER_COLORS[playerIndex] ?? '#666666')
+      const variant = cityVariantFor(city.buildings)
 
-      const cityGfx = new Graphics()
-      // Outer circle
-      cityGfx.circle(cx, cy, 12)
-      cityGfx.fill(colour)
-      cityGfx.setStrokeStyle({ width: 1.5, color: 0x000000 })
-      cityGfx.circle(cx, cy, 12)
-      cityGfx.stroke()
-
-      // Building indicators as small dots around the city
-      if (city.buildings.length > 0) {
-        const buildingColours: Record<string, number> = {
-          granary: 0xffd700,
-          barracks: 0xff4444,
-          walls: 0x888888,
-          monument: 0xd8b4fe,
-          library: 0x93c5fd,
-          temple: 0xfbcfe8,
-        }
-        city.buildings.forEach((b, i) => {
-          const angle = (i * 2 * Math.PI) / Math.max(city.buildings.length, 3) - Math.PI / 2
-          const bx = cx + Math.cos(angle) * 9
-          const by = cy + Math.sin(angle) * 9
-          cityGfx.circle(bx, by, 2)
-          cityGfx.fill(buildingColours[b] ?? 0xffffff)
-        })
+      const cityTexture = atlas?.city[variant]
+      if (cityTexture) {
+        const sprite = new Sprite(cityTexture)
+        sprite.width = CITY_SPRITE_SIZE
+        sprite.height = CITY_SPRITE_SIZE
+        sprite.x = tileX
+        sprite.y = tileY
+        world.addChild(sprite)
+      } else {
+        // Atlas still loading — keep tile readable with a coloured disc.
+        const fallback = new Graphics()
+        fallback.circle(cx, cy, 12)
+        fallback.fill(playerColour)
+        world.addChild(fallback)
       }
 
-      world.addChild(cityGfx)
+      // Player-colour banner overlay (tinted white frame).
+      if (atlas?.overlay.cityBanner) {
+        const banner = new Sprite(atlas.overlay.cityBanner)
+        banner.width = TILE_SIZE
+        banner.height = TILE_SIZE
+        banner.x = tileX
+        banner.y = tileY
+        banner.tint = playerColour
+        world.addChild(banner)
+      }
 
-      // HP text
-      const hpLabel = new Text({
-        text: city.hp.toString(),
-        style: cityLabelStyle,
-      })
-      hpLabel.anchor.set(0.5, 0.5)
-      hpLabel.x = cx
-      hpLabel.y = cy
-      world.addChild(hpLabel)
+      // Per-building indicator sprites arranged in a ring around the city.
+      if (city.buildings.length > 0 && atlas) {
+        city.buildings.forEach((b, i) => {
+          const texture = atlas.building[b]
+          if (!texture) return
+          const angle =
+            (i * 2 * Math.PI) / Math.max(city.buildings.length, 3) - Math.PI / 2
+          const bx = cx + Math.cos(angle) * 14 - BUILDING_INDICATOR_SIZE / 2
+          const by = cy + Math.sin(angle) * 14 - BUILDING_INDICATOR_SIZE / 2
+          const sprite = new Sprite(texture)
+          sprite.width = BUILDING_INDICATOR_SIZE
+          sprite.height = BUILDING_INDICATOR_SIZE
+          sprite.x = bx
+          sprite.y = by
+          world.addChild(sprite)
+        })
+      }
     }
 
     // Highlight overlay for queued-move target tiles (Phase 4)
@@ -353,38 +346,41 @@ export function PixiMap({
       }
     }
 
-    // Units
-    const unitLabelStyle = new TextStyle({
-      fontFamily: 'monospace',
-      fontSize: 8,
-      fill: 0xffffff,
-      fontWeight: 'bold',
-    })
+    // Units — per-type sprite with a tinted player-colour banner overlay
+    // underneath (Phase 2). The base sprite is distinct per unit type so
+    // silhouette reads at a glance; the banner provides the player-colour
+    // cue that survives on contested / shared tiles.
     for (const unit of Object.values(units)) {
       const ux = unit.loc.x * TILE_SIZE
       const uy = unit.loc.y * TILE_SIZE
       const playerIndex = players.indexOf(unit.owner)
-      const unitColour = hexToNumber(UNIT_COLORS[unit.type])
       const playerColour = hexToNumber(PLAYER_COLORS[playerIndex] ?? '#666666')
 
-      const unitGfx = new Graphics()
-      // Unit rectangle with player colour border
-      unitGfx.roundRect(ux + 5, uy + 5, TILE_SIZE - 10, TILE_SIZE - 10, 3)
-      unitGfx.fill(unitColour)
-      unitGfx.setStrokeStyle({ width: 1.5, color: playerColour })
-      unitGfx.roundRect(ux + 5, uy + 5, TILE_SIZE - 10, TILE_SIZE - 10, 3)
-      unitGfx.stroke()
-      world.addChild(unitGfx)
+      if (atlas?.overlay.unitBanner) {
+        const banner = new Sprite(atlas.overlay.unitBanner)
+        banner.width = TILE_SIZE
+        banner.height = TILE_SIZE
+        banner.x = ux
+        banner.y = uy
+        banner.tint = playerColour
+        world.addChild(banner)
+      }
 
-      // Unit type label
-      const label = new Text({
-        text: UNIT_ICONS[unit.type] || '?',
-        style: unitLabelStyle,
-      })
-      label.anchor.set(0.5, 0.5)
-      label.x = ux + TILE_SIZE / 2
-      label.y = uy + TILE_SIZE / 2
-      world.addChild(label)
+      const unitTexture = atlas?.unit[unit.type]
+      if (unitTexture) {
+        const sprite = new Sprite(unitTexture)
+        sprite.width = TILE_SIZE
+        sprite.height = TILE_SIZE
+        sprite.x = ux
+        sprite.y = uy
+        world.addChild(sprite)
+      } else {
+        // Atlas still loading — keep the tile readable with a fallback.
+        const fallback = new Graphics()
+        fallback.roundRect(ux + 5, uy + 5, TILE_SIZE - 10, TILE_SIZE - 10, 3)
+        fallback.fill(playerColour)
+        world.addChild(fallback)
+      }
 
       if (selectedUnitId != null && unit.id === selectedUnitId) {
         const ring = new Graphics()

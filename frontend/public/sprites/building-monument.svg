@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" shape-rendering="crispEdges">
+  <!-- monument: obelisk on plinth -->
+  <rect x="0" y="8" width="10" height="2" fill="#7e5a2a"/>
+  <rect x="1" y="7" width="8" height="1" fill="#a67c3e"/>
+  <!-- obelisk shaft (tapered) -->
+  <polygon points="3,7 5,0 7,7" fill="#d8b4fe"/>
+  <polygon points="3,7 5,0 5,7" fill="#a783d4"/>
+  <!-- cap -->
+  <rect x="4" y="0" width="2" height="1" fill="#7e5a9e"/>
+</svg>
