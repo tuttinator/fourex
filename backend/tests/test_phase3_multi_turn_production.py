@@ -1,10 +1,15 @@
-"""Phase 3: multi-turn production via BuildJob.
+"""Phase 3/4: multi-turn production via BuildJob.
 
 Covers the engine-level invariants the PRD promises: resources deduct at
 queue time, production advances deterministically, the unit/building
 materialises only when ``progress >= total_cost``, Barracks boosts unit
 jobs only, ``redact_state`` hides other players' queues, and completion
 events surface on ``TurnResult.production_completed``.
+
+Phase 4 turned ``City.build_queue`` from a single-slot ``BuildJob | None``
+into an ordered ``list[BuildJob]``. These tests assert head-slot
+semantics (``build_queue[0]`` is active; empty list means idle) as well
+as the Phase 3 invariants above.
 """
 
 from backend.src.game.models import (
@@ -64,7 +69,7 @@ class TestQueueSemantics:
         )
 
         assert result.success is True
-        assert city.build_queue is not None
+        assert len(city.build_queue) == 1
         # Soldier costs food=15, ore=5; deducted at queue time.
         assert state.stockpiles["p1"].food == 85
         assert state.stockpiles["p1"].ore == 95
@@ -81,7 +86,7 @@ class TestQueueSemantics:
 
         # Soldier wants ore=5; we have none.
         assert result.success is False
-        assert city.build_queue is None
+        assert city.build_queue == []
         assert state.stockpiles["p1"].food == 100
 
     def test_total_cost_from_static_table(self):
@@ -93,8 +98,8 @@ class TestQueueSemantics:
         execute_train_unit(
             state, TrainUnitAction(city_id=city.id, unit_type=UnitType.SCOUT)
         )
-        assert city.build_queue is not None
-        assert city.build_queue.total_cost == UNIT_PRODUCTION_COST[UnitType.SCOUT]
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].total_cost == UNIT_PRODUCTION_COST[UnitType.SCOUT]
 
 
 class TestAdvanceProduction:
@@ -111,19 +116,19 @@ class TestAdvanceProduction:
 
         # Turn 1: 0 + 2 = 2
         advance_production(state)
-        assert city.build_queue is not None
-        assert city.build_queue.progress == 2
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == 2
         assert len(state.units) == 0
 
         # Turn 2: 2 + 2 = 4
         advance_production(state)
-        assert city.build_queue is not None
-        assert city.build_queue.progress == 4
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == 4
         assert len(state.units) == 0
 
         # Turn 3: 4 + 2 = 6 ≥ 5 → materialises
         completions = advance_production(state)
-        assert city.build_queue is None
+        assert city.build_queue == []
         assert len(state.units) == 1
         unit = next(iter(state.units.values()))
         assert unit.type == UnitType.SCOUT
@@ -147,10 +152,10 @@ class TestAdvanceProduction:
             state, TrainUnitAction(city_id=city.id, unit_type=UnitType.SCOUT)
         )
         advance_production(state)
-        assert city.build_queue is not None
-        assert city.build_queue.progress == 3
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == 3
         advance_production(state)
-        assert city.build_queue is None
+        assert city.build_queue == []
         assert len(state.units) == 1
 
         # Building job uses the base rate 2/turn despite Barracks.
@@ -160,10 +165,10 @@ class TestAdvanceProduction:
             state,
             BuildBuildingAction(city_id=city.id, building_type=BuildingType.MONUMENT),
         )
-        assert city.build_queue is not None
+        assert len(city.build_queue) == 1
         advance_production(state)
-        assert city.build_queue is not None
-        assert city.build_queue.progress == 2  # base rate only
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == 2  # base rate only
 
     def test_building_materialises_into_buildings_set(self):
         state = _plains_grid()
@@ -181,7 +186,7 @@ class TestAdvanceProduction:
         for _ in range(3):
             advance_production(state)
         assert BuildingType.MONUMENT in city.buildings
-        assert city.build_queue is None
+        assert city.build_queue == []
 
     def test_unit_stalls_on_occupied_city_tile(self):
         """If the city tile is occupied when a unit job completes, progress
@@ -215,8 +220,8 @@ class TestAdvanceProduction:
             completions = advance_production(state)
             assert completions == []
         # Job is still present, clamped at total_cost.
-        assert city.build_queue is not None
-        assert city.build_queue.progress == city.build_queue.total_cost
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == city.build_queue[0].total_cost
         assert len(state.units) == 1  # still only the worker
 
         # Free the tile.
@@ -224,7 +229,7 @@ class TestAdvanceProduction:
         # Next turn: job completes.
         completions = advance_production(state)
         assert len(completions) == 1
-        assert city.build_queue is None
+        assert city.build_queue == []
         assert len(state.units) == 2
 
 
@@ -300,12 +305,14 @@ class TestDeterminism:
         from backend.src.game.models import BuildJob
 
         for cid in (1, 2):
-            state.cities[cid].build_queue = BuildJob(
-                type="unit",
-                target=UnitType.SCOUT.value,
-                progress=4,
-                total_cost=UNIT_PRODUCTION_COST[UnitType.SCOUT],
-            )
+            state.cities[cid].build_queue = [
+                BuildJob(
+                    type="unit",
+                    target=UnitType.SCOUT.value,
+                    progress=4,
+                    total_cost=UNIT_PRODUCTION_COST[UnitType.SCOUT],
+                )
+            ]
 
         completions = advance_production(state)
         assert [c.city_id for c in completions] == [1, 2]
@@ -361,17 +368,17 @@ class TestFogOfWar:
         execute_train_unit(
             state, TrainUnitAction(city_id=city_p2.id, unit_type=UnitType.SCOUT)
         )
-        assert city_p2.build_queue is not None
+        assert len(city_p2.build_queue) == 1
 
         redacted = redact_state(state, "p1")
         # p1 can see the city via the scout…
         assert city_p2.id in redacted.cities
-        # …but the build_queue is hidden from them.
-        assert redacted.cities[city_p2.id].build_queue is None
+        # …but the build_queue is hidden (empty list) from them.
+        assert redacted.cities[city_p2.id].build_queue == []
 
         # Owner still sees their own queue.
         redacted_owner = redact_state(state, "p2")
-        assert redacted_owner.cities[city_p2.id].build_queue is not None
+        assert len(redacted_owner.cities[city_p2.id].build_queue) == 1
 
 
 class TestBuildingProductionCostTable:

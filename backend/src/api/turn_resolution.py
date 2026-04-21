@@ -26,6 +26,7 @@ from ..game.models import (
     AttackAction,
     BuildBuildingAction,
     BuildImprovementAction,
+    CancelCityProductionAction,
     CancelTreatyAction,
     DeclareWarAction,
     DiplomaticEventType,
@@ -33,8 +34,10 @@ from ..game.models import (
     GameState,
     MoveAction,
     ProposeTreatyAction,
+    ReorderCityQueueAction,
     RespondToTreatyAction,
     SendMessageAction,
+    SetCityProductionAction,
     TrainUnitAction,
     WithdrawTreatyAction,
 )
@@ -83,6 +86,12 @@ def parse_action(raw: dict[str, Any]) -> Action:
         return WithdrawTreatyAction.model_validate(raw)
     elif action_type == "CANCEL_TREATY":
         return CancelTreatyAction.model_validate(raw)
+    elif action_type == "SET_CITY_PRODUCTION":
+        return SetCityProductionAction.model_validate(raw)
+    elif action_type == "CANCEL_CITY_PRODUCTION":
+        return CancelCityProductionAction.model_validate(raw)
+    elif action_type == "REORDER_CITY_QUEUE":
+        return ReorderCityQueueAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 

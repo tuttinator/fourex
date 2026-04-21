@@ -326,7 +326,7 @@ class TestTrainUnitEdgeCases:
         )
 
         assert result.success is True
-        assert city.build_queue is not None
+        assert len(city.build_queue) == 1
 
     def test_barracks_discount_applied(self):
         state = _plains_state()
@@ -345,7 +345,10 @@ class TestTrainUnitEdgeCases:
         assert state.stockpiles["p1"].food == 89
         assert state.stockpiles["p1"].ore == 97
 
-    def test_queue_rejected_when_city_already_building(self):
+    def test_second_unit_queues_behind_first(self):
+        """Phase 4: a second ``TrainUnitAction`` appends to the queue
+        rather than being rejected. Resources for both are deducted at
+        queue time."""
         state = _plains_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(food=100)
@@ -355,16 +358,18 @@ class TestTrainUnitEdgeCases:
             state, TrainUnitAction(city_id=city.id, unit_type=UnitType.SCOUT)
         )
         assert first.success is True
-        # Resources after first queue.
         food_after_first = state.stockpiles["p1"].food
 
         second = execute_train_unit(
             state, TrainUnitAction(city_id=city.id, unit_type=UnitType.WORKER)
         )
-        assert second.success is False
-        assert "already producing" in second.message.lower()
-        # No additional resources deducted on rejection.
-        assert state.stockpiles["p1"].food == food_after_first
+        assert second.success is True
+        # Both jobs now queued; index 0 is the scout, index 1 the worker.
+        assert len(city.build_queue) == 2
+        assert city.build_queue[0].target == UnitType.SCOUT.value
+        assert city.build_queue[1].target == UnitType.WORKER.value
+        # The second enqueue also deducts resources.
+        assert state.stockpiles["p1"].food < food_after_first
 
 
 class TestBuildBuildingEdgeCases:
@@ -390,9 +395,9 @@ class TestBuildBuildingEdgeCases:
         # Queued, not constructed — materialises once the build job
         # completes inside ``advance_production``.
         assert BuildingType.GRANARY not in city.buildings
-        assert city.build_queue is not None
-        assert city.build_queue.type == "building"
-        assert city.build_queue.target == BuildingType.GRANARY.value
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].type == "building"
+        assert city.build_queue[0].target == BuildingType.GRANARY.value
         assert state.stockpiles["p1"].wood == 40  # 60 - 20 deducted at queue time
 
     def test_duplicate_building_rejected(self):

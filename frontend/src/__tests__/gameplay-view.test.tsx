@@ -156,6 +156,7 @@ const sampleState: GameState = {
 			loc: { x: 3, y: 3 },
 			hp: 20,
 			buildings: [],
+			build_queue: [],
 		},
 	},
 	players: ["alice", "bob"],

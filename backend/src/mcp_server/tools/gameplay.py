@@ -24,14 +24,17 @@ from ...game.models import (
     AttackAction,
     BuildBuildingAction,
     BuildImprovementAction,
+    CancelCityProductionAction,
     CancelTreatyAction,
     DeclareWarAction,
     FoundCityAction,
     GameState,
     MoveAction,
     ProposeTreatyAction,
+    ReorderCityQueueAction,
     RespondToTreatyAction,
     SendMessageAction,
+    SetCityProductionAction,
     TrainUnitAction,
     WithdrawTreatyAction,
 )
@@ -48,13 +51,16 @@ def _validate_actions_against_state(
         execute_attack,
         execute_build_building,
         execute_build_improvement,
+        execute_cancel_city_production,
         execute_cancel_treaty,
         execute_declare_war,
         execute_found_city,
         execute_move,
         execute_propose_treaty,
+        execute_reorder_city_queue,
         execute_respond_to_treaty,
         execute_send_message,
+        execute_set_city_production,
         execute_train_unit,
         execute_withdraw_treaty,
         reset_unit_moves,
@@ -90,6 +96,12 @@ def _validate_actions_against_state(
             r = execute_withdraw_treaty(test_state, player_id, action)
         elif isinstance(action, CancelTreatyAction):
             r = execute_cancel_treaty(test_state, player_id, action)
+        elif isinstance(action, SetCityProductionAction):
+            r = execute_set_city_production(test_state, player_id, action)
+        elif isinstance(action, CancelCityProductionAction):
+            r = execute_cancel_city_production(test_state, player_id, action)
+        elif isinstance(action, ReorderCityQueueAction):
+            r = execute_reorder_city_queue(test_state, player_id, action)
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}
@@ -172,7 +184,10 @@ def register(mcp: FastMCP) -> None:
             api_key: Your player API key.
             actions: List of action objects. Each must have a "type" field.
                 Supported types: MOVE, ATTACK, FOUND_CITY, TRAIN_UNIT,
-                BUILD_IMPROVEMENT, BUILD_BUILDING.
+                BUILD_IMPROVEMENT, BUILD_BUILDING, SET_CITY_PRODUCTION,
+                CANCEL_CITY_PRODUCTION, REORDER_CITY_QUEUE, DECLARE_WAR,
+                SEND_MESSAGE, PROPOSE_TREATY, RESPOND_TO_TREATY,
+                WITHDRAW_TREATY, CANCEL_TREATY.
 
         Returns:
             Confirmation of submission and whether the turn resolved.

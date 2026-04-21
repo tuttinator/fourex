@@ -66,9 +66,10 @@ export interface City {
 	loc: Coord;
 	hp: number;
 	buildings: BuildingType[];
-	/** Active multi-turn production slot (Phase 3). Only the owner sees
-	 * their own queue — redact_state nulls this for other viewers. */
-	build_queue?: BuildJob | null;
+	/** Ordered production queue (Phase 4). Index 0 is the active job;
+	 * remaining entries wait. Only the owner sees their own queue —
+	 * redact_state returns an empty array for other viewers. */
+	build_queue: BuildJob[];
 }
 
 export interface GameState {
@@ -471,6 +472,25 @@ export interface DeclareWarActionPayload {
 	target_player: PlayerId;
 }
 
+export interface SetCityProductionActionPayload {
+	type: "SET_CITY_PRODUCTION";
+	city_id: number;
+	unit_type?: UnitType;
+	building_type?: BuildingType;
+}
+
+export interface CancelCityProductionActionPayload {
+	type: "CANCEL_CITY_PRODUCTION";
+	city_id: number;
+	queue_index: number;
+}
+
+export interface ReorderCityQueueActionPayload {
+	type: "REORDER_CITY_QUEUE";
+	city_id: number;
+	new_order: number[];
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -483,7 +503,10 @@ export type GameAction =
 	| RespondToTreatyActionPayload
 	| WithdrawTreatyActionPayload
 	| CancelTreatyActionPayload
-	| DeclareWarActionPayload;
+	| DeclareWarActionPayload
+	| SetCityProductionActionPayload
+	| CancelCityProductionActionPayload
+	| ReorderCityQueueActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

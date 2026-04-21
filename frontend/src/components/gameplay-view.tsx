@@ -35,6 +35,8 @@ import {
 } from '@tanstack/react-query'
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Building2,
   ChevronLeft,
   Check,
@@ -133,6 +135,12 @@ function describeAction(action: GameAction): string {
       return `Train ${action.unit_type} @ city #${action.city_id}`
     case 'BUILD_BUILDING':
       return `Build ${action.building_type} @ city #${action.city_id}`
+    case 'SET_CITY_PRODUCTION':
+      return `Queue ${action.unit_type ?? action.building_type} @ city #${action.city_id}`
+    case 'CANCEL_CITY_PRODUCTION':
+      return `Cancel queue[${action.queue_index}] @ city #${action.city_id}`
+    case 'REORDER_CITY_QUEUE':
+      return `Reorder queue @ city #${action.city_id} → [${action.new_order.join(', ')}]`
     case 'SEND_MESSAGE': {
       const preview =
         action.body.length > 40
@@ -950,7 +958,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               queuedBuildings={queuedBuildingsForCity}
               productionRate={
                 2 +
-                (selectedCity.build_queue?.type === 'unit' &&
+                (selectedCity.build_queue?.[0]?.type === 'unit' &&
                 selectedCity.buildings?.includes('barracks')
                   ? 1
                   : 0)
@@ -967,6 +975,20 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                   type: 'BUILD_BUILDING',
                   city_id: selectedCity.id,
                   building_type,
+                })
+              }
+              onCancelQueueEntry={(queue_index) =>
+                appendToQueue({
+                  type: 'CANCEL_CITY_PRODUCTION',
+                  city_id: selectedCity.id,
+                  queue_index,
+                })
+              }
+              onReorderQueue={(new_order) =>
+                appendToQueue({
+                  type: 'REORDER_CITY_QUEUE',
+                  city_id: selectedCity.id,
+                  new_order,
                 })
               }
             />
@@ -1246,7 +1268,7 @@ interface CityPanelProps {
     loc: Coord
     hp: number
     buildings: string[]
-    build_queue?: BuildJob | null
+    build_queue: BuildJob[]
   }
   trainable: TrainableUnit[] | null
   buildable: BuildableBuilding[] | null
@@ -1256,6 +1278,11 @@ interface CityPanelProps {
   productionRate: number
   onTrainUnit: (unit_type: TrainableUnit['unit_type']) => void
   onBuildBuilding: (building_type: BuildableBuilding['building_type']) => void
+  /** Phase 4: queue manipulation. Arguments are queue indices into the
+   * server-known ``city.build_queue``; the UI submits the action for
+   * the next End Turn resolution. */
+  onCancelQueueEntry: (queue_index: number) => void
+  onReorderQueue: (new_order: number[]) => void
 }
 
 function CityPanel({
@@ -1266,8 +1293,11 @@ function CityPanel({
   productionRate,
   onTrainUnit,
   onBuildBuilding,
+  onCancelQueueEntry,
+  onReorderQueue,
 }: CityPanelProps) {
-  const activeJob = city.build_queue ?? null
+  const queue = useMemo(() => city.build_queue ?? [], [city.build_queue])
+  const activeJob = queue[0] ?? null
   const turnsRemaining = activeJob
     ? Math.max(
         1,
@@ -1280,6 +1310,19 @@ function CityPanel({
         Math.round((activeJob.progress / activeJob.total_cost) * 100),
       )
     : 0
+  const swapEntries = (a: number, b: number) => {
+    if (a < 0 || b < 0 || a >= queue.length || b >= queue.length) return
+    const order = queue.map((_, idx) => idx)
+    ;[order[a], order[b]] = [order[b], order[a]]
+    onReorderQueue(order)
+  }
+  const queuedBuildingsCombined = useMemo(() => {
+    const out = new Set<string>(queuedBuildings)
+    for (const job of queue) {
+      if (job.type === 'building') out.add(job.target)
+    }
+    return out
+  }, [queuedBuildings, queue])
   return (
     <Card className="rounded-none border-0 border-b">
       <CardHeader className="py-3">
@@ -1299,14 +1342,25 @@ function CityPanel({
             data-testid="city-production-indicator"
             className="mb-3 rounded-md border bg-muted/40 px-2 py-2 text-xs"
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-1 font-medium">
                 <Clock className="h-3 w-3" />
                 Producing <span className="capitalize">{activeJob.target}</span>
               </span>
-              <span className="text-muted-foreground">
-                {turnsRemaining} turn{turnsRemaining === 1 ? '' : 's'} left
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">
+                  {turnsRemaining} turn{turnsRemaining === 1 ? '' : 's'} left
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => onCancelQueueEntry(0)}
+                  title={`Cancel ${activeJob.target} — forfeits ${activeJob.progress} production`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
             <div className="mt-1 h-1.5 w-full rounded bg-background">
               <div
@@ -1318,6 +1372,58 @@ function CityPanel({
               {activeJob.progress}/{activeJob.total_cost} production
               &middot; {productionRate}/turn
             </div>
+          </div>
+        )}
+        {queue.length > 1 && (
+          <div
+            data-testid="city-queue-list"
+            className="mb-3 space-y-1 text-xs"
+          >
+            <div className="text-muted-foreground font-medium">
+              Queued ({queue.length - 1})
+            </div>
+            {queue.slice(1).map((job, i) => {
+              const idx = i + 1
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between rounded-md border bg-muted/20 px-2 py-1"
+                >
+                  <span className="capitalize">{job.target}</span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      disabled={idx <= 1}
+                      onClick={() => swapEntries(idx, idx - 1)}
+                      title="Move up"
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      disabled={idx >= queue.length - 1}
+                      onClick={() => swapEntries(idx, idx + 1)}
+                      title="Move down"
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => onCancelQueueEntry(idx)}
+                      title={`Cancel ${job.target} — refunds cost (not yet started)`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
         <Tabs defaultValue="train" className="w-full">
@@ -1346,13 +1452,13 @@ function CityPanel({
                   variant="outline"
                   size="sm"
                   className="w-full justify-between text-xs"
-                  disabled={!u.affordable || activeJob !== null}
+                  disabled={!u.affordable}
                   onClick={() => onTrainUnit(u.unit_type)}
                   title={
-                    activeJob
-                      ? `City busy producing ${activeJob.target}`
-                      : !u.affordable
-                        ? `Cannot afford (${formatCost(u.cost)})`
+                    !u.affordable
+                      ? `Cannot afford (${formatCost(u.cost)})`
+                      : activeJob
+                        ? `Queues behind ${activeJob.target}`
                         : undefined
                   }
                 >
@@ -1375,19 +1481,21 @@ function CityPanel({
               buildable
                 .filter((b) => !b.already_built)
                 .map((b) => {
-                  const queued = queuedBuildings.has(b.building_type)
+                  const queued = queuedBuildingsCombined.has(b.building_type)
                   return (
                     <Button
                       key={b.building_type}
                       variant="outline"
                       size="sm"
                       className="w-full justify-between text-xs"
-                      disabled={!b.affordable || queued || activeJob !== null}
+                      disabled={!b.affordable || queued}
                       onClick={() => onBuildBuilding(b.building_type)}
                       title={
-                        activeJob
-                          ? `City busy producing ${activeJob.target}`
-                          : b.effect
+                        queued
+                          ? `${b.building_type} already in queue`
+                          : activeJob
+                            ? `Queues behind ${activeJob.target}`
+                            : b.effect
                       }
                     >
                       <span className="capitalize">

@@ -451,10 +451,10 @@ class TestCityManagement:
 
         assert result.success is True
         assert len(state.units) == 0
-        assert city.build_queue is not None
-        assert city.build_queue.type == "unit"
-        assert city.build_queue.target == UnitType.SCOUT.value
-        assert city.build_queue.progress == 0
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].type == "unit"
+        assert city.build_queue[0].target == UnitType.SCOUT.value
+        assert city.build_queue[0].progress == 0
 
         # Resources consumed at queue time (scout costs 10 food).
         assert state.stockpiles["player1"].food == 40

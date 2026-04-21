@@ -345,7 +345,7 @@ class City(BaseModel):
     owner: PlayerId
     loc: Coord
     hp: int = 10
-    build_queue: BuildJob | None = None
+    build_queue: list[BuildJob] = Field(default_factory=list)
     buildings: set[BuildingType] = Field(default_factory=set)
     culture: int = 0
     border_radius: int = 0
@@ -736,6 +736,51 @@ class CancelTreatyAction(BaseModel):
     treaty_id: int
 
 
+class SetCityProductionAction(BaseModel):
+    """Append an item (unit or building) to a city's ordered build queue.
+
+    Exactly one of ``unit_type`` / ``building_type`` must be set. Resources
+    are deducted at queue time, matching the Phase 3 semantics for the
+    legacy ``TRAIN_UNIT`` / ``BUILD_BUILDING`` wrappers.
+    """
+
+    type: str = "SET_CITY_PRODUCTION"
+    city_id: int
+    unit_type: UnitType | None = None
+    building_type: BuildingType | None = None
+
+
+class CancelCityProductionAction(BaseModel):
+    """Remove one entry from a city's build queue by index.
+
+    Index 0 is the active job; cancelling it forfeits accumulated progress
+    and does not refund the resources spent at queue time. Cancelling a
+    waiting entry (index >= 1) refunds the resources since the job never
+    started, matching player expectations that a mistake made but not yet
+    acted on costs nothing.
+    """
+
+    type: str = "CANCEL_CITY_PRODUCTION"
+    city_id: int
+    queue_index: int
+
+
+class ReorderCityQueueAction(BaseModel):
+    """Permute a city's build queue.
+
+    ``new_order`` must be a permutation of the current queue indices
+    (``[0, 1, ..., len(queue)-1]``). The progress on the current active
+    job carries with it: if the new order places a different job at index
+    0, the previous active job's accumulated progress still sits on that
+    job, and the new index-0 job advances next turn from its own
+    (possibly zero) progress.
+    """
+
+    type: str = "REORDER_CITY_QUEUE"
+    city_id: int
+    new_order: list[int]
+
+
 Action = (
     MoveAction
     | AttackAction
@@ -749,6 +794,9 @@ Action = (
     | RespondToTreatyAction
     | WithdrawTreatyAction
     | CancelTreatyAction
+    | SetCityProductionAction
+    | CancelCityProductionAction
+    | ReorderCityQueueAction
 )
 
 

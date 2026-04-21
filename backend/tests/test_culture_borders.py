@@ -115,8 +115,8 @@ class TestBuildBuilding:
 
         assert result.success is True
         assert BuildingType.MONUMENT not in city.buildings
-        assert city.build_queue is not None
-        assert city.build_queue.target == BuildingType.MONUMENT.value
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].target == BuildingType.MONUMENT.value
         assert state.stockpiles["p1"].wood == 10
 
     def test_build_library(self):
@@ -130,8 +130,8 @@ class TestBuildBuilding:
         result = execute_build_building(state, action)
 
         assert result.success is True
-        assert city.build_queue is not None
-        assert city.build_queue.target == BuildingType.LIBRARY.value
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].target == BuildingType.LIBRARY.value
         assert state.stockpiles["p1"] == ResourceBag(wood=15, ore=5)
 
     def test_build_temple(self):
@@ -145,8 +145,8 @@ class TestBuildBuilding:
         result = execute_build_building(state, action)
 
         assert result.success is True
-        assert city.build_queue is not None
-        assert city.build_queue.target == BuildingType.TEMPLE.value
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].target == BuildingType.TEMPLE.value
 
     def test_cannot_afford(self):
         state = _make_state_with_grid()
@@ -209,7 +209,7 @@ class TestBuildBuilding:
             # Drive the active job to completion before enqueueing the
             # next: base rate is 2/turn and all three cultural buildings
             # cost at most 12 production points.
-            while city.build_queue is not None:
+            while city.build_queue:
                 advance_production(state)
 
         assert city.buildings == {
@@ -512,15 +512,15 @@ class TestBuildBuildingInResolveTurn:
         # First turn resolves: job enqueued + advanced by 2 (Monument is
         # 6 production, so 4 still to go).
         assert BuildingType.MONUMENT not in city.buildings
-        assert city.build_queue is not None
-        assert city.build_queue.progress == 2
+        assert len(city.build_queue) == 1
+        assert city.build_queue[0].progress == 2
 
         # Two more empty turns drive the job to completion on the third.
         resolve_turn(state, {"p1": []})
         assert BuildingType.MONUMENT not in city.buildings
         final = resolve_turn(state, {"p1": []})
         assert BuildingType.MONUMENT in city.buildings
-        assert city.build_queue is None
+        assert city.build_queue == []
         assert len(final.production_completed) == 1
         assert final.production_completed[0].target == BuildingType.MONUMENT.value
 

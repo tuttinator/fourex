@@ -150,12 +150,14 @@ async def _seed_city_with_queued_scout(
 
         # Seed a single city for ``owner`` at (5, 5).
         city = City(id=city_id, owner=owner, loc=Coord(x=5, y=5))
-        city.build_queue = BuildJob(
-            type="unit",
-            target=UnitType.SCOUT.value,
-            progress=0,
-            total_cost=UNIT_PRODUCTION_COST[UnitType.SCOUT],
-        )
+        city.build_queue = [
+            BuildJob(
+                type="unit",
+                target=UnitType.SCOUT.value,
+                progress=0,
+                total_cost=UNIT_PRODUCTION_COST[UnitType.SCOUT],
+            )
+        ]
         state.cities = {city_id: city}
         tile = state.get_tile(Coord(x=5, y=5))
         assert tile is not None
@@ -196,8 +198,10 @@ async def test_rest_and_mcp_observe_identical_production_completion_turn(
     rest_queue_0 = rest_state_0["cities"]["1"]["build_queue"]
     mcp_queue_0 = mcp_state_0["state"]["cities"]["1"]["build_queue"]
     assert rest_queue_0 == mcp_queue_0
-    assert rest_queue_0["progress"] == 0
-    assert rest_queue_0["total_cost"] == UNIT_PRODUCTION_COST[UnitType.SCOUT]
+    # Phase 4: build_queue is a list; the active job is at index 0.
+    assert len(rest_queue_0) == 1
+    assert rest_queue_0[0]["progress"] == 0
+    assert rest_queue_0[0]["total_cost"] == UNIT_PRODUCTION_COST[UnitType.SCOUT]
 
     # Drive turns, with alice submitting via REST and bob via MCP so
     # both front doors participate in each resolution.
@@ -235,8 +239,8 @@ async def test_rest_and_mcp_observe_identical_production_completion_turn(
         if expected is None:
             # Completion: the queue is empty in both views, and the Scout
             # has materialised on alice's city tile in both views.
-            assert rest_city["build_queue"] is None
-            assert mcp_city["build_queue"] is None
+            assert rest_city["build_queue"] == []
+            assert mcp_city["build_queue"] == []
             alice_units_rest = [
                 u for u in rest_state["units"].values() if u["owner"] == "alice"
             ]
@@ -248,8 +252,8 @@ async def test_rest_and_mcp_observe_identical_production_completion_turn(
             rest_completion_turn = turn_number
             mcp_completion_turn = turn_number
         else:
-            assert rest_city["build_queue"]["progress"] == expected
-            assert mcp_city["build_queue"]["progress"] == expected
+            assert rest_city["build_queue"][0]["progress"] == expected
+            assert mcp_city["build_queue"][0]["progress"] == expected
 
     # The whole point: both front doors report the same completion turn.
     assert rest_completion_turn is not None

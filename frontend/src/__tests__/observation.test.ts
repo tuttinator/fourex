@@ -26,8 +26,8 @@ const mockGameState: GameState = {
 		3: { id: 3, owner: "bob", type: "worker", hp: 8, moves_left: 2, loc: { x: 0, y: 1 } },
 	},
 	cities: {
-		1: { id: 1, owner: "alice", loc: { x: 0, y: 0 }, hp: 50, buildings: ["granary"] },
-		2: { id: 2, owner: "bob", loc: { x: 0, y: 1 }, hp: 50, buildings: [] },
+		1: { id: 1, owner: "alice", loc: { x: 0, y: 0 }, hp: 50, buildings: ["granary"], build_queue: [] },
+		2: { id: 2, owner: "bob", loc: { x: 0, y: 1 }, hp: 50, buildings: [], build_queue: [] },
 	},
 	players: ["alice", "bob"],
 	diplomacy: { "alice,bob": "peace" },

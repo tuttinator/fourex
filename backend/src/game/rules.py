@@ -21,6 +21,7 @@ from .models import (
     BuildImprovementAction,
     BuildingType,
     BuildJob,
+    CancelCityProductionAction,
     CancelTreatyAction,
     City,
     Coord,
@@ -39,11 +40,13 @@ from .models import (
     ProductionCompletedEvent,
     ProposeTreatyAction,
     RecurringTributeClause,
+    ReorderCityQueueAction,
     Resource,
     ResourceBag,
     ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
+    SetCityProductionAction,
     Terrain,
     Tile,
     TrainUnitAction,
@@ -195,15 +198,18 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
             visible_units[unit_id] = unit
     redacted.units = visible_units
 
-    # Filter cities to only visible ones. Non-owners never see the active
+    # Filter cities to only visible ones. Non-owners never see the
     # ``build_queue`` even for cities they can otherwise see — production
-    # plans are private.
+    # plans are private. Phase 4 stores the queue as a list; we elide it
+    # to an empty list for non-owners rather than ``None`` so the
+    # redacted shape stays serialisation-stable across owners and
+    # observers.
     visible_cities = {}
     for city_id, city in redacted.cities.items():
         if city.loc not in visible_tiles:
             continue
         if city.owner != player_id:
-            city.build_queue = None
+            city.build_queue = []
         visible_cities[city_id] = city
     redacted.cities = visible_cities
 
@@ -1400,13 +1406,65 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
     )
 
 
+def _unit_cost_for_city(city: City, unit_type: UnitType) -> ResourceBag:
+    base_cost = UNIT_STATS[unit_type].cost
+    cost_multiplier = city.unit_cost_multiplier()
+    return ResourceBag(
+        food=int(base_cost.food * cost_multiplier),
+        wood=int(base_cost.wood * cost_multiplier),
+        ore=int(base_cost.ore * cost_multiplier),
+        crystal=int(base_cost.crystal * cost_multiplier),
+    )
+
+
+def _enqueue_unit(
+    state: GameState, city: City, unit_type: UnitType, action: Action
+) -> ActionResult:
+    """Shared body for ``TrainUnitAction`` and ``SetCityProductionAction``
+    with a ``unit_type``. Appends a ``BuildJob`` to ``city.build_queue``
+    after validating resources."""
+    if unit_type not in UNIT_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid unit type: {unit_type}",
+            action=action,
+        )
+
+    actual_cost = _unit_cost_for_city(city, unit_type)
+    player_resources = state.stockpiles.get(city.owner, ResourceBag())
+    if not player_resources.can_afford(actual_cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {city.owner} cannot afford {unit_type}",
+            action=action,
+        )
+
+    state.stockpiles[city.owner] = player_resources - actual_cost
+    job = BuildJob(
+        type="unit",
+        target=unit_type.value,
+        progress=0,
+        total_cost=UNIT_PRODUCTION_COST[unit_type],
+    )
+    city.build_queue.append(job)
+
+    return ActionResult(
+        success=True,
+        message=(
+            f"City {city.id} queued {unit_type.value} "
+            f"(cost {job.total_cost} production; queue position "
+            f"{len(city.build_queue)})"
+        ),
+        action=action,
+    )
+
+
 def execute_train_unit(state: GameState, action: TrainUnitAction) -> ActionResult:
     """Queue a unit for training in a city.
 
-    Resources are deducted at queue time. The unit materialises only after
-    the city's ``BuildJob`` accrues enough progress (see
-    :func:`advance_production`). Phase 3 holds at most one active job per
-    city: queuing while a job is already active is rejected.
+    Thin wrapper around :func:`_enqueue_unit` kept for backwards
+    compatibility. Phase 4 allows multiple queued jobs per city — the
+    unit is appended to the end of ``city.build_queue``.
     """
     city = state.get_city(action.city_id)
     if not city:
@@ -1415,65 +1473,7 @@ def execute_train_unit(state: GameState, action: TrainUnitAction) -> ActionResul
             message=f"City {action.city_id} not found",
             action=action,
         )
-
-    # Check if unit type is valid
-    if action.unit_type not in UNIT_STATS:
-        return ActionResult(
-            success=False,
-            message=f"Invalid unit type: {action.unit_type}",
-            action=action,
-        )
-
-    if city.build_queue is not None:
-        active = city.build_queue
-        return ActionResult(
-            success=False,
-            message=(
-                f"City {city.id} is already producing {active.target} "
-                f"({active.progress}/{active.total_cost})"
-            ),
-            action=action,
-        )
-
-    # Calculate cost with city modifiers
-    base_cost = UNIT_STATS[action.unit_type].cost
-    cost_multiplier = city.unit_cost_multiplier()
-    actual_cost = ResourceBag(
-        food=int(base_cost.food * cost_multiplier),
-        wood=int(base_cost.wood * cost_multiplier),
-        ore=int(base_cost.ore * cost_multiplier),
-        crystal=int(base_cost.crystal * cost_multiplier),
-    )
-
-    # Check if player can afford unit
-    player_resources = state.stockpiles.get(city.owner, ResourceBag())
-    if not player_resources.can_afford(actual_cost):
-        return ActionResult(
-            success=False,
-            message=f"Player {city.owner} cannot afford {action.unit_type}",
-            action=action,
-        )
-
-    # Consume resources at queue time
-    state.stockpiles[city.owner] = player_resources - actual_cost
-
-    # Enqueue the job. total_cost is production points, derived from the
-    # static UNIT_PRODUCTION_COST table (not the resource cost).
-    city.build_queue = BuildJob(
-        type="unit",
-        target=action.unit_type.value,
-        progress=0,
-        total_cost=UNIT_PRODUCTION_COST[action.unit_type],
-    )
-
-    return ActionResult(
-        success=True,
-        message=(
-            f"City {city.id} queued {action.unit_type.value} "
-            f"(cost {city.build_queue.total_cost} production)"
-        ),
-        action=action,
-    )
+    return _enqueue_unit(state, city, action.unit_type, action)
 
 
 def execute_build_improvement(
@@ -1567,15 +1567,82 @@ def execute_build_improvement(
     )
 
 
+def _building_already_queued(city: City, building_type: BuildingType) -> bool:
+    target = building_type.value
+    return any(
+        job.type == "building" and job.target == target for job in city.build_queue
+    )
+
+
+def _enqueue_building(
+    state: GameState,
+    city: City,
+    building_type: BuildingType,
+    action: Action,
+) -> ActionResult:
+    if building_type not in BUILDING_STATS:
+        return ActionResult(
+            success=False,
+            message=f"Invalid building type: {building_type}",
+            action=action,
+        )
+
+    if building_type in city.buildings:
+        return ActionResult(
+            success=False,
+            message=f"City {city.id} already has {building_type}",
+            action=action,
+        )
+
+    # Reject enqueueing the same building twice — a player pressing the
+    # button twice is almost certainly a mistake, and the semantics of a
+    # duplicate job (silently redundant work the second time it
+    # completes) would be worse than a hard rejection.
+    if _building_already_queued(city, building_type):
+        return ActionResult(
+            success=False,
+            message=f"City {city.id} already has {building_type} queued",
+            action=action,
+        )
+
+    building_stats = BUILDING_STATS[building_type]
+    player_id = city.owner
+    player_resources = state.stockpiles.get(player_id, ResourceBag())
+    if not player_resources.can_afford(building_stats.cost):
+        return ActionResult(
+            success=False,
+            message=f"Player {player_id} cannot afford {building_type}",
+            action=action,
+        )
+
+    state.stockpiles[player_id] = player_resources - building_stats.cost
+    job = BuildJob(
+        type="building",
+        target=building_type.value,
+        progress=0,
+        total_cost=BUILDING_PRODUCTION_COST[building_type],
+    )
+    city.build_queue.append(job)
+
+    return ActionResult(
+        success=True,
+        message=(
+            f"City {city.id} queued {building_type.value} "
+            f"(cost {job.total_cost} production; queue position "
+            f"{len(city.build_queue)})"
+        ),
+        action=action,
+    )
+
+
 def execute_build_building(
     state: GameState, action: BuildBuildingAction
 ) -> ActionResult:
     """Queue a building for construction in a city.
 
-    Resources are deducted at queue time. The building materialises only
-    after the city's ``BuildJob`` accrues enough progress (see
-    :func:`advance_production`). Phase 3 holds at most one active job per
-    city: queuing while a job is already active is rejected.
+    Thin wrapper around :func:`_enqueue_building`. Phase 4 allows multiple
+    queued jobs per city — the building is appended to the end of
+    ``city.build_queue``.
     """
     city = state.get_city(action.city_id)
     if not city:
@@ -1585,73 +1652,176 @@ def execute_build_building(
             action=action,
         )
 
-    # Check ownership
-    player_id = city.owner
-    for player in state.players:
-        if player == player_id:
-            break
-    else:
+    # Check ownership is in the player set (preserves the legacy
+    # defensive check even though it never trips in well-formed states).
+    if city.owner not in state.players:
         return ActionResult(
             success=False,
             message=f"City {action.city_id} owner not found in players",
             action=action,
         )
 
-    # Check if building type is valid
-    if action.building_type not in BUILDING_STATS:
+    return _enqueue_building(state, city, action.building_type, action)
+
+
+def execute_set_city_production(
+    state: GameState, player_id: PlayerId, action: SetCityProductionAction
+) -> ActionResult:
+    """Phase 4: append a unit or building to a city's build queue.
+
+    Exactly one of ``unit_type`` / ``building_type`` must be populated.
+    Delegates to the same enqueue helpers as the Phase 3 wrapper actions
+    so queue semantics (deduct at queue time, reject bad/duplicate
+    entries) stay identical across the human and MCP front doors.
+    """
+    city = state.get_city(action.city_id)
+    if city is None:
         return ActionResult(
             success=False,
-            message=f"Invalid building type: {action.building_type}",
+            message=f"City {action.city_id} not found",
+            action=action,
+        )
+    if city.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} is not owned by {player_id}",
+            action=action,
+        )
+    if action.unit_type is None and action.building_type is None:
+        return ActionResult(
+            success=False,
+            message="SET_CITY_PRODUCTION requires unit_type or building_type",
+            action=action,
+        )
+    if action.unit_type is not None and action.building_type is not None:
+        return ActionResult(
+            success=False,
+            message="SET_CITY_PRODUCTION accepts only one of unit_type / building_type",
             action=action,
         )
 
-    # Check if building already exists in city
-    if action.building_type in city.buildings:
+    if action.unit_type is not None:
+        return _enqueue_unit(state, city, action.unit_type, action)
+    assert action.building_type is not None
+    return _enqueue_building(state, city, action.building_type, action)
+
+
+def _refund_job(state: GameState, city: City, job: BuildJob) -> None:
+    """Return the resource cost of a *waiting* (never-started) job.
+
+    Active jobs (``queue_index == 0``) forfeit progress and resources by
+    design — the PRD calls this "real cost to switching projects
+    mid-build". Waiting jobs refund at the same rate they were charged,
+    so cancel-before-start is a genuine undo.
+    """
+    if job.type == "unit":
+        try:
+            unit_type = UnitType(job.target)
+        except ValueError:
+            return
+        refund = _unit_cost_for_city(city, unit_type)
+    elif job.type == "building":
+        try:
+            building_type = BuildingType(job.target)
+        except ValueError:
+            return
+        refund = BUILDING_STATS[building_type].cost
+    else:
+        return
+    state.stockpiles[city.owner] = (
+        state.stockpiles.get(city.owner, ResourceBag()) + refund
+    )
+
+
+def execute_cancel_city_production(
+    state: GameState, player_id: PlayerId, action: CancelCityProductionAction
+) -> ActionResult:
+    """Phase 4: remove a single queued job by index.
+
+    Index 0 forfeits progress and does not refund resources. Higher
+    indices refund the resource cost that was deducted at queue time
+    because the job never started accumulating progress.
+    """
+    city = state.get_city(action.city_id)
+    if city is None:
         return ActionResult(
             success=False,
-            message=f"City {city.id} already has {action.building_type}",
+            message=f"City {action.city_id} not found",
             action=action,
         )
-
-    if city.build_queue is not None:
-        active = city.build_queue
+    if city.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} is not owned by {player_id}",
+            action=action,
+        )
+    if action.queue_index < 0 or action.queue_index >= len(city.build_queue):
         return ActionResult(
             success=False,
             message=(
-                f"City {city.id} is already producing {active.target} "
-                f"({active.progress}/{active.total_cost})"
+                f"Queue index {action.queue_index} out of range; "
+                f"queue length is {len(city.build_queue)}"
             ),
             action=action,
         )
 
-    # Check resource cost
-    building_stats = BUILDING_STATS[action.building_type]
-    player_resources = state.stockpiles.get(player_id, ResourceBag())
-    if not player_resources.can_afford(building_stats.cost):
+    removed = city.build_queue.pop(action.queue_index)
+    if action.queue_index == 0:
+        return ActionResult(
+            success=True,
+            message=(
+                f"City {city.id} cancelled active {removed.target}; "
+                f"progress forfeit, no refund"
+            ),
+            action=action,
+        )
+    _refund_job(state, city, removed)
+    return ActionResult(
+        success=True,
+        message=f"City {city.id} cancelled queued {removed.target}; resources refunded",
+        action=action,
+    )
+
+
+def execute_reorder_city_queue(
+    state: GameState, player_id: PlayerId, action: ReorderCityQueueAction
+) -> ActionResult:
+    """Phase 4: permute a city's build queue.
+
+    ``new_order`` must be a permutation of the current queue indices.
+    Progress on each job is preserved and moves with the job to its new
+    slot — so a half-built item stays half-built no matter where the
+    player drags it.
+    """
+    city = state.get_city(action.city_id)
+    if city is None:
         return ActionResult(
             success=False,
-            message=f"Player {player_id} cannot afford {action.building_type}",
+            message=f"City {action.city_id} not found",
+            action=action,
+        )
+    if city.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"City {action.city_id} is not owned by {player_id}",
             action=action,
         )
 
-    # Consume resources at queue time
-    state.stockpiles[player_id] = player_resources - building_stats.cost
+    expected = set(range(len(city.build_queue)))
+    if set(action.new_order) != expected or len(action.new_order) != len(expected):
+        return ActionResult(
+            success=False,
+            message=(
+                f"new_order must be a permutation of {sorted(expected)}; "
+                f"got {action.new_order}"
+            ),
+            action=action,
+        )
 
-    # Enqueue the job. total_cost is production points, derived from the
-    # static BUILDING_PRODUCTION_COST table (not the resource cost).
-    city.build_queue = BuildJob(
-        type="building",
-        target=action.building_type.value,
-        progress=0,
-        total_cost=BUILDING_PRODUCTION_COST[action.building_type],
-    )
-
+    city.build_queue = [city.build_queue[i] for i in action.new_order]
     return ActionResult(
         success=True,
-        message=(
-            f"City {city.id} queued {action.building_type.value} "
-            f"(cost {city.build_queue.total_cost} production)"
-        ),
+        message=f"City {city.id} queue reordered",
         action=action,
     )
 
@@ -2336,21 +2506,25 @@ def place_starting_units(
 
 
 def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
-    """Advance each city's active ``BuildJob`` by its production rate.
+    """Advance each city's active ``BuildJob`` (queue head) by its rate.
 
     Iterates cities in sorted ``city_id`` order so replays are deterministic.
-    When a job's ``progress`` reaches ``total_cost`` the item materialises:
-    units spawn on the city tile (or stall while the tile is occupied),
-    buildings are added to ``city.buildings``. Completions are returned as
-    events so the caller can broadcast them; the in-game effect has
-    already been applied to ``state``.
+    Phase 4 stores ``City.build_queue`` as an ordered list: index 0 is the
+    active job, the rest wait. When the active job completes it is popped
+    from the head and the next queued job becomes active on the following
+    turn (no progress is applied to it on the same turn — the "one job
+    advances per turn" invariant matches the PRD).
+
+    Waiting entries do not accrue progress. Completions are returned so
+    the caller can broadcast them; the in-game effect has already been
+    applied to ``state``.
     """
     completions: list[ProductionCompletedEvent] = []
     for city_id in sorted(state.cities.keys()):
         city = state.cities[city_id]
-        job = city.build_queue
-        if job is None:
+        if not city.build_queue:
             continue
+        job = city.build_queue[0]
 
         rate = city.production_per_turn(job.type)
         new_progress = job.progress + rate
@@ -2364,12 +2538,12 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
                 unit_type = UnitType(job.target)
             except ValueError:
                 # Corrupt target — drop the job to avoid a permanent stall.
-                city.build_queue = None
+                city.build_queue.pop(0)
                 continue
 
             # Stall if the city tile is occupied: hold progress at total_cost
-            # so the unit emerges the turn the tile frees up. Keeps the
-            # single-slot invariant simple — no overflow bookkeeping.
+            # so the unit emerges the turn the tile frees up. Waiting queue
+            # entries behind it also wait — no reshuffling.
             city_tile = state.get_tile(city.loc)
             if city_tile is not None and city_tile.unit_id is not None:
                 job.progress = job.total_cost
@@ -2393,13 +2567,13 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
             try:
                 building_type = BuildingType(job.target)
             except ValueError:
-                city.build_queue = None
+                city.build_queue.pop(0)
                 continue
             city.buildings.add(building_type)
 
         else:
             # Unknown job type — drop it rather than stall forever.
-            city.build_queue = None
+            city.build_queue.pop(0)
             continue
 
         completions.append(
@@ -2411,7 +2585,7 @@ def advance_production(state: GameState) -> list[ProductionCompletedEvent]:
                 turn=state.turn,
             )
         )
-        city.build_queue = None
+        city.build_queue.pop(0)
 
     return completions
 
@@ -2495,6 +2669,12 @@ def resolve_turn(
                 result = execute_withdraw_treaty(state, player_id, action)
             elif isinstance(action, CancelTreatyAction):
                 result = execute_cancel_treaty(state, player_id, action)
+            elif isinstance(action, SetCityProductionAction):
+                result = execute_set_city_production(state, player_id, action)
+            elif isinstance(action, CancelCityProductionAction):
+                result = execute_cancel_city_production(state, player_id, action)
+            elif isinstance(action, ReorderCityQueueAction):
+                result = execute_reorder_city_queue(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,
