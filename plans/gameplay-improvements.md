@@ -38,12 +38,12 @@ A canonical rules reference, exposed as both a REST endpoint (`GET /api/v1/rules
 
 ### Acceptance criteria
 
-- [ ] `GET /api/v1/rules` returns a structured payload covering all categories listed above.
-- [ ] MCP tool `get_rules_reference` returns the same payload, tagged read-only.
-- [ ] Payload includes `schema_version`.
-- [ ] Engine-side constants (`UNIT_STATS`, `BUILDING_STATS`, `IMPROVEMENT_STATS`, terrain cost table) are sourced from the same single module the endpoint reads from.
-- [ ] Frontend rules panel renders unit and building stats from the endpoint.
-- [ ] Tests cover: payload shape snapshot, MCP tool parity with REST, schema version present.
+- [x] `GET /api/v1/rules` returns a structured payload covering all categories listed above.
+- [x] MCP tool `get_rules_reference` returns the same payload, tagged read-only.
+- [x] Payload includes `schema_version`.
+- [x] Engine-side constants (`UNIT_STATS`, `BUILDING_STATS`, `IMPROVEMENT_STATS`, terrain cost table) are sourced from the same single module the endpoint reads from.
+- [x] Frontend rules panel renders unit and building stats from the endpoint.
+- [x] Tests cover: payload shape snapshot, MCP tool parity with REST, schema version present.
 
 ---
 
@@ -57,14 +57,14 @@ Replace Manhattan-distance movement with true pathfinding over per-tile entry co
 
 ### Acceptance criteria
 
-- [ ] Move validation and execution use path-cost, not Manhattan distance.
-- [ ] Mountain tiles are impassable; water is impassable for land units.
-- [ ] `valid-moves` response includes `{tile, cost, path}` per reachable tile.
-- [ ] Frontend reachable-tile highlights match server `valid-moves` exactly.
-- [ ] Hovering a reachable tile draws the planned path on the map.
-- [ ] Attack-range highlights match server `valid-attacks` exactly.
-- [ ] Previewed path excludes tiles already queued as destinations for the same unit.
-- [ ] Tests: path cost across mixed terrain; mountain blocks path; forest entry cost applied; existing single-turn move regression passes.
+- [x] Move validation and execution use path-cost, not Manhattan distance.
+- [x] Mountain tiles are impassable; water is impassable for land units.
+- [x] `valid-moves` response includes `{tile, cost, path}` per reachable tile.
+- [x] Frontend reachable-tile highlights match server `valid-moves` exactly.
+- [x] Hovering a reachable tile draws the planned path on the map.
+- [x] Attack-range highlights match server `valid-attacks` exactly.
+- [x] Previewed path excludes tiles already queued as destinations for the same unit.
+- [x] Tests: path cost across mixed terrain; mountain blocks path; forest entry cost applied; existing single-turn move regression passes.
 
 ---
 
@@ -119,16 +119,16 @@ Persist unit orders server-side. `Unit` gains an `orders_queue` field holding `Q
 
 ### Acceptance criteria
 
-- [ ] `Unit.orders_queue` persists via Alembic migration.
-- [ ] `QueueOrderAction` accepts a destination; validation rejects unreachable destinations (impassable terrain, no path).
-- [ ] `CancelOrderAction` clears the queue for a specified unit.
-- [ ] Engine advances queued moves at the start of each turn using that turn's movement budget.
-- [ ] Queue cancels automatically on any of: newly visible enemy in sight, obstructed next step, unit attacked in previous turn.
-- [ ] Cancellation events appear in the game event stream and in `get_game_state`.
-- [ ] Frontend renders the queued path for the selected unit.
-- [ ] Frontend offers a one-click cancel for a unit's queued order.
-- [ ] Orders persist across reload / reconnect.
-- [ ] Tests: multi-turn completion; cancel on enemy sight; cancel on obstruction; cancel on attack; persistence; replay determinism.
+- [x] `Unit.orders_queue` persists via Alembic migration. (No SQL migration required — `GameState` is a JSON blob; Pydantic defaults make legacy payloads deserialise cleanly.)
+- [x] `QueueOrderAction` accepts a destination; validation rejects unreachable destinations (impassable terrain, no path).
+- [x] `CancelOrderAction` clears the queue for a specified unit.
+- [x] Engine advances queued moves at the start of each turn using that turn's movement budget.
+- [x] Queue cancels automatically on any of: newly visible enemy in sight, obstructed next step, unit attacked in previous turn.
+- [x] Cancellation events appear in the game event stream and in `get_game_state`.
+- [x] Frontend renders the queued path for the selected unit.
+- [x] Frontend offers a one-click cancel for a unit's queued order.
+- [x] Orders persist across reload / reconnect.
+- [x] Tests: multi-turn completion; cancel on enemy sight; cancel on obstruction; cancel on attack; persistence; replay determinism.
 
 ---
 
