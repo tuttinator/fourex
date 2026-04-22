@@ -1,107 +1,195 @@
-# 4X Game Backend
+# 4X — AI Agent Sandbox
 
-A deterministic, turn-based strategy sandbox for AI agents research.
+A deterministic, turn-based 4X ("eXplore, eXpand, eXploit, eXterminate")
+strategy sandbox designed for AI-agent research. Same seed + same
+actions = identical outcomes, which makes experiments reproducible and
+replayable.
 
-## Features
+The repo ships three cooperating pieces plus a Model Context Protocol
+server:
 
-- **Deterministic gameplay**: Same seed + same actions = identical outcomes
-- **REST API**: `/state`, `/actions`, `/prompts` endpoints with Bearer auth
-- **Fog-of-war**: Players only see tiles within unit/city sight range
-- **4X mechanics**: Explore, Expand, Exploit, Exterminate on 20x20 grid
-- **AI Agent Integration**: Complete system for multi-agent AI gameplay
-- **MCP Server**: Model Context Protocol server for advanced game analysis
+- `backend/` — FastAPI + SQLAlchemy engine. Pure game rules in
+  `backend/src/game/`, REST + WebSocket surface in `backend/src/api/`,
+  and Postgres-backed persistence in `backend/src/database/`.
+- `frontend/` — Next.js + TypeScript + Tailwind UI for human play and
+  spectating.
+- `agents/` — Thin CLI shims around the profile-driven MCP agent
+  runtime in `backend/src/agents/`. Runs whole games offline using a
+  deterministic heuristic planner.
+- `backend/src/mcp_server/` — FastMCP server exposing game tools
+  (lifecycle, gameplay, analysis, memory, diplomacy, rendering,
+  history) over stdio and streamable HTTP.
 
-## Quick Start (TL;DR)
+## Requirements
 
-Run all the dependencies locally
+- `mise` (task runner + tool manager)
+- Python 3.12 and Node LTS (pinned in `mise.toml`; run `mise install`
+  to fetch them)
+- `uv` for Python dependency management
+- Postgres (local, or `docker compose up postgres` — see
+  `docker-compose.yml`)
+
+`mise` is the canonical task runner. There is no Makefile; any old docs
+or chat history referencing `make <target>` is stale — use
+`mise run <task>` instead.
+
+## Quick Start
 
 ```bash
-# Install dependencies
+# 1. Install Python + Node toolchains declared in mise.toml
+mise install
+
+# 2. Install Python deps via uv
 mise run install
 
-# Run tests
-mise run test
+# 3. Bring up Postgres (optional if you already have one running locally)
+docker compose up -d postgres
 
-# Start backend dev server (FastAPI on :8010)
+# 4. Create the database schema
+mise run db-reset
+
+# 5. Run the backend (FastAPI on :8010)
 mise run backend
 
-# Start frontend dev server (Next.js on :3000)
+# 6. In another shell, run the frontend (Next.js on :3000)
 mise run frontend
-
-# Run AI agents (quick test game)
-mise run quick
-
-# Run MCP server (stdio mode)
-mise run serve
-
-# In a separate terminal window, start the MCP server
-# (Required for AI agents with advanced analysis)
-make mcp-server
-
-# (Optional) In a separate terminal window run the tests
-# Run tests
-make test
-
-# Run CLI demo with 4 players for 10 turns
-mise run run-cli
 ```
 
-## Game Mechanics
+Open http://localhost:3000 and sign in to create or join a game.
 
-- **Map**: 20×20 grid with 4 terrain types (plains, forest, mountain, water)
-- **Units**: Scout, Worker, Soldier, Archer with different stats
-- **Cities**: Produce resources, train units, build improvements
-- **Resources**: Food, Wood, Ore, Crystal for economy
-- **Victory**: Domination (last player with cities) or Score (after 100 turns)
+## mise tasks
 
-## API Usage
+Canonical list. CLAUDE.md carries the same list; treat this file and
+CLAUDE.md as the two authoritative surfaces.
+
+### Environment
+
+| Task | Purpose |
+| --- | --- |
+| `mise run install` | `uv sync --dev` — install/refresh Python deps |
+| `mise run sync` | Alias for `install` |
+| `mise run clean` | Remove `__pycache__`, `.pytest_cache`, coverage, etc. |
+
+### Servers
+
+| Task | Purpose |
+| --- | --- |
+| `mise run backend` | FastAPI dev server on :8010 |
+| `mise run frontend` | Next.js dev server on :3000 |
+| `mise run serve` | MCP server over stdio (entry point `fourex-mcp`) |
+| `mise run serve-http` | MCP server over streamable-http on :8020 (`fourex-mcp-http`) |
+| `mise run inspect` | Launch MCP Inspector against the stdio server |
+| `mise run inspect-http` | Launch MCP Inspector against the embedded HTTP server on :8010/mcp |
+
+### Database
+
+| Task | Purpose |
+| --- | --- |
+| `mise run db-create` | Create tables |
+| `mise run db-drop` | Drop all tables (destructive) |
+| `mise run db-reset` | Drop + recreate |
+| `mise run db-check` | Verify connection |
+| `mise run db-list` | List games in the database |
+| `mise run db-info GAME=<id>` | Dump a single game |
+
+### Tests, lint, format
+
+| Task | Purpose |
+| --- | --- |
+| `mise run test` | Backend test suite (no live server required) |
+| `mise run backend-test` | Alias for `test` |
+| `mise run test-cov` | Tests with coverage report |
+| `mise run lint` | `black --check` + `ruff check` + `pyrefly check` on backend, agents, tests |
+| `mise run format` | `black` + `ruff --fix` |
+| `mise run agents-format` | Format the `agents/` CLI shims |
+| `mise run agents-lint` | Ruff the `agents/` CLI shims |
+| `mise run agents-type-check` | `pyrefly check agents/src` |
+| `mise run agents-clean` | Wipe `agents/logs/` and `agents/test_logs/` |
+| `mise run agents-logs` | Tail the most recent agent run logs |
+
+Frontend feedback loops live in the `frontend/` workspace:
 
 ```bash
-# Create game
-curl -X POST "http://localhost:8010/api/v1/games/test/start" \
-  -H "Authorization: Bearer player_alice" \
+cd frontend && npm run type-check
+cd frontend && npm run lint
+cd frontend && npm run test -- --run
+cd frontend && npm run build   # catches runtime Auth.js config errors
+```
+
+### Agent games
+
+The agent runner uses a deterministic profile-driven planner
+(`backend/src/agents/planner.py`). These tasks do not require an LLM
+provider — they run entirely offline against the in-process MCP server
+and Postgres.
+
+| Task | Purpose |
+| --- | --- |
+| `mise run quick` | 2-player test game (preset `quick_test`, 30 turns) |
+| `mise run classic` | 3-player game (preset `classic_3p`, 75 turns) |
+| `mise run showcase` | 4-player profile showcase (100 turns) |
+| `mise run self-play` | Self-play smoke test with invariant checks |
+| `mise run run-cli` | Run the pure-engine CLI with a fixed seed (no MCP, no DB) |
+
+Available profiles: `aggressive`, `economic`, `explorer`, `balanced`.
+Run `uv run python agents/run_agents.py --list-profiles` to print them.
+
+## REST API
+
+Base URL: `http://localhost:8010/api/v1`. Auth is a player-scoped
+Bearer token (per-seat API key minted at game creation or lobby join).
+
+```bash
+# Create a game
+curl -X POST http://localhost:8010/api/v1/games \
   -H "Content-Type: application/json" \
-  -d '{"players": ["alice", "bob"], "seed": 42}'
+  -d '{"players": ["alice", "bob"], "seed": 42, "max_turns": 100}'
 
-# Get game state (with fog-of-war)
-curl "http://localhost:8010/api/v1/state?game_id=test" \
-  -H "Authorization: Bearer player_alice"
+# Read redacted (fog-of-war) state for a seat
+curl "http://localhost:8010/api/v1/games/<game_id>/state" \
+  -H "Authorization: Bearer <player_api_key>"
 
-# Submit actions
-curl -X POST "http://localhost:8010/api/v1/actions?game_id=test" \
-  -H "Authorization: Bearer player_alice" \
+# Submit actions for the current turn
+curl -X POST "http://localhost:8010/api/v1/games/<game_id>/actions" \
+  -H "Authorization: Bearer <player_api_key>" \
   -H "Content-Type: application/json" \
   -d '[{"type": "MOVE", "unit_id": 1, "to": {"x": 5, "y": 6}}]'
 ```
 
-## Playing with an AI Agent (Claude Code / Goose)
+See `backend/src/api/rest.py` for the full surface (valid-moves,
+queueable-tiles, rules-reference, diplomacy, treaties, messaging, turn
+history, snapshots).
+
+## MCP server
+
+The MCP server is the canonical agent integration surface. It runs in
+two transports from a single codebase:
+
+- `fourex-mcp` — stdio (default); declared in `.mcp.json` so editors
+  auto-connect when they open the project.
+- `fourex-mcp-http` — streamable-http on :8020.
+
+Tool families live under `backend/src/mcp_server/tools/`:
+
+- `lifecycle.py` — `create_game`, `join_game`, `get_game_info`
+- `gameplay.py` — `get_game_state`, `submit_actions`, `validate_actions`,
+  `get_valid_moves`, `is_my_turn`, `get_rules_reference`
+- `analysis.py` — `analyze_territory`, `evaluate_military_position`,
+  `find_resource_opportunities`, `calculate_distances`
+- `memory.py` — agent scratchpad + structured memory slots
+  (`write_scratchpad`, `read_scratchpad`, `write_strategic_goals`,
+  `write_opponent_model`, `write_turn_notes` and their readers)
+- `diplomacy.py` — treaties, messaging, declare-war
+- `rendering.py` — ASCII / SVG / PNG map renderers
+- `history.py` — `get_turn_history`, `get_turn_snapshot`
+
+## Playing with an AI coding agent
 
 ![Claude Code playing FourEx](docs/claude-code-screenshot.png)
 
-AI agents can play FourEx directly via the MCP server defined in `.mcp.json`. Tools like [Claude Code](https://claude.ai/code) and [Goose](https://block.github.io/goose/) automatically discover this file and connect to the server — no manual configuration needed.
-
-### How it works
-
-The `.mcp.json` file at the project root declares the `fourex-mcp` server:
-
-```json
-{
-  "mcpServers": {
-    "fourex-mcp": {
-      "command": "uv",
-      "args": ["run", "fourex-mcp", "stdio"]
-    }
-  }
-}
-```
-
-When you open this project in Claude Code or Goose, the agent connects to the MCP server over stdio and gains access to game tools — creating games, reading state, submitting actions, and strategic analysis.
-
-### Quick start prompts
-
-Once you've opened the project, try these prompts:
-
-**Claude Code:**
+MCP-aware tools (Claude Code, Goose, etc.) pick up `.mcp.json`
+automatically and connect to `fourex-mcp` over stdio. Once connected,
+ask the tool to create or join a game and play:
 
 ```
 Create a new 4X game with 2 AI players and play as player 1.
@@ -117,173 +205,109 @@ What are the nearest resources and where should I expand?
 /play-4x
 ```
 
-**Goose:**
+## LLM provider setup (only if you write an LLM-driven agent)
 
-```
-Use the fourex-mcp tools to create a 2-player game with seed 42.
-Join as player 1 and play the first 10 turns with a balanced strategy.
-```
+The built-in agent runner does **not** call any LLM — it uses a
+deterministic planner so self-play and CI stay offline. The provider
+stack in `agents/src/llm_providers.py` is for agents you write on top of
+the MCP surface. Provider fallback chain, in order:
 
-```
-Analyse my current game state and suggest the best moves for this turn.
-```
+1. **Modal Ollama** — `MODAL_OLLAMA_URL`, `MODAL_OLLAMA_MODEL`
+2. **LLM Studio** (local, defaults to `http://localhost:1234/v1`) —
+   `LLM_STUDIO_URL`, `LLM_STUDIO_MODEL`
+3. **OpenAI** — `OPENAI_API_KEY`, `OPENAI_MODEL`
 
-## Development
+Extra flags:
 
-```bash
-# Format code
-mise run format
+- `REPLICATE_API_TOKEN`, `HF_TOKEN` — optional provider keys
+- `LOGFIRE_ENABLED=true` + `LOGFIRE_TOKEN` — send traces to Logfire
+- `LOGFIRE_CONSOLE_OUTPUT=true` — mirror traces to stdout
 
-# Run linting
-mise run lint
-
-# Run tests with coverage
-mise run test-cov
-
-mise run backend
-```
+All providers strip `<think>...</think>` tokens from responses and
+return cleaned content alongside the raw thinking stream.
 
 ## Architecture
 
 ```txt
 backend/
 ├── src/
-│   ├── game/           # Pure game logic (deterministic)
-│   │   ├── models.py   # Pydantic data models
-│   │   ├── rules.py    # Turn resolution, combat, economy
-│   │   └── __main__.py # CLI testing tool
-│   ├── api/            # FastAPI endpoints
-│   │   ├── rest.py     # REST endpoints
-│   │   └── game_controller.py # Game state management
-│   ├── config.py       # Settings
-│   └── main.py         # ASGI app
-└── tests/              # 100% test coverage
-    ├── test_models.py
-    ├── test_rules.py
-    └── test_api.py
+│   ├── game/
+│   │   ├── models.py             # Pydantic models + discriminated Action union
+│   │   ├── rules.py              # Pure resolve_turn() + map generation
+│   │   ├── rules_reference.py    # Single-source constants for the rules endpoint
+│   │   └── __main__.py           # CLI entry point (`mise run run-cli`)
+│   ├── api/
+│   │   ├── rest.py               # FastAPI endpoints under /api/v1
+│   │   ├── websocket.py          # Authenticated lobby + game WebSocket
+│   │   ├── persistent_game_controller.py
+│   │   ├── game_controller.py
+│   │   ├── turn_resolution.py    # Action parsing
+│   │   ├── api_keys.py           # Per-seat API key issuance
+│   │   └── identities.py         # Auth.js JWT → user identity
+│   ├── database/                 # SQLAlchemy async + Alembic migrations
+│   ├── agents/
+│   │   ├── orchestrator.py       # MCP-driven game runner
+│   │   ├── agent_runtime.py      # Per-turn agent loop
+│   │   ├── planner.py            # Deterministic heuristic planner
+│   │   ├── profiles.py           # Reference profiles (aggressive/economic/…)
+│   │   ├── profile_runner.py
+│   │   ├── selfplay.py           # Invariant-checked self-play driver
+│   │   └── mcp_client.py         # In-process + HTTP MCP clients
+│   ├── mcp_server/
+│   │   ├── server.py             # FastMCP factory (stdio + HTTP)
+│   │   └── tools/                # Tool families (see above)
+│   ├── auth.py                   # Player API keys
+│   ├── identity.py               # User identity model
+│   ├── config.py                 # pydantic-settings
+│   └── main.py                   # ASGI app wiring
+└── tests/                        # 700+ pytest cases
+
+agents/                           # Thin CLI shims
+├── run_agents.py                 # `mise run quick|classic|showcase`
+├── run_selfplay.py               # `mise run self-play`
+└── src/
+    ├── llm_providers.py          # Provider fallback chain
+    └── enhanced_logging.py
+
+frontend/
+├── src/
+│   ├── components/               # React + shadcn/ui + Pixi map
+│   ├── app/                      # Next.js App Router routes
+│   ├── types/game.ts             # Shared client/server types
+│   └── __tests__/                # Vitest suites
+└── public/
 ```
 
-## AI Agents
+## Game mechanics
 
-The project includes a complete AI agent system that allows multiple LLM-powered agents to play strategic games autonomously.
+- Map is a toroidal grid of configurable size (default 20x20).
+  Terrains: plains, forest, mountain, water. Resources: food, wood,
+  ore, crystal.
+- Units: Scout, Worker, Soldier, Archer (see `UnitType` in
+  `backend/src/game/models.py`). Workers build improvements; soldiers
+  and archers fight.
+- Cities train units and build buildings. Build queues are
+  multi-turn; workers support auto-improve automation.
+- Movement and combat use Manhattan distance. The map wraps at the
+  edges.
+- Victory: Domination (last player with cities) or Score (end of
+  `max_turns`).
 
-### Agent Features
+## Contributing
 
-- **8 Agent Personalities**: Aggressive, Defensive, Explorer, Economic, Diplomatic, Balanced, Tech-focused, and Opportunist
-- **LLM Integration**: Uses Modal (cloud), local LLM Studio, or OpenAI
-- **Game Orchestration**: Manages multi-agent games with turn coordination
-- **MCP Integration**: Advanced game analysis tools via Model Context Protocol
-- **Rich Logging**: Comprehensive decision logs and performance analytics
-
-### Quick Agent Commands
+Before sending a PR:
 
 ```bash
-# Quick 2-player test game (30 turns)
-make agents-quick
+mise run lint
+mise run format
+mise run test
 
-# Classic 3-player game (75 turns)
-make agents-classic
-
-# Personality showcase (4 players, 100 turns)
-make agents-showcase
-
-# Advanced strategies game (4 players, 120 turns)
-make agents-advanced
-
-# Interactive game setup
-make agents-interactive
-
-# Test agent functionality
-make agents-test
-
-# View recent game logs
-make agents-logs
-
-# Clean up log files
-make agents-clean
-
-# Analyze player performance
-make agents-analyze PLAYER=Alice
+# If you touched anything under frontend/:
+cd frontend && npm run type-check
+cd frontend && npm run lint
+cd frontend && npm run test -- --run
+cd frontend && npm run build
 ```
 
-### LLM Provider Setup
-
-#### 1. Modal Ollama (Recommended)
-
-Deploy the Modal Ollama server and set in `.env`:
-
-```env
-MODAL_OLLAMA_URL=https://your-modal-endpoint-url/v1
-MODAL_OLLAMA_MODEL=qwen3:32b
-```
-
-#### 2. Local LLM Studio (Optional)
-
-Run LLM Studio locally and set in `.env`:
-
-```env
-LLM_STUDIO_URL=http://localhost:1234/v1
-LLM_STUDIO_MODEL=qwen/qwen3-32b
-```
-
-#### 3. OpenAI (Fallback)
-
-Set your OpenAI API key:
-
-```env
-OPENAI_API_KEY=your_api_key_here
-```
-
-### Agent Personalities
-
-- **Aggressive Conqueror**: Military expansion and direct confrontation
-- **Defensive Strategist**: Strong defenses and steady economic development
-- **Bold Explorer**: Rapid territorial expansion and exploration
-- **Economic Powerhouse**: Resource production and infrastructure focus
-- **Master Diplomat**: Alliances and diplomatic victory paths
-- **Balanced Strategist**: Adaptive strategy based on game state
-- **Technology Pioneer**: Crystal resources and advanced technology
-- **Opportunist**: Exploits weaknesses and adapts to circumstances
-
-## MCP Server
-
-The Model Context Protocol (MCP) server provides advanced game analysis tools that enhance AI agent decision-making within the fog of war.
-
-### MCP Features
-
-- **Territory Analysis**: Examine terrain and resources in visible areas
-- **Military Assessment**: Evaluate threats and tactical opportunities
-- **Resource Discovery**: Identify strategic resource locations
-- **Action Validation**: Check action validity before execution
-- **Distance Calculation**: Optimize unit positioning and movement
-- **Comprehensive Analysis**: Full strategic situation assessment
-
-### Running the MCP Server
-
-```bash
-# Start the MCP server
-make mcp-server
-```
-
-The server runs on `stdio` transport and provides 6 core analysis tools:
-
-1. `get_game_state` - Current game state within fog of war
-2. `analyze_territory` - Territory and resource analysis
-3. `analyze_military_position` - Military threats and opportunities
-4. `find_resource_opportunities` - Strategic resource locations
-5. `validate_actions` - Action validity checking
-6. `calculate_distances` - Movement and positioning optimization
-
-### MCP Integration
-
-Agents automatically use MCP tools for enhanced strategic analysis:
-
-```python
-# Agents automatically run comprehensive analysis
-analysis = await agent.mcp_client.comprehensive_analysis(game_id, player_id)
-
-# Results are integrated into LLM prompts for better decisions
-strategic_context = analysis['territory_analysis']
-military_assessment = analysis['military_position']
-resource_opportunities = analysis['resource_opportunities']
-```
+Bugs, feature requests, or questions about the agent architecture are
+welcome as GitHub issues.

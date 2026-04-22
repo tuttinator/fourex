@@ -23,11 +23,12 @@ mise run backend-test          # backend tests only
 mise run test                  # root-level tests (tests/ dir)
 uv run pytest tests/test_turn_progression.py -k "test_name"  # single test
 
-# Run AI agents
-mise run quick                 # quick test game
-mise run classic               # classic 3-player game
-mise run showcase              # personality showcase (4 players)
-mise run interactive           # interactive game setup
+# Run AI agents (profile-driven, deterministic — no LLM required)
+mise run quick                 # 2-player quick test game (30 turns)
+mise run classic               # 3-player classic game (75 turns)
+mise run showcase              # 4-player profile showcase (100 turns)
+mise run self-play             # self-play smoke test with invariant checks
+mise run run-cli               # pure-engine CLI (no MCP, no DB)
 
 # Run MCP server (single canonical server in backend/src/mcp_server/)
 mise run serve                 # stdio mode (via fourex-mcp entry point)
@@ -37,7 +38,7 @@ mise run inspect-http          # MCP Inspector against HTTP server
 
 # Formatting and linting
 mise run format                # black + ruff --fix
-mise run lint                  # black --check + ruff + mypy
+mise run lint                  # black --check + ruff + pyrefly
 
 # Database
 mise run db-reset              # drop + recreate tables
@@ -54,40 +55,48 @@ cd frontend && npm run build
 
 ## Architecture
 
-Three main components, each with its own source tree:
+Source trees:
 
-### backend/ — Game Engine + API
+### backend/ — Game Engine + API + Agent Runtime + MCP Server
 
 - `src/game/models.py` — Pydantic models: `GameState`, `Unit`, `City`, `Tile`, `Action` (discriminated union of `MoveAction | AttackAction | FoundCityAction | TrainUnitAction | ...`), `ResourceBag`, enums for `Terrain`, `Resource`, `UnitType`, `BuildingType`
 - `src/game/rules.py` — Pure deterministic game logic: `resolve_turn()` is the core entry point, processes all player actions, collects resources, advances turn counter. Map generation uses seeded RNG
-- `src/api/rest.py` — FastAPI REST endpoints under `/api/v1`: game CRUD, state queries with fog-of-war, action submission
-- `src/api/websocket.py` — Real-time game updates via WebSocket
+- `src/game/rules_reference.py` — Single-source constants backing the `/rules` endpoint and the `get_rules_reference` MCP tool
+- `src/api/rest.py` — FastAPI REST endpoints under `/api/v1`: game CRUD, state queries with fog-of-war, action submission, valid-moves, queueable-tiles, rules reference
+- `src/api/websocket.py` — Authenticated lobby + game WebSocket
 - `src/api/persistent_game_controller.py` — Game state management with database persistence
+- `src/api/turn_resolution.py` — Action parsing for REST + MCP
 - `src/database/` — SQLAlchemy async (asyncpg) with Alembic migrations
+- `src/agents/` — Profile-driven MCP agent runtime: `orchestrator.py`, `agent_runtime.py`, `planner.py` (deterministic heuristic planner), `profiles.py` (`aggressive` / `economic` / `explorer` / `balanced`), `selfplay.py`, `mcp_client.py` (in-process + streamable-HTTP)
 - `src/config.py` — `pydantic-settings` based config, reads from `.env`
 
 ### backend/src/mcp_server/ — MCP Server (single canonical server)
 
 - `server.py` — FastMCP server with stdio and streamable-http transports, CORS, `/healthz`
 - `tools/lifecycle.py` — Game creation and joining (`create_game`, `join_game`, `get_game_info`)
-- `tools/gameplay.py` — Turn flow (`get_game_state`, `submit_actions`, `validate_actions`, `is_my_turn`)
+- `tools/gameplay.py` — Turn flow (`get_game_state`, `submit_actions`, `validate_actions`, `get_valid_moves`, `is_my_turn`, `get_rules_reference`)
 - `tools/analysis.py` — Strategic analysis (`analyze_territory`, `evaluate_military_position`, `find_resource_opportunities`, `calculate_distances`)
-- `tools/memory.py` — Agent memory (`write_scratchpad`, `read_scratchpad`)
+- `tools/memory.py` — Agent memory (`write_scratchpad`, `read_scratchpad`, `write_strategic_goals`, `write_opponent_model`, `write_turn_notes` + readers)
+- `tools/diplomacy.py` — Treaties, messaging, declare-war
+- `tools/rendering.py` — ASCII / SVG / PNG map renderers
 - `tools/history.py` — Turn history (`get_turn_history`, `get_turn_snapshot`)
 - All tools use FastMCP v3 annotations (`readOnlyHint`, `openWorldHint`) and `tags` for categorisation
 - Entry points: `fourex-mcp` (stdio), `fourex-mcp-http` (HTTP on :8020)
 
-### agents/ — AI Agent System
+### agents/ — CLI shims
 
-- `src/agent.py` — `FourXAgent` class: LLM-driven agent that observes game state, plans, and submits actions via REST (MCP migration pending)
-- `src/orchestrator.py` — `GameOrchestrator`: runs a full game loop, creates agents with personalities (aggressive/defensive/economic), manages turn execution
-- `src/llm_providers.py` — `MultiLLMClient` with provider fallback chain: Modal Ollama > LLM Studio (local, default :1234) > OpenAI. All providers extract `<think>...</think>` tokens from responses
-- `src/personalities.py` — Agent personality definitions
+Thin CLI wrappers around `backend.src.agents`. No game logic lives here.
+
+- `run_agents.py` — preset runner used by `mise run quick|classic|showcase`
+- `run_selfplay.py` — used by `mise run self-play`
+- `src/llm_providers.py` — `MultiLLMClient` with provider fallback chain: Modal Ollama > LLM Studio (local, default :1234) > OpenAI. All providers extract `<think>...</think>` tokens from responses. Only needed if you build an LLM-driven agent on top of the MCP surface; the bundled planner is offline.
+- `src/enhanced_logging.py` — structured logging setup shared by the shims
 
 ### frontend/ — Next.js UI
 
 - Next.js + TypeScript + Tailwind CSS + shadcn/ui (Radix primitives)
 - React Query for server state
+- Pixi.js for the map canvas
 
 ## Key Design Decisions
 
