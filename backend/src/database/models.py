@@ -66,6 +66,14 @@ class Game(Base):
     resigned_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     end_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    # Phase 4 (spectated-agents): soft archive. ``archived_at`` flags the
+    # game as hidden from the default list; ``archived_reason`` is the
+    # canonical enum ``manual`` | ``stale_waiting`` | ``stale_active``.
+    # Archiving preserves all snapshot/turn history; there is no hard
+    # delete path.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     # Turn timing (set when the game becomes active or a new turn starts)
     turn_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -103,6 +111,7 @@ class Game(Base):
         Index("idx_game_status", "status"),
         Index("idx_game_created", "created_at"),
         Index("idx_game_updated", "updated_at"),
+        Index("idx_game_archived_at", "archived_at"),
     )
 
 

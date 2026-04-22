@@ -535,6 +535,7 @@ class PersistentGameController:
         offset: int = 0,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        include_archived: bool = False,
     ) -> tuple[list[DBGame], int, dict[str, list[tuple[str, int | None]]]]:
         """List games with full metadata, total count, and seat rosters.
 
@@ -549,10 +550,85 @@ class PersistentGameController:
             offset=offset,
             sort_by=sort_by,
             sort_order=sort_order,
+            include_archived=include_archived,
         )
-        total = await self.repo.count_games(status=status)
+        total = await self.repo.count_games(
+            status=status, include_archived=include_archived
+        )
         seats = await self.repo.list_seats_for_games([g.id for g in games])
         return games, total, seats
+
+    async def archive_game(
+        self,
+        game_id: str,
+        user_identity_id: int,
+        reason: str = "manual",
+    ) -> DBGame:
+        """Soft-archive a game on behalf of the signed-in caller.
+
+        Creator-only: the caller's seat (resolved via their UserIdentity
+        on a PlayerApiKey in this game) must equal ``Game.creator``. This
+        matches the PRD's "creator-only" rule without introducing a
+        separate admin role.
+
+        Raises ``PermissionError`` when the caller is not the creator and
+        ``ValueError`` when the game does not exist. REST translates these
+        into 403 / 404 respectively.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+
+        if not await self._user_is_creator(db_game, user_identity_id):
+            raise PermissionError("Only the game creator can archive this game")
+
+        await self.repo.archive_game(game_id, reason=reason)
+        refreshed = await self.repo.get_game(game_id)
+        assert refreshed is not None
+        return refreshed
+
+    async def unarchive_game(
+        self,
+        game_id: str,
+        user_identity_id: int,
+    ) -> DBGame:
+        """Restore a previously-archived game for the creator.
+
+        Clears ``archived_at`` and ``archived_reason``; the game's prior
+        ``status`` is untouched (Phase 5 stale-active games transition to
+        ``ended`` at archive time, so restoring them leaves them ended —
+        deliberate).
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+
+        if not await self._user_is_creator(db_game, user_identity_id):
+            raise PermissionError("Only the game creator can unarchive this game")
+
+        await self.repo.unarchive_game(game_id)
+        refreshed = await self.repo.get_game(game_id)
+        assert refreshed is not None
+        return refreshed
+
+    async def _user_is_creator(self, db_game: DBGame, user_identity_id: int) -> bool:
+        """Return True when ``user_identity_id`` owns the creator seat.
+
+        ``Game.creator`` is a player_id (slot-0 display name). To attribute
+        a creator check back to a signed-in user, we resolve the caller's
+        seat in this game via ``get_player_api_key_by_user_identity`` and
+        match its ``player_id`` against ``Game.creator``. MCP-minted keys
+        (null identity) never win this check, which is the intended
+        invariant: agents cannot archive.
+        """
+        if db_game.creator is None:
+            return False
+        seat = await self.repo.get_player_api_key_by_user_identity(
+            db_game.id, user_identity_id
+        )
+        if seat is None:
+            return False
+        return seat.player_id == db_game.creator
 
     async def get_game_info(self, game_id: str) -> DBGame | None:
         """Get game database record with metadata."""

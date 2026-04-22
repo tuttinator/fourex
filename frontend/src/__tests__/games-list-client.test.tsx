@@ -178,4 +178,102 @@ describe("GamesListClient Phase 2 polish", () => {
 			expect(latest?.status).toBeUndefined();
 		});
 	});
+
+	it("Archived chip sends include_archived=true and filters to archived rows", async () => {
+		const spy = stubList([
+			makeGame({
+				game_id: "game_archived",
+				status: "waiting",
+				archived_at: "2026-04-22T00:00:00Z",
+				archived_reason: "manual",
+			}),
+			makeGame({
+				game_id: "game_active",
+				status: "active",
+				archived_at: null,
+			}),
+		]);
+		render(<GamesListClient userIdentityId="42" />, { wrapper: wrapper(newClient()) });
+		const archivedChip = await screen.findByRole("button", { name: "Archived" });
+
+		fireEvent.click(archivedChip);
+		await waitFor(() => {
+			const latest = spy.mock.calls.at(-1)?.[0];
+			expect(latest?.include_archived).toBe(true);
+			expect(latest?.status).toBeUndefined();
+		});
+
+		// Only the archived row should render, not the active one.
+		await screen.findByText("game_archived");
+		expect(screen.queryByText("game_active")).toBeNull();
+	});
+
+	it("shows the archive icon only for games the signed-in user created", async () => {
+		stubList([
+			makeGame({
+				game_id: "game_mine",
+				creator: "alice",
+				seats: [
+					{ player_id: "alice", user_identity_id: 42 },
+					{ player_id: "bob", user_identity_id: 10 },
+				],
+			}),
+			makeGame({
+				game_id: "game_theirs",
+				creator: "bob",
+				seats: [
+					{ player_id: "alice", user_identity_id: 42 },
+					{ player_id: "bob", user_identity_id: 10 },
+				],
+			}),
+		]);
+		render(<GamesListClient userIdentityId="42" />, { wrapper: wrapper(newClient()) });
+
+		await screen.findByText("game_mine");
+		await screen.findByText("game_theirs");
+		// The archive button has aria-label "Archive game". Only one card
+		// (game_mine) should expose it because alice is its creator.
+		const archiveButtons = screen.getAllByRole("button", { name: /archive game/i });
+		expect(archiveButtons).toHaveLength(1);
+	});
+
+	it("confirm dialog triggers archiveGame mutation", async () => {
+		const archiveSpy = vi.spyOn(api, "archiveGame").mockResolvedValue({
+			game_id: "game_mine",
+			player_slots: 2,
+			players: ["alice", "bob"],
+			creator: "alice",
+			turn: 0,
+			max_turns: 50,
+			map_width: 20,
+			map_height: 20,
+			seed: 42,
+			status: "waiting",
+			winner: null,
+			victory_type: null,
+			archived_at: "2026-04-22T00:00:00Z",
+			archived_reason: "manual",
+			created_at: "2026-04-20T00:00:00Z",
+			updated_at: "2026-04-22T00:00:00Z",
+			ended_at: null,
+		});
+		stubList([
+			makeGame({
+				game_id: "game_mine",
+				creator: "alice",
+				seats: [
+					{ player_id: "alice", user_identity_id: 42 },
+					{ player_id: "bob", user_identity_id: 10 },
+				],
+			}),
+		]);
+		render(<GamesListClient userIdentityId="42" />, { wrapper: wrapper(newClient()) });
+
+		const button = await screen.findByRole("button", { name: /archive game/i });
+		fireEvent.click(button);
+		const confirm = await screen.findByRole("button", { name: /^archive$/i });
+		fireEvent.click(confirm);
+
+		await waitFor(() => expect(archiveSpy).toHaveBeenCalledWith("game_mine"));
+	});
 });

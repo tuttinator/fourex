@@ -105,15 +105,15 @@ Creators can archive their own games and restore them later. Archive is a soft s
 
 ### Acceptance criteria
 
-- [ ] Schema migration adds `archived_at` and `archived_reason` columns
-- [ ] `POST /games/{id}/archive` succeeds for the creator and returns 403 for other users
-- [ ] `POST /games/{id}/unarchive` restores the game to its prior status and clears `archived_at` / `archived_reason`
-- [ ] Archiving sets `archived_reason='manual'`
-- [ ] `GET /games` excludes archived games by default and includes them when `include_archived=true`
-- [ ] Games list UI has filter chips: In progress / Waiting / Ended / Archived
-- [ ] Game cards show an archive icon only for games the signed-in user created
-- [ ] Archive and unarchive actions both trigger a confirmation dialog
-- [ ] Turn snapshots for archived games remain queryable via existing history endpoints
+- [x] Schema migration adds `archived_at` and `archived_reason` columns — `backend/migrations/versions/20260422_000002_add_archive_columns.py` adds both nullable columns plus an `idx_game_archived_at` index to keep the default-list filter (`archived_at IS NULL`) cheap.
+- [x] `POST /games/{id}/archive` succeeds for the creator and returns 403 for other users — `PersistentGameController._user_is_creator` resolves the caller's seat via their `UserIdentity` and compares `seat.player_id` to `Game.creator`. Covered by `test_archive_succeeds_for_creator_and_stamps_reason` + `test_archive_rejects_non_creator_with_403`.
+- [x] `POST /games/{id}/unarchive` restores the game to its prior status and clears `archived_at` / `archived_reason` — `repo.unarchive_game` nulls both columns without touching `status`. Covered by `test_unarchive_clears_archive_columns`.
+- [x] Archiving sets `archived_reason='manual'` — the REST endpoint passes `reason="manual"` through to the controller; the auto-archive sweep (Phase 5) will pass the stale-* reasons. Asserted by `test_archive_succeeds_for_creator_and_stamps_reason`.
+- [x] `GET /games` excludes archived games by default and includes them when `include_archived=true` — `list_games` / `count_games` accept the flag and filter `archived_at IS NULL` when false. Covered by `test_list_games_hides_archived_by_default_and_surfaces_with_flag`.
+- [x] Games list UI has filter chips: In progress / Waiting / Ended / Archived — `GamesListClient.STATUS_OPTIONS` now includes the Archived chip; clicking it flips `include_archived` to true and clears the status filter. Covered by `Archived chip sends include_archived=true` frontend test.
+- [x] Game cards show an archive icon only for games the signed-in user created — `viewerIsCreator` matches the signed-in user's seat's `player_id` against `game.creator`. Covered by `shows the archive icon only for games the signed-in user created`.
+- [x] Archive and unarchive actions both trigger a confirmation dialog — `ArchiveToggleButton` opens an `AlertDialog` with archive-specific or unarchive-specific copy before firing the mutation. Cancel and confirm are both wired; covered by `confirm dialog triggers archiveGame mutation`.
+- [x] Turn snapshots for archived games remain queryable via existing history endpoints — `repo.archive_game` only updates the `Game` row; it never touches `turn_snapshots` / `game_turns` / `game_snapshots`, so the existing `/games/{id}/turns` and `/games/{id}/turns/{turn}/state` endpoints keep serving reads.
 
 ---
 

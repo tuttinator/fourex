@@ -121,8 +121,16 @@ class GameRepository:
         offset: int = 0,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        include_archived: bool = False,
     ) -> list[Game]:
-        """List games with optional filtering and sorting."""
+        """List games with optional filtering and sorting.
+
+        ``include_archived=False`` (the default) omits rows where
+        ``archived_at`` is non-null. Setting it to ``True`` surfaces every
+        row regardless of archive state. The Archived-filter UI flips this
+        flag AND passes ``status=None`` so archived rows of any prior
+        status turn up in a single list.
+        """
         # Map sort_by to column
         sort_columns = {
             "created_at": Game.created_at,
@@ -137,20 +145,54 @@ class GameRepository:
         if status:
             query = query.where(Game.status == status)
 
+        if not include_archived:
+            query = query.where(Game.archived_at.is_(None))
+
         query = query.limit(limit).offset(offset)
 
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def count_games(self, status: str | None = None) -> int:
+    async def count_games(
+        self, status: str | None = None, include_archived: bool = False
+    ) -> int:
         """Count games with optional status filter."""
         query = select(func.count(Game.id))
 
         if status:
             query = query.where(Game.status == status)
 
+        if not include_archived:
+            query = query.where(Game.archived_at.is_(None))
+
         result = await self.session.execute(query)
         return result.scalar_one()
+
+    async def archive_game(self, game_id: str, reason: str) -> None:
+        """Soft-archive a game.
+
+        Sets ``archived_at`` to now and stamps ``archived_reason``. Idempotent:
+        re-archiving an already-archived row is a no-op — callers that care
+        about the distinction should check ``Game.archived_at`` themselves.
+        """
+        now = self._utcnow()
+        await self.session.execute(
+            update(Game)
+            .where(and_(Game.id == game_id, Game.archived_at.is_(None)))
+            .values(archived_at=now, archived_reason=reason, updated_at=now)
+        )
+
+    async def unarchive_game(self, game_id: str) -> None:
+        """Clear the archive flags on a game, restoring it to the default list."""
+        await self.session.execute(
+            update(Game)
+            .where(Game.id == game_id)
+            .values(
+                archived_at=None,
+                archived_reason=None,
+                updated_at=self._utcnow(),
+            )
+        )
 
     async def update_game_state(self, game_id: str, state: GameState) -> None:
         """Update game state."""

@@ -1,17 +1,39 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { api, queryKeys } from '@/lib/api'
-import { Eye, Plus, Loader2, AlertCircle, ChevronLeft, ChevronRight, Users, Swords, Bot } from 'lucide-react'
+import {
+  Archive,
+  ArchiveRestore,
+  Eye,
+  Plus,
+  Loader2,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Users,
+  Swords,
+  Bot,
+} from 'lucide-react'
 import { CreateGameDialog } from '@/components/create-game-dialog'
 import type { GamesListParams, GameSummary, SeatSummary } from '@/types/game'
 
-type StatusFilterValue = GamesListParams['status'] | 'in_progress'
+type StatusFilterValue = GamesListParams['status'] | 'in_progress' | 'archived'
 
 interface StatusOption {
   value: StatusFilterValue | undefined
@@ -22,6 +44,7 @@ const STATUS_OPTIONS: StatusOption[] = [
   { value: 'in_progress', label: 'In progress' },
   { value: 'waiting', label: 'Waiting' },
   { value: 'ended', label: 'Ended' },
+  { value: 'archived', label: 'Archived' },
   { value: undefined, label: 'All' },
 ]
 
@@ -64,6 +87,22 @@ function viewerIsSeated(seats: SeatSummary[], userIdentityId: string | null): bo
   return seats.some((s) => s.user_identity_id !== null && String(s.user_identity_id) === userIdentityId)
 }
 
+function viewerIsCreator(
+  game: GameSummary,
+  userIdentityId: string | null,
+): boolean {
+  // Creator check maps the signed-in user onto the slot-0 player_id by
+  // finding their seat's identity. Matches the backend rule enforced by
+  // PersistentGameController._user_is_creator.
+  if (!userIdentityId) return false
+  if (!game.creator) return false
+  const seats = game.seats ?? []
+  const mySeat = seats.find(
+    (s) => s.user_identity_id !== null && String(s.user_identity_id) === userIdentityId,
+  )
+  return mySeat !== undefined && mySeat.player_id === game.creator
+}
+
 interface CardActionProps {
   game: GameSummary
   userIdentityId: string | null
@@ -73,6 +112,22 @@ interface CardActionProps {
 function CardAction({ game, userIdentityId, seated }: CardActionProps) {
   const isActive = game.status === 'active'
   const isWaiting = game.status === 'waiting'
+  const isArchived = Boolean(game.archived_at)
+
+  // Archived games behave like "View" regardless of prior status — the
+  // default-list exclusion already keeps them off the main view, so when a
+  // viewer does surface one (Archived filter) we don't pretend they can
+  // Resume or Observe a hidden game.
+  if (isArchived) {
+    return (
+      <Button asChild size="sm" variant="outline" className="w-full">
+        <Link href={`/games/${game.game_id}`}>
+          <Eye className="h-4 w-4 mr-2" />
+          View
+        </Link>
+      </Button>
+    )
+  }
 
   if (!userIdentityId) {
     if (isActive) {
@@ -129,10 +184,95 @@ function CardAction({ game, userIdentityId, seated }: CardActionProps) {
   )
 }
 
+interface ArchiveToggleButtonProps {
+  game: GameSummary
+}
+
+function ArchiveToggleButton({ game }: ArchiveToggleButtonProps) {
+  const [open, setOpen] = useState(false)
+  const queryClient = useQueryClient()
+  const isArchived = Boolean(game.archived_at)
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      isArchived ? api.unarchiveGame(game.game_id) : api.archiveGame(game.game_id),
+    onSuccess: () => {
+      setOpen(false)
+      // The games-list response is keyed on (status, sort_by, sort_order,
+      // offset, limit, include_archived) so invalidate the whole namespace
+      // rather than trying to patch an individual page.
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+    },
+  })
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={isArchived ? 'Unarchive game' : 'Archive game'}
+        title={isArchived ? 'Unarchive game' : 'Archive game'}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen(true)
+        }}
+      >
+        {isArchived ? (
+          <ArchiveRestore className="h-4 w-4" />
+        ) : (
+          <Archive className="h-4 w-4" />
+        )}
+      </Button>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {isArchived ? 'Restore this game?' : 'Archive this game?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {isArchived
+                ? 'Restoring moves the game back into the default list. Its snapshots and history are unchanged.'
+                : 'Archiving hides the game from your default list. Turn snapshots are preserved and you can restore it later.'}
+              {mutation.isError && (
+                <span className="block mt-2 text-destructive">
+                  {mutation.error instanceof Error
+                    ? mutation.error.message
+                    : 'Action failed. Try again.'}
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={mutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={mutation.isPending}
+              onClick={(e) => {
+                e.preventDefault()
+                mutation.mutate()
+              }}
+            >
+              {mutation.isPending
+                ? isArchived
+                  ? 'Restoring…'
+                  : 'Archiving…'
+                : isArchived
+                  ? 'Unarchive'
+                  : 'Archive'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
 function GameCard({ game, userIdentityId }: { game: GameSummary; userIdentityId: string | null }) {
   const seats = game.seats ?? []
   const seated = viewerIsSeated(seats, userIdentityId)
   const agentVsAgent = isAgentVsAgent(seats, game.player_slots)
+  const ownsGame = viewerIsCreator(game, userIdentityId)
+  const isArchived = Boolean(game.archived_at)
 
   return (
     <Card className="hover:shadow-md transition-shadow">
@@ -146,7 +286,14 @@ function GameCard({ game, userIdentityId }: { game: GameSummary; userIdentityId:
                 Agent vs Agent
               </Badge>
             )}
+            {isArchived && (
+              <Badge variant="outline" className="flex items-center gap-1">
+                <Archive className="h-3 w-3" />
+                Archived
+              </Badge>
+            )}
             <Badge variant={statusVariant(game.status)}>{game.status}</Badge>
+            {ownsGame && <ArchiveToggleButton game={game} />}
           </div>
         </div>
       </CardHeader>
@@ -188,10 +335,15 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
   const [sortOrder, setSortOrder] = useState<GamesListParams['sort_order']>('desc')
   const [page, setPage] = useState(0)
 
-  // "in_progress" is a UI-level synonym for status=active; translate before
-  // sending it to the backend, which only knows the literal statuses.
-  const backendStatus: GamesListParams['status'] =
-    statusFilter === 'in_progress' ? 'active' : statusFilter
+  // Map the UI synonyms onto the backend shape:
+  //  - "in_progress" ⇒ status=active
+  //  - "archived"    ⇒ status cleared, include_archived=true (any status is fine)
+  const isArchivedFilter = statusFilter === 'archived'
+  const backendStatus: GamesListParams['status'] = isArchivedFilter
+    ? undefined
+    : statusFilter === 'in_progress'
+      ? 'active'
+      : statusFilter
 
   const params: GamesListParams = {
     status: backendStatus,
@@ -199,6 +351,7 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
     sort_order: sortOrder,
     offset: page * PAGE_SIZE,
     limit: PAGE_SIZE,
+    include_archived: isArchivedFilter,
   }
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -207,6 +360,13 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
     refetchInterval: 10000,
   })
 
+  // When viewing archived games, the backend returns a mix of all prior
+  // statuses — client-side filter to archived-only so the chip label
+  // matches the content.
+  const games = (data?.games ?? []).filter((g) =>
+    isArchivedFilter ? Boolean(g.archived_at) : true,
+  )
+  const totalDisplay = isArchivedFilter ? games.length : data?.total ?? 0
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0
 
   if (isLoading) {
@@ -233,8 +393,6 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
       </div>
     )
   }
-
-  const games = data?.games ?? []
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -291,7 +449,7 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
 
         {data && (
           <span className="text-sm text-muted-foreground ml-auto">
-            {data.total} game{data.total !== 1 ? 's' : ''}
+            {totalDisplay} game{totalDisplay !== 1 ? 's' : ''}
           </span>
         )}
       </div>
@@ -302,9 +460,11 @@ export function GamesListClient({ userIdentityId }: { userIdentityId: string | n
             <p className="text-muted-foreground mb-4">
               {statusFilter === 'in_progress'
                 ? 'No games in progress'
-                : statusFilter
-                  ? `No ${statusFilter} games`
-                  : 'No games yet'}
+                : statusFilter === 'archived'
+                  ? 'No archived games'
+                  : statusFilter
+                    ? `No ${statusFilter} games`
+                    : 'No games yet'}
             </p>
             <Button variant="outline" onClick={() => setCreateDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />

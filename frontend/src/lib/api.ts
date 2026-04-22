@@ -130,9 +130,27 @@ export const api = {
 			searchParams.set("offset", String(params.offset));
 		if (params.limit !== undefined)
 			searchParams.set("limit", String(params.limit));
+		if (params.include_archived)
+			searchParams.set("include_archived", "true");
 
 		const qs = searchParams.toString();
 		return fetchApi<GamesListResponse>(`/games${qs ? `?${qs}` : ""}`);
+	},
+
+	async archiveGame(gameId: string): Promise<GameDetailResponse> {
+		// Routed through the Next.js BFF so the Auth.js JWT (HttpOnly cookie)
+		// can be forwarded to FastAPI server-side.
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/archive`,
+			{ method: "POST" },
+		);
+	},
+
+	async unarchiveGame(gameId: string): Promise<GameDetailResponse> {
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/unarchive`,
+			{ method: "POST" },
+		);
 	},
 
 	async createGame(

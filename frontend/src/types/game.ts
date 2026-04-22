@@ -204,11 +204,17 @@ export interface GameSummary {
 	 * on older API responses; callers should treat ``undefined`` as "no seat
 	 * metadata available" rather than an empty roster. */
 	seats?: SeatSummary[];
+	/** slot-0 player_id — used for the creator-only archive button. */
+	creator?: string | null;
 	turn: number;
 	max_turns: number;
 	status: "waiting" | "active" | "ended" | "created";
 	winner: string | null;
 	victory_type: string | null;
+	end_reason?: string | null;
+	/** Phase 4: soft-archive state. ``archived_at`` is ISO-8601 when set. */
+	archived_at?: string | null;
+	archived_reason?: "manual" | "stale_waiting" | "stale_active" | null;
 	created_at: string;
 	updated_at: string;
 	ended_at: string | null;
@@ -256,6 +262,9 @@ export interface GameDetailResponse {
 	status: "waiting" | "active" | "ended" | "created";
 	winner: string | null;
 	victory_type: string | null;
+	end_reason?: string | null;
+	archived_at?: string | null;
+	archived_reason?: "manual" | "stale_waiting" | "stale_active" | null;
 	created_at: string;
 	updated_at: string;
 	ended_at: string | null;
@@ -274,6 +283,8 @@ export interface GamesListParams {
 	sort_order?: "asc" | "desc";
 	offset?: number;
 	limit?: number;
+	/** Phase 4: include soft-archived games in the response. Default is false. */
+	include_archived?: boolean;
 }
 
 // Turn history & replay types

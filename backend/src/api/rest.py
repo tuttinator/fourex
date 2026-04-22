@@ -611,12 +611,15 @@ class GameSummary(BaseModel):
     player_slots: int
     players: list[str]
     seats: list[SeatSummary]
+    creator: str | None
     turn: int
     max_turns: int
     status: str
     winner: str | None
     victory_type: str | None
     end_reason: str | None
+    archived_at: str | None
+    archived_reason: str | None
     created_at: str
     updated_at: str
     ended_at: str | None
@@ -644,6 +647,13 @@ async def list_games(
     ),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
     limit: int = Query(default=20, ge=1, le=100, description="Page size"),
+    include_archived: bool = Query(
+        default=False,
+        description=(
+            "Include soft-archived games. Default excludes them so the list "
+            "stays clean; the Archived filter chip flips this to true."
+        ),
+    ),
     session: AsyncSession = Depends(get_database_session),
 ) -> GamesListResponse:
     """
@@ -657,6 +667,7 @@ async def list_games(
             offset=offset,
             sort_by=sort_by,
             sort_order=sort_order,
+            include_archived=include_archived,
         )
         return GamesListResponse(
             games=[
@@ -671,12 +682,15 @@ async def list_games(
                         )
                         for player_id, user_identity_id in seats_by_game.get(g.id, [])
                     ],
+                    creator=g.creator,
                     turn=g.turn,
                     max_turns=g.max_turns,
                     status=g.status,
                     winner=g.winner,
                     victory_type=g.victory_type,
                     end_reason=g.end_reason,
+                    archived_at=g.archived_at.isoformat() if g.archived_at else None,
+                    archived_reason=g.archived_reason,
                     created_at=g.created_at.isoformat(),
                     updated_at=g.updated_at.isoformat(),
                     ended_at=g.ended_at.isoformat() if g.ended_at else None,
@@ -729,6 +743,8 @@ class GameDetailResponse(BaseModel):
     winner: str | None
     victory_type: str | None
     end_reason: str | None
+    archived_at: str | None
+    archived_reason: str | None
     created_at: str
     updated_at: str
     ended_at: str | None
@@ -968,6 +984,8 @@ def _game_detail_response(game: Any) -> GameDetailResponse:
         winner=game.winner,
         victory_type=game.victory_type,
         end_reason=game.end_reason,
+        archived_at=game.archived_at.isoformat() if game.archived_at else None,
+        archived_reason=game.archived_reason,
         created_at=game.created_at.isoformat(),
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,
@@ -1771,6 +1789,57 @@ async def declare_war(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/games/{game_id}/archive", tags=["games"])
+async def archive_game_endpoint(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+    identity: UserIdentityContext = Depends(require_user_identity),
+) -> GameDetailResponse:
+    """Soft-archive a game owned by the signed-in caller.
+
+    Hides the game from the default ``GET /games`` listing but preserves
+    every turn snapshot and action row. Restricted to the game's creator
+    (slot-0 player); other signed-in users receive 403. Archiving stamps
+    ``archived_reason='manual'``; the auto-archive sweep stamps the
+    stale-* reasons instead.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        game = await controller.archive_game(
+            game_id, identity.user_identity_id, reason="manual"
+        )
+        await session.commit()
+        return _game_detail_response(game)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/games/{game_id}/unarchive", tags=["games"])
+async def unarchive_game_endpoint(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+    identity: UserIdentityContext = Depends(require_user_identity),
+) -> GameDetailResponse:
+    """Restore a previously-archived game.
+
+    Creator-only, same auth contract as ``/archive``. Clears
+    ``archived_at`` / ``archived_reason``; the game's ``status`` is
+    untouched — a stale-active game that was archived stays ``ended``
+    after unarchive.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        game = await controller.unarchive_game(game_id, identity.user_identity_id)
+        await session.commit()
+        return _game_detail_response(game)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/games/{game_id}/restore", tags=["games"])
