@@ -142,16 +142,16 @@ Add an "auto-improve" mode for workers. `Unit.automation` is persisted server-si
 
 ### Acceptance criteria
 
-- [ ] `Unit.automation` persists via Alembic migration.
-- [ ] `SetAutomationAction` activates `AutoImprove`; `ClearAutomationAction` clears it.
-- [ ] Engine auto-targets the nearest unimproved own-territory tile and routes the worker there across turns.
-- [ ] Worker builds the terrain-appropriate improvement on arrival.
-- [ ] Worker picks a new target after completing the previous improvement.
-- [ ] Automation cancels when an enemy unit is within Chebyshev distance 1.
-- [ ] Automation cancels when the player submits a manual action for the worker.
-- [ ] Cancellation events appear in the game event stream.
-- [ ] Frontend shows an automation indicator on automated workers.
-- [ ] Tests: end-to-end auto-improve over multiple turns; enemy-adjacency cancel; manual-override cancel; no-target-available behaviour.
+- [x] `Unit.automation` persists via Alembic migration. (No SQL migration required — `GameState` is a JSON blob; `automation` defaults to `None` so legacy payloads deserialise cleanly.)
+- [x] `SetAutomationAction` activates `AutoImprove`; `ClearAutomationAction` clears it.
+- [x] Engine auto-targets the nearest unimproved own-territory tile and routes the worker there across turns.
+- [x] Worker builds the terrain-appropriate improvement on arrival.
+- [x] Worker picks a new target after completing the previous improvement.
+- [x] Automation cancels when an enemy unit is within Chebyshev distance 1.
+- [x] Automation cancels when the player submits a manual action for the worker.
+- [x] Cancellation events appear in the game event stream.
+- [x] Frontend shows an automation indicator on automated workers.
+- [x] Tests: end-to-end auto-improve over multiple turns; enemy-adjacency cancel; manual-override cancel; no-target-available behaviour.
 
 ---
 

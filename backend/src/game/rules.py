@@ -23,6 +23,8 @@ from .models import (
     Action,
     ActionResult,
     AttackAction,
+    AutomationCancellationReason,
+    AutomationCancelledEvent,
     BuildBuildingAction,
     BuildImprovementAction,
     BuildingType,
@@ -31,6 +33,7 @@ from .models import (
     CancelOrderAction,
     CancelTreatyAction,
     City,
+    ClearAutomationAction,
     Coord,
     DeclareWarAction,
     DiplomaticEvent,
@@ -60,6 +63,7 @@ from .models import (
     RespondToTreatyAction,
     SendMessageAction,
     SetActiveResearchAction,
+    SetAutomationAction,
     SetCityProductionAction,
     Terrain,
     Tile,
@@ -68,6 +72,7 @@ from .models import (
     TreatyProposal,
     TurnResult,
     Unit,
+    UnitAutomation,
     UnitType,
     VictoryResult,
     WithdrawTreatyAction,
@@ -286,6 +291,18 @@ def redact_state(state: GameState, player_id: PlayerId) -> GameState:
     redacted.order_events = [
         event for event in state.order_events if event.owner == player_id
     ]
+
+    # Phase 6 automation events: same owner-scoped treatment as order
+    # events. Automation plans and their cancellations are strictly
+    # private to the owning player. The ``Unit.automation`` slot itself
+    # is also scrubbed from enemy-visible unit rows below so observers
+    # cannot tell whether an enemy worker is on auto-improve.
+    redacted.automation_events = [
+        event for event in state.automation_events if event.owner == player_id
+    ]
+    for unit in redacted.units.values():
+        if unit.owner != player_id:
+            unit.automation = None
 
     return redacted
 
@@ -1579,6 +1596,365 @@ def resume_queued_orders(state: GameState) -> None:
         _advance_queued_orders_for_unit(state, unit)
     for unit in state.units.values():
         unit.took_damage_last_turn = False
+
+
+# --- Phase 6: worker auto-improve automation -------------------------------
+
+
+def _emit_automation_cancelled(
+    state: GameState,
+    unit: Unit,
+    mode: UnitAutomation,
+    reason: AutomationCancellationReason,
+) -> None:
+    """Append an ``AutomationCancelledEvent`` with a deterministic id."""
+    event = AutomationCancelledEvent(
+        id=state.next_automation_event_id,
+        turn=state.turn,
+        unit_id=unit.id,
+        owner=unit.owner,
+        mode=mode,
+        reason=reason,
+    )
+    state.automation_events.append(event)
+    state.next_automation_event_id += 1
+
+
+def _chebyshev_enemy_adjacent(state: GameState, unit: Unit) -> bool:
+    """True if any enemy unit sits within Chebyshev distance 1 of ``unit``.
+
+    Phase 6 uses Chebyshev (8-neighbour) adjacency for the automation
+    cancel rule rather than Manhattan sight: workers only retreat from
+    *immediate* threats, not distant scouts whose sight range happens to
+    overlap the worker's tile. "Enemy" matches the queued-order
+    definition — different owner and not in an ALLIANCE state.
+    """
+    for other in state.units.values():
+        if other.id == unit.id or other.owner == unit.owner:
+            continue
+        if (
+            state.get_diplomatic_state(unit.owner, other.owner)
+            == DiplomaticState.ALLIANCE
+        ):
+            continue
+        if abs(other.loc.x - unit.loc.x) <= 1 and abs(other.loc.y - unit.loc.y) <= 1:
+            return True
+    return False
+
+
+def _improvement_for_tile(tile: Tile) -> ImprovementType | None:
+    """Pick the improvement an auto-improve worker should build on ``tile``.
+
+    Mirrors the terrain/resource gates enforced by
+    ``execute_build_improvement`` so the automation never queues a build
+    that would immediately fail validation. Preference order matches
+    the list order in :data:`IMPROVEMENT_STATS`; most tiles have exactly
+    one legal option today (FARM on food/plains, MINE on ore/mountain,
+    LUMBER_MILL on forest, CRYSTAL_EXTRACTOR on any terrain with
+    crystal), so the tie-break is rarely exercised.
+    """
+    if tile.improvement is not None:
+        return None
+    for imp_type, stats in IMPROVEMENT_STATS.items():
+        if tile.terrain not in stats.valid_terrain:
+            continue
+        if (
+            stats.required_resource is not None
+            and tile.resource != stats.required_resource
+        ):
+            continue
+        return imp_type
+    return None
+
+
+def _find_auto_improve_target(
+    state: GameState, worker: Unit
+) -> tuple[Coord, ImprovementType] | None:
+    """Return the nearest own-territory tile the worker can improve, with its improvement.
+
+    "Own territory" means ``tile.owner == worker.owner`` — the tile sits
+    inside one of the worker's cities' cultural borders. The tile must
+    currently have no improvement, must match a legal terrain/resource
+    for at least one improvement type, and must be reachable under
+    :func:`compute_paths` (so ``AUTO_IMPROVE`` never commits to a tile
+    that is permanently walled off by enemy units or terrain).
+
+    Selection picks the reachable candidate with the smallest cumulative
+    path cost; ties are broken by (y, x) to keep the choice
+    deterministic across runs of the same state.
+    """
+    paths = compute_paths(state, worker, None)
+    # Candidate tiles the worker could sensibly improve.
+    candidates: list[tuple[int, int, int, Coord, ImprovementType]] = []
+    for tile in state.tiles:
+        if tile.owner != worker.owner:
+            continue
+        if tile.improvement is not None:
+            continue
+        if tile.city_id is not None and tile.loc != worker.loc:
+            # City tiles are their own improvement; never target them.
+            # The `== worker.loc` clause is defensive — city_id is set on
+            # the founding tile which would have improvement==None, and
+            # we do not want to treat the worker's own tile specially.
+            pass
+        imp = _improvement_for_tile(tile)
+        if imp is None:
+            continue
+        if tile.loc == worker.loc:
+            cost = 0
+        elif tile.loc in paths:
+            cost = paths[tile.loc][0]
+        else:
+            continue
+        candidates.append((cost, tile.loc.y, tile.loc.x, tile.loc, imp))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c[0], c[1], c[2]))
+    _cost, _y, _x, loc, imp = candidates[0]
+    return loc, imp
+
+
+def _build_improvement_on_current_tile(state: GameState, worker: Unit) -> bool:
+    """Run the worker's on-arrival improvement build. Returns True on success.
+
+    Uses the same resource/validation path as ``execute_build_improvement``
+    so the automation cannot sneak past the player-facing cost checks.
+    """
+    tile = state.get_tile(worker.loc)
+    if tile is None:
+        return False
+    imp = _improvement_for_tile(tile)
+    if imp is None:
+        return False
+    action = BuildImprovementAction(worker_id=worker.id, improvement=imp)
+    result = execute_build_improvement(state, action)
+    return result.success
+
+
+def _advance_automation_for_unit(state: GameState, unit: Unit) -> None:
+    """Drive one turn of automation for ``unit``.
+
+    Cancellation ladder for ``AUTO_IMPROVE``:
+    - enemy within Chebyshev distance 1 → clear automation +
+      any queue the automation installed; emit ``ENEMY_ADJACENT``.
+    - no legal improvement target reachable → emit ``NO_TARGET`` and
+      clear the automation (the player needs to redirect the worker).
+
+    Otherwise loops through: build-if-standing-on-target → pick-target →
+    queue + walk the freshly-queued order. The loop exits when the
+    worker is still marching (queue non-empty after the walk), has no
+    movement budget left, or hits a terminal condition (no target,
+    enemy adjacency, failed build).
+    """
+    if unit.automation != UnitAutomation.AUTO_IMPROVE:
+        return
+    if unit.type != UnitType.WORKER:
+        # Defensive: ``execute_set_automation`` rejects non-workers, but
+        # an older save or an engine bug could leave stale state here.
+        _emit_automation_cancelled(
+            state,
+            unit,
+            UnitAutomation.AUTO_IMPROVE,
+            AutomationCancellationReason.NO_TARGET,
+        )
+        unit.automation = None
+        return
+
+    # Outer safety cap: pick-target+queue+advance should converge in a
+    # couple of iterations per turn; the cap just prevents a pathological
+    # map or buggy target-picker from spinning forever.
+    for _ in range(8):
+        if _chebyshev_enemy_adjacent(state, unit):
+            _emit_automation_cancelled(
+                state,
+                unit,
+                UnitAutomation.AUTO_IMPROVE,
+                AutomationCancellationReason.ENEMY_ADJACENT,
+            )
+            unit.automation = None
+            unit.orders_queue.clear()
+            return
+
+        # Existing queued move (installed by a previous automation pass)
+        # was already walked forward by ``resume_queued_orders`` earlier
+        # in the turn. If the worker is still marching, nothing more to
+        # do this turn.
+        if unit.orders_queue:
+            return
+
+        target = _find_auto_improve_target(state, unit)
+        if target is None:
+            _emit_automation_cancelled(
+                state,
+                unit,
+                UnitAutomation.AUTO_IMPROVE,
+                AutomationCancellationReason.NO_TARGET,
+            )
+            unit.automation = None
+            return
+
+        destination, _imp = target
+        if destination == unit.loc:
+            # Standing on an improvable tile — build it and loop to
+            # pick the next target. A failed build (e.g. out of
+            # resources) clears the automation so the player notices.
+            if not _build_improvement_on_current_tile(state, unit):
+                _emit_automation_cancelled(
+                    state,
+                    unit,
+                    UnitAutomation.AUTO_IMPROVE,
+                    AutomationCancellationReason.NO_TARGET,
+                )
+                unit.automation = None
+                return
+            continue
+
+        if unit.moves_left <= 0:
+            # Arrived on a previous iteration but out of budget to
+            # march further. Stay automated; next turn's resume picks
+            # up from here.
+            return
+
+        queue_action = QueueOrderAction(unit_id=unit.id, destination=destination)
+        queue_result = execute_queue_order(state, unit.owner, queue_action)
+        if not queue_result.success:
+            _emit_automation_cancelled(
+                state,
+                unit,
+                UnitAutomation.AUTO_IMPROVE,
+                AutomationCancellationReason.NO_TARGET,
+            )
+            unit.automation = None
+            return
+        # Walk the freshly-queued order with whatever movement budget
+        # remains this turn. ``resume_queued_orders`` ran before us, so
+        # it did not see this queue — step it now so the first turn of
+        # automation actually moves instead of only queuing.
+        _advance_queued_orders_for_unit(state, unit)
+        # If the walk reached the destination the queue is empty again
+        # and the outer loop will try to build this turn. If not, the
+        # next iteration exits via the "orders_queue non-empty" guard.
+
+
+def resume_automation(state: GameState) -> None:
+    """Drive automation for every unit at turn start (Phase 6).
+
+    Runs after :func:`resume_queued_orders` so queued-move resumption
+    (and its damage-flag clear) has already happened — the automation
+    pass can assume ``orders_queue`` reflects post-resume state.
+    Iterates over a snapshot of ``state.units`` because a build step
+    does not mutate the dict, but defensive copies are cheap here and
+    make the phase ordering easier to reason about.
+    """
+    for unit in list(state.units.values()):
+        _advance_automation_for_unit(state, unit)
+
+
+def execute_set_automation(
+    state: GameState, player_id: PlayerId, action: SetAutomationAction
+) -> ActionResult:
+    """Enable an automation mode on one of the caller's units."""
+    unit = state.get_unit(action.unit_id)
+    if unit is None:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} not found",
+            action=action,
+        )
+    if unit.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} is not owned by {player_id}",
+            action=action,
+        )
+    if action.mode == UnitAutomation.AUTO_IMPROVE and unit.type != UnitType.WORKER:
+        return ActionResult(
+            success=False,
+            message="AUTO_IMPROVE is only available on workers",
+            action=action,
+        )
+    unit.automation = action.mode
+    # A manual SET replaces any prior queued order — the automation will
+    # queue its own fresh move on next resume.
+    unit.orders_queue.clear()
+    return ActionResult(
+        success=True,
+        message=f"Unit {unit.id} automation set to {action.mode.value}",
+        action=action,
+    )
+
+
+def _clear_automation_on_manual_actions(
+    state: GameState,
+    player_actions: dict[PlayerId, list[Action]],
+) -> None:
+    """Clear automation on any unit the player submitted a manual action for.
+
+    Runs once at the top of :func:`resolve_turn` after the automation
+    resume but before action dispatch. ``ClearAutomationAction`` is
+    *not* treated as a manual override — it is the explicit opt-out
+    and the executor already clears the slot cleanly. ``SetAutomationAction``
+    is also skipped because setting a new mode is the player "turning it
+    on again" after the engine has already reset the slot in the
+    executor. Every other action targeting a ``unit_id`` / ``worker_id``
+    / ``attacker_id`` is a manual move and triggers the override.
+
+    Emits a ``MANUAL_OVERRIDE`` cancellation event per cleared unit.
+    Dedupes per unit so three manual actions on the same worker still
+    only produce one cancellation event.
+    """
+    overridden: set[int] = set()
+    for actions in player_actions.values():
+        for action in actions:
+            if isinstance(action, SetAutomationAction | ClearAutomationAction):
+                continue
+            unit_id: int | None = None
+            for attr in ("unit_id", "worker_id", "attacker_id"):
+                value = getattr(action, attr, None)
+                if isinstance(value, int):
+                    unit_id = value
+                    break
+            if unit_id is None or unit_id in overridden:
+                continue
+            unit = state.get_unit(unit_id)
+            if unit is None or unit.automation is None:
+                continue
+            mode = unit.automation
+            _emit_automation_cancelled(
+                state,
+                unit,
+                mode,
+                AutomationCancellationReason.MANUAL_OVERRIDE,
+            )
+            unit.automation = None
+            unit.orders_queue.clear()
+            overridden.add(unit_id)
+
+
+def execute_clear_automation(
+    state: GameState, player_id: PlayerId, action: ClearAutomationAction
+) -> ActionResult:
+    """Clear the caller's unit's automation slot and any automation-installed queue."""
+    unit = state.get_unit(action.unit_id)
+    if unit is None:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} not found",
+            action=action,
+        )
+    if unit.owner != player_id:
+        return ActionResult(
+            success=False,
+            message=f"Unit {action.unit_id} is not owned by {player_id}",
+            action=action,
+        )
+    unit.automation = None
+    unit.orders_queue.clear()
+    return ActionResult(
+        success=True,
+        message=f"Unit {unit.id} automation cleared",
+        action=action,
+    )
 
 
 def _resolve_attack_target_unit(
@@ -3448,6 +3824,22 @@ def resolve_turn(
     # phase below applies to the *next* turn's resume.
     resume_queued_orders(state)
 
+    # Phase 6: drive worker automation. Runs after queued-order resume so
+    # the automation pass sees post-resume queues (a worker still
+    # marching on an automation-installed order will have had it
+    # advanced already; the pass then short-circuits without picking a
+    # new target). Enemy-adjacency, build-on-arrival, and pick-a-new-
+    # target all happen here.
+    resume_automation(state)
+
+    # Phase 6: manual-override cancel. Any action submitted for a unit
+    # with a live ``automation`` slot clears the slot *before* the
+    # action executes, matching the PRD's "manual submission overrides
+    # automation" rule. We walk the submitted actions once up front so
+    # the cancellation event carries this turn's number (not the
+    # previous turn when the automation was last active).
+    _clear_automation_on_manual_actions(state, player_actions)
+
     # Process all actions
     results: dict[PlayerId, list[ActionResult]] = {}
 
@@ -3492,6 +3884,10 @@ def resolve_turn(
                 result = execute_queue_order(state, player_id, action)
             elif isinstance(action, CancelOrderAction):
                 result = execute_cancel_order(state, player_id, action)
+            elif isinstance(action, SetAutomationAction):
+                result = execute_set_automation(state, player_id, action)
+            elif isinstance(action, ClearAutomationAction):
+                result = execute_clear_automation(state, player_id, action)
             else:
                 result = ActionResult(
                     success=False,

@@ -87,6 +87,7 @@ import type {
   DiplomacyStateResponse,
   GameAction,
   GameState,
+  AutomationCancelledEvent,
   OrderCancelledEvent,
   PlayerId,
   QueuedAction,
@@ -180,6 +181,10 @@ function describeAction(action: GameAction): string {
       return `Queue move unit #${action.unit_id} → (${action.destination.x}, ${action.destination.y})`
     case 'CANCEL_ORDER':
       return `Cancel queued order for unit #${action.unit_id}`
+    case 'SET_AUTOMATION':
+      return `Set unit #${action.unit_id} → ${action.mode.replace(/_/g, ' ')}`
+    case 'CLEAR_AUTOMATION':
+      return `Clear automation on unit #${action.unit_id}`
   }
 }
 
@@ -1409,6 +1414,33 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     lastShownOrderEventIdRef.current = maxSeen
   }, [gameState?.order_events, toast])
 
+  // Phase 6: surface automation cancellations as toasts. Same
+  // high-water-mark pattern as the queued-order events above.
+  const lastShownAutomationEventIdRef = useRef<number>(0)
+  useEffect(() => {
+    const events: AutomationCancelledEvent[] =
+      gameState?.automation_events ?? []
+    if (events.length === 0) return
+    let maxSeen = lastShownAutomationEventIdRef.current
+    const fresh = events.filter(
+      (e) => e.id > lastShownAutomationEventIdRef.current,
+    )
+    for (const ev of fresh) {
+      if (ev.id > maxSeen) maxSeen = ev.id
+      const reasonText: Record<AutomationCancelledEvent['reason'], string> = {
+        enemy_adjacent: 'enemy moved adjacent',
+        manual_override: 'manual action submitted',
+        no_target: 'no improvable tile reachable',
+      }
+      toast({
+        title: `Auto-improve stopped (unit #${ev.unit_id})`,
+        description: `Cancelled: ${reasonText[ev.reason]}.`,
+        variant: 'destructive',
+      })
+    }
+    lastShownAutomationEventIdRef.current = maxSeen
+  }, [gameState?.automation_events, toast])
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[400px]">
@@ -1593,6 +1625,47 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               improvementQueued={alreadyQueuedImprovement}
               queuedOrderDestination={committedOrderDestination}
               queueableCount={queueableTilesCoords.length}
+              automationTogglePending={queue.some(
+                (q) =>
+                  (q.action.type === 'SET_AUTOMATION' ||
+                    q.action.type === 'CLEAR_AUTOMATION') &&
+                  selectedUnit !== null &&
+                  q.action.unit_id === selectedUnit.id,
+              )}
+              onToggleAutoImprove={() => {
+                if (!selectedUnit) return
+                const isActive =
+                  selectedUnit.automation === 'auto_improve'
+                // Drop any pending automation toggle for this unit so the
+                // user can't stack two conflicting toggles in the same
+                // turn buffer.
+                setQueue((prev) => {
+                  const filtered = prev.filter(
+                    (q) =>
+                      !(
+                        (q.action.type === 'SET_AUTOMATION' ||
+                          q.action.type === 'CLEAR_AUTOMATION') &&
+                        q.action.unit_id === selectedUnit.id
+                      ),
+                  )
+                  return [
+                    ...filtered,
+                    {
+                      queue_id: newQueueId(),
+                      action: isActive
+                        ? {
+                            type: 'CLEAR_AUTOMATION',
+                            unit_id: selectedUnit.id,
+                          }
+                        : {
+                            type: 'SET_AUTOMATION',
+                            unit_id: selectedUnit.id,
+                            mode: 'auto_improve',
+                          },
+                    },
+                  ]
+                })
+              }}
               onFoundCity={() =>
                 selectedUnit &&
                 appendToQueue({
@@ -1799,9 +1872,15 @@ interface UnitPanelProps {
   /** Phase 5: count of reachable destinations beyond this turn's budget.
    * Used to explain the blue tile highlight to the player. */
   queueableCount: number
+  /** Phase 6: true if the currently-selected worker has a pending
+   * SET_AUTOMATION / CLEAR_AUTOMATION action in the local submission
+   * buffer. Used to grey out the toggle so it is not hammered twice. */
+  automationTogglePending: boolean
   onFoundCity: () => void
   onBuildImprovement: (improvement: ValidImprovement['improvement']) => void
   onCancelQueuedOrder: () => void
+  /** Phase 6: toggle auto-improve on the selected worker. */
+  onToggleAutoImprove: () => void
 }
 
 function UnitPanel({
@@ -1814,10 +1893,14 @@ function UnitPanel({
   improvementQueued,
   queuedOrderDestination,
   queueableCount,
+  automationTogglePending,
   onFoundCity,
   onBuildImprovement,
   onCancelQueuedOrder,
+  onToggleAutoImprove,
 }: UnitPanelProps) {
+  const isWorker = unit?.type === 'worker'
+  const automationActive = unit?.automation === 'auto_improve'
   return (
     <Card className="rounded-none border-0 border-b">
       <CardHeader className="py-3">
@@ -1879,6 +1962,40 @@ function UnitPanel({
                 <p className="text-muted-foreground mt-1">
                   Cancels automatically on newly visible enemies,
                   obstruction, or combat damage.
+                </p>
+              </div>
+            )}
+
+            {isWorker && (
+              <div className="rounded border border-amber-500/40 bg-amber-500/5 px-2 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    Auto-improve{' '}
+                    <span
+                      className={
+                        automationActive
+                          ? 'text-amber-600'
+                          : 'text-muted-foreground'
+                      }
+                    >
+                      {automationActive ? 'on' : 'off'}
+                    </span>
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    disabled={automationTogglePending}
+                    onClick={onToggleAutoImprove}
+                    data-testid="auto-improve-toggle"
+                  >
+                    {automationActive ? 'Disable' : 'Enable'}
+                  </Button>
+                </div>
+                <p className="text-muted-foreground mt-1">
+                  Routes the worker to the nearest unimproved owned tile
+                  and builds on arrival. Cancels automatically if an
+                  enemy moves adjacent.
                 </p>
               </div>
             )}

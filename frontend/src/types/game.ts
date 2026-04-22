@@ -81,6 +81,22 @@ export interface OrderCancelledEvent {
 	destination?: Coord | null;
 }
 
+export type UnitAutomation = "auto_improve";
+
+export type AutomationCancellationReason =
+	| "enemy_adjacent"
+	| "manual_override"
+	| "no_target";
+
+export interface AutomationCancelledEvent {
+	id: number;
+	turn: number;
+	unit_id: number;
+	owner: PlayerId;
+	mode: UnitAutomation;
+	reason: AutomationCancellationReason;
+}
+
 export interface Unit {
 	id: number;
 	owner: PlayerId;
@@ -94,6 +110,10 @@ export interface Unit {
 	/** Phase 5: true if the unit took damage on the previous turn —
 	 * causes queued orders to cancel with reason ``attacked``. */
 	took_damage_last_turn?: boolean;
+	/** Phase 6: persistent automation mode. Scrubbed to ``null`` for
+	 * non-owners so observers cannot tell whether a worker is on
+	 * auto-improve. */
+	automation?: UnitAutomation | null;
 }
 
 export interface BuildJob {
@@ -138,6 +158,10 @@ export interface GameState {
 	 * per-viewer so only the order owner sees events for their units. */
 	order_events?: OrderCancelledEvent[];
 	next_order_event_id?: number;
+	/** Phase 6: owner-scoped automation-cancellation events. Same
+	 * owner-scoped redaction as order_events. */
+	automation_events?: AutomationCancelledEvent[];
+	next_automation_event_id?: number;
 }
 
 export interface PromptLog {
@@ -605,6 +629,17 @@ export interface CancelOrderActionPayload {
 	unit_id: number;
 }
 
+export interface SetAutomationActionPayload {
+	type: "SET_AUTOMATION";
+	unit_id: number;
+	mode: UnitAutomation;
+}
+
+export interface ClearAutomationActionPayload {
+	type: "CLEAR_AUTOMATION";
+	unit_id: number;
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -623,7 +658,9 @@ export type GameAction =
 	| ReorderCityQueueActionPayload
 	| SetActiveResearchActionPayload
 	| QueueOrderActionPayload
-	| CancelOrderActionPayload;
+	| CancelOrderActionPayload
+	| SetAutomationActionPayload
+	| ClearAutomationActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

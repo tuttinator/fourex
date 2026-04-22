@@ -477,6 +477,23 @@ export function PixiMap({
         ring.stroke()
         world.addChild(ring)
       }
+
+      // Phase 6: auto-improve indicator. Small amber dot in the
+      // bottom-right of the unit sprite tile. Only ever rendered for
+      // the viewer's own units because ``redact_state`` scrubs the
+      // ``automation`` field for non-owners before the payload lands
+      // here.
+      if (unit.automation === 'auto_improve') {
+        const dot = new Graphics()
+        const cx = ux + TILE_SIZE - 6
+        const cy = uy + TILE_SIZE - 6
+        dot.circle(cx, cy, 3)
+        dot.fill({ color: 0xfbbf24, alpha: 1 })
+        dot.setStrokeStyle({ width: 1, color: 0x111827, alpha: 1 })
+        dot.circle(cx, cy, 3)
+        dot.stroke()
+        world.addChild(dot)
+      }
     }
 
     // Stack-count badge (Phase 4 gameplay-improvements). Rendered above

@@ -461,6 +461,43 @@ class OrderCancellationReason(str, Enum):
     COMPLETED = "completed"
 
 
+class UnitAutomation(str, Enum):
+    """Persistent automation mode a unit can be placed into (Phase 6).
+
+    Initial member: ``AUTO_IMPROVE`` — the engine selects the nearest
+    unimproved own-territory tile, routes the worker there over multiple
+    turns using the Phase 5 queue machinery, and on arrival issues the
+    terrain-appropriate improvement build. Clears automatically when an
+    enemy unit enters Chebyshev-distance-1 or the player submits a
+    manual action for the worker.
+    """
+
+    AUTO_IMPROVE = "auto_improve"
+
+
+class AutomationCancellationReason(str, Enum):
+    """Why a unit's ``automation`` slot was cleared during turn resolution."""
+
+    ENEMY_ADJACENT = "enemy_adjacent"
+    MANUAL_OVERRIDE = "manual_override"
+    NO_TARGET = "no_target"
+
+
+class AutomationCancelledEvent(BaseModel):
+    """A unit's automation was cleared during turn resolution.
+
+    Scoped to the owning player via ``redact_state`` — other players
+    never see automation events for units that aren't theirs.
+    """
+
+    id: int
+    turn: int
+    unit_id: int
+    owner: PlayerId
+    mode: UnitAutomation
+    reason: AutomationCancellationReason
+
+
 class OrderCancelledEvent(BaseModel):
     """A unit's queued order was cancelled (or completed) during turn resolution.
 
@@ -495,6 +532,7 @@ class Unit(BaseModel):
     loc: Coord
     orders_queue: list[QueuedOrder] = Field(default_factory=list)
     took_damage_last_turn: bool = False
+    automation: UnitAutomation | None = None
 
     @property
     def stats(self) -> UnitStats:
@@ -847,6 +885,7 @@ class GameState(BaseModel):
     next_proposal_id: int = 1
     next_treaty_id: int = 1
     next_order_event_id: int = 1
+    next_automation_event_id: int = 1
     max_turns: int = 100
     victory_conditions: list[str] = Field(
         default_factory=lambda: ["domination", "economic", "elimination", "score"]
@@ -859,6 +898,7 @@ class GameState(BaseModel):
     active_treaties: list[Treaty] = Field(default_factory=list)
     research: dict[PlayerId, ResearchState] = Field(default_factory=dict)
     order_events: list[OrderCancelledEvent] = Field(default_factory=list)
+    automation_events: list[AutomationCancelledEvent] = Field(default_factory=list)
 
     def get_tile(self, loc: Coord) -> Tile | None:
         """Get tile at the given location."""
@@ -1082,6 +1122,33 @@ class CancelOrderAction(BaseModel):
     unit_id: int
 
 
+class SetAutomationAction(BaseModel):
+    """Enable an automation mode on a unit (Phase 6).
+
+    Currently supports ``UnitAutomation.AUTO_IMPROVE`` on workers. At
+    turn resume the engine routes the worker to the nearest unimproved
+    own-territory tile and issues the terrain-appropriate improvement
+    build on arrival, repeating until the automation is cleared.
+    """
+
+    type: str = "SET_AUTOMATION"
+    unit_id: int
+    mode: UnitAutomation
+
+
+class ClearAutomationAction(BaseModel):
+    """Clear a unit's automation slot (Phase 6).
+
+    Equivalent to the cancel half of the "one-click toggle" UX. Also
+    clears any queued order the automation installed on the unit's
+    behalf so the worker actually stops moving, not just stops picking
+    fresh targets.
+    """
+
+    type: str = "CLEAR_AUTOMATION"
+    unit_id: int
+
+
 class SetActiveResearchAction(BaseModel):
     """Set the player's active research tech.
 
@@ -1115,6 +1182,8 @@ Action = (
     | SetActiveResearchAction
     | QueueOrderAction
     | CancelOrderAction
+    | SetAutomationAction
+    | ClearAutomationAction
 )
 
 
