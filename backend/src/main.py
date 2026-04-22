@@ -2,12 +2,14 @@
 FastAPI application entry point.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.api_keys import router as api_keys_router
+from .api.archive_sweep import archive_sweep_loop
 from .api.identities import router as identities_router
 from .api.rest import router as rest_router
 from .api.websocket import router as websocket_router
@@ -31,11 +33,28 @@ async def lifespan(app: FastAPI):
         print(f"Database initialization failed: {e}")
         raise
 
+    # Phase 5 (spectated-agents): background sweep that soft-archives
+    # stale waiting lobbies and dormant active games. The first tick
+    # fires after ``archive_sweep_interval_seconds`` — never immediately
+    # at startup — so boot stays cheap and tests don't catch an eager
+    # pass. Gated by ``archive_sweep_enabled`` so tests can disable it.
+    sweep_task: asyncio.Task[None] | None = None
+    if settings.archive_sweep_enabled:
+        sweep_task = asyncio.create_task(archive_sweep_loop())
+
     # Start the MCP session manager (manages async task groups for MCP sessions).
     # Must run inside the lifespan because mounted sub-apps don't get their own.
     assert _mcp._session_manager is not None
-    async with _mcp._session_manager.run():
-        yield
+    try:
+        async with _mcp._session_manager.run():
+            yield
+    finally:
+        if sweep_task is not None:
+            sweep_task.cancel()
+            try:
+                await sweep_task
+            except asyncio.CancelledError:
+                pass
 
     # Shutdown: Close database connections
     try:

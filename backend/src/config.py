@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     # `auth_secret` (which signs user JWTs) so the two rotate independently.
     identity_service_secret: str = "dev-identity-service-secret-change-me"
 
+    # Phase 5 (spectated-agents): auto-archive sweep. Thresholds measured
+    # against ``created_at`` (waiting) and ``turn_started_at`` (active).
+    # ``archive_sweep_enabled`` gates the in-process background loop only;
+    # the ``mise run db-archive-stale`` task ignores the flag and always
+    # runs the sweep on demand.
+    archive_stale_waiting_days: int = 7
+    archive_stale_active_days: int = 14
+    archive_sweep_interval_seconds: int = 86400
+    archive_sweep_enabled: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

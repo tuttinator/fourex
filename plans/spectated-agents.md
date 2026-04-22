@@ -127,14 +127,14 @@ A background sweep periodically archives stale games so the list stays clean wit
 
 ### Acceptance criteria
 
-- [ ] Sweep logic is implemented as a single function callable from both the background loop and the mise task
-- [ ] Running `mise run db-archive-stale` against a database with aged records archives them correctly and prints a summary
-- [ ] In-process background loop starts on app boot and ticks at the configured interval (default 24h)
-- [ ] Stale `waiting` lobbies are archived with `archived_reason='stale_waiting'` and retain `status='waiting'`
-- [ ] Dormant `active` games transition to `status='ended'` with `end_reason='abandoned'` and are archived with `archived_reason='stale_active'`
-- [ ] Thresholds (7d waiting, 14d active) and tick interval are configurable via settings
-- [ ] Sweep is idempotent: running it twice in succession does not modify already-archived games
-- [ ] Archived games remain queryable via the existing history and snapshot endpoints
+- [x] Sweep logic is implemented as a single function callable from both the background loop and the mise task — `backend/src/api/archive_sweep.py::archive_stale_games` (session in, summary dict out). `run_sweep_once` wraps it with its own session + commit for the CLI; `archive_sweep_loop` wraps it for the FastAPI background tick.
+- [x] Running `mise run db-archive-stale` against a database with aged records archives them correctly and prints a summary — `manage_db.py archive-stale` calls `run_sweep_once` and prints `Archived N games (stale_waiting=A, stale_active=B)`.
+- [x] In-process background loop starts on app boot and ticks at the configured interval (default 24h) — `backend/src/main.py` lifespan creates `asyncio.create_task(archive_sweep_loop())` when `archive_sweep_enabled=True` and cancels it on shutdown. First tick fires *after* the first sleep (never eagerly on boot) so test lifecycles don't catch a sweep.
+- [x] Stale `waiting` lobbies are archived with `archived_reason='stale_waiting'` and retain `status='waiting'` — covered by `test_stale_waiting_lobby_is_archived_with_reason`.
+- [x] Dormant `active` games transition to `status='ended'` with `end_reason='abandoned'` and are archived with `archived_reason='stale_active'` — covered by `test_dormant_active_game_is_ended_and_archived` (no winner, end_reason=abandoned, archived_reason=stale_active).
+- [x] Thresholds (7d waiting, 14d active) and tick interval are configurable via settings — new fields on `Settings`: `archive_stale_waiting_days=7`, `archive_stale_active_days=14`, `archive_sweep_interval_seconds=86400`, `archive_sweep_enabled=True`. Function also accepts per-call overrides (`test_thresholds_are_configurable`).
+- [x] Sweep is idempotent: running it twice in succession does not modify already-archived games — `repo.archive_game` filters on `archived_at IS NULL`, and stale-active rows stop matching `status='active'` after the first pass. Covered by `test_sweep_is_idempotent`.
+- [x] Archived games remain queryable via the existing history and snapshot endpoints — `archive_stale_games` only updates the `Game` row; `turn_snapshots` / `game_turns` / `game_snapshots` are untouched. Covered by `test_turn_snapshots_remain_queryable_after_sweep`.
 
 ---
 

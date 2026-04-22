@@ -78,6 +78,10 @@ run = "cd backend && uv run python manage_db.py list-games"
 description = "Show detailed game info (pass GAME=<id>)"
 run = "cd backend && uv run python manage_db.py game-info ${GAME}"
 
+[tasks.db-archive-stale]
+description = "Archive stale waiting lobbies (>7d) and dormant active games (>14d)"
+run = "cd backend && uv run python manage_db.py archive-stale"
+
 # Backend development
 [tasks.backend-test]
 description = "Run backend tests"

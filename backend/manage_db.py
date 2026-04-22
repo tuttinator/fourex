@@ -14,6 +14,7 @@ from rich.table import Table
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
+from src.api.archive_sweep import run_sweep_once
 from src.database.connection import drop_db, get_database_session, get_engine, init_db
 from src.database.repository import GameRepository
 
@@ -153,6 +154,21 @@ async def game_info(game_id: str):
         raise
 
 
+async def archive_stale():
+    """Run the stale-archive sweep and print a summary."""
+    try:
+        console.print("[bold blue]Running stale-archive sweep...[/bold blue]")
+        summary = await run_sweep_once()
+        console.print(
+            f"[green]Archived {summary['total']} games "
+            f"(stale_waiting={summary['waiting_archived']}, "
+            f"stale_active={summary['active_archived']})[/green]"
+        )
+    except Exception as e:
+        console.print(f"[red]✗ Archive sweep failed: {e}[/red]")
+        raise
+
+
 async def main():
     """Main CLI function."""
     if len(sys.argv) < 2:
@@ -167,6 +183,7 @@ async def main():
 • python manage_db.py check        - Check database connection
 • python manage_db.py list-games   - List all games
 • python manage_db.py game-info <game_id> - Show game details
+• python manage_db.py archive-stale - Archive stale waiting/active games
 
 [bold]Environment Variables:[/bold]
 • DATABASE_URL - PostgreSQL connection string
@@ -198,10 +215,13 @@ async def main():
                 )
                 sys.exit(1)
             await game_info(sys.argv[2])
+        elif command == "archive-stale":
+            await archive_stale()
         else:
             console.print(f"[red]Unknown command: {command}[/red]")
             console.print(
-                "Available commands: create, drop, reset, check, list-games, game-info"
+                "Available commands: create, drop, reset, check, list-games, "
+                "game-info, archive-stale"
             )
             sys.exit(1)
 
