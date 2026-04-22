@@ -1149,6 +1149,27 @@ class ClearAutomationAction(BaseModel):
     unit_id: int
 
 
+class ResignAction(BaseModel):
+    """Concede the current game.
+
+    Takes effect immediately at submission time — not deferred to turn
+    resolution. The resigner's cities, units, and tile ownership are
+    destroyed via the standard elimination path. In a 2-player game the
+    remaining seat is declared winner and the game ends with
+    ``end_reason='resignation'``. In a 3+ player game play continues and
+    victory resolves when only one player has cities.
+
+    ``type`` is a ``Literal`` (unlike the other action classes in this
+    file) because ResignAction has no other required fields. Without a
+    literal discriminator the Pydantic smart-union coercion on
+    ``list[Action]`` would classify a bare ``{"type": "RESIGN"}``
+    payload as whichever sibling type has the loosest fields. A literal
+    makes RESIGN unambiguous.
+    """
+
+    type: Literal["RESIGN"] = "RESIGN"
+
+
 class SetActiveResearchAction(BaseModel):
     """Set the player's active research tech.
 
@@ -1184,6 +1205,7 @@ Action = (
     | CancelOrderAction
     | SetAutomationAction
     | ClearAutomationAction
+    | ResignAction
 )
 
 

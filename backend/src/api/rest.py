@@ -616,6 +616,7 @@ class GameSummary(BaseModel):
     status: str
     winner: str | None
     victory_type: str | None
+    end_reason: str | None
     created_at: str
     updated_at: str
     ended_at: str | None
@@ -675,6 +676,7 @@ async def list_games(
                     status=g.status,
                     winner=g.winner,
                     victory_type=g.victory_type,
+                    end_reason=g.end_reason,
                     created_at=g.created_at.isoformat(),
                     updated_at=g.updated_at.isoformat(),
                     ended_at=g.ended_at.isoformat() if g.ended_at else None,
@@ -726,6 +728,7 @@ class GameDetailResponse(BaseModel):
     status: str
     winner: str | None
     victory_type: str | None
+    end_reason: str | None
     created_at: str
     updated_at: str
     ended_at: str | None
@@ -964,6 +967,7 @@ def _game_detail_response(game: Any) -> GameDetailResponse:
         status=game.status,
         winner=game.winner,
         victory_type=game.victory_type,
+        end_reason=game.end_reason,
         created_at=game.created_at.isoformat(),
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,

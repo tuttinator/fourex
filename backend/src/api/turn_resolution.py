@@ -38,6 +38,7 @@ from ..game.models import (
     ProposeTreatyAction,
     QueueOrderAction,
     ReorderCityQueueAction,
+    ResignAction,
     RespondToTreatyAction,
     SendMessageAction,
     SetActiveResearchAction,
@@ -108,6 +109,8 @@ def parse_action(raw: dict[str, Any]) -> Action:
         return SetAutomationAction.model_validate(raw)
     elif action_type == "CLEAR_AUTOMATION":
         return ClearAutomationAction.model_validate(raw)
+    elif action_type == "RESIGN":
+        return ResignAction.model_validate(raw)
     else:
         raise ValueError(f"Unknown action type: {action_type}")
 

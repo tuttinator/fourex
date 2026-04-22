@@ -56,6 +56,16 @@ class Game(Base):
     winner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     victory_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    # Phase 3 (spectated-agents): resignation audit + canonical end-of-game
+    # reason. ``end_reason`` is the single enum the frontend reads to know
+    # *why* a game ended: ``domination`` | ``score`` | ``resignation`` |
+    # ``abandoned``. Reverse-engineering that from ``resigned_at`` +
+    # ``archived_reason`` is brittle, so the column is introduced alongside
+    # the resignation feature.
+    resigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resigned_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    end_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     # Turn timing (set when the game becomes active or a new turn starts)
     turn_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

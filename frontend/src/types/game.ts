@@ -658,6 +658,10 @@ export interface ClearAutomationActionPayload {
 	unit_id: number;
 }
 
+export interface ResignActionPayload {
+	type: "RESIGN";
+}
+
 export type GameAction =
 	| MoveActionPayload
 	| AttackActionPayload
@@ -678,7 +682,8 @@ export type GameAction =
 	| QueueOrderActionPayload
 	| CancelOrderActionPayload
 	| SetAutomationActionPayload
-	| ClearAutomationActionPayload;
+	| ClearAutomationActionPayload
+	| ResignActionPayload;
 
 // Phase 5 endpoint payloads --------------------------------------------------
 

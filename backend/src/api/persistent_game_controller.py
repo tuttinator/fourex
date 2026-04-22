@@ -3,6 +3,7 @@ Persistent game controller using database storage.
 """
 
 import random
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from ..game.models import (
 )
 from ..game.rules import (
     STARTING_STOCKPILE,
+    eliminate_player,
     generate_map,
     place_starting_units,
     seed_research,
@@ -343,6 +345,83 @@ class PersistentGameController:
             print(f"Error loading game state for {game_id}: {e}")
             return None
 
+    async def resign_player(self, game_id: str, player_id: PlayerId) -> dict[str, Any]:
+        """Apply a resignation immediately.
+
+        Removes the resigner's cities, units, and tile ownership (shared
+        ``eliminate_player`` path) and persists the updated state. In a
+        2-player game the remaining seat is declared winner and the game
+        is ended with ``end_reason='resignation'``. In a 3+ player game
+        play continues — victory resolves when only one player has
+        cities, matching the existing domination condition.
+
+        Returns a summary dict for callers that want to echo the outcome
+        back to the user. Raises ``ValueError`` for unseated callers or
+        already-ended games; the caller (REST / MCP) translates this into
+        the appropriate HTTP / error payload.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+        if db_game.status == "ended":
+            raise ValueError("Game has already ended")
+
+        state = GameState.model_validate(db_game.state)
+        if player_id not in state.players:
+            raise ValueError(f"Player {player_id} not in game {game_id}")
+        if player_id in state.eliminated_players:
+            raise ValueError(f"Player {player_id} has already been eliminated")
+
+        eliminate_player(state, player_id)
+        await self.repo.update_game_state(game_id, state)
+
+        active_players = [p for p in state.players if p not in state.eliminated_players]
+        game_ended = False
+        winner: PlayerId | None = None
+        # 2-seat games end immediately with the other seat as winner. 3+
+        # seat games continue — eliminate_player has already razed the
+        # resigner's assets so the remaining players fight it out.
+        if len(state.players) == 2 and len(active_players) == 1:
+            winner = active_players[0]
+            await self.repo.end_game(
+                game_id,
+                winner=winner,
+                victory_type="resignation",
+                end_reason="resignation",
+                resigned_by=player_id,
+            )
+            game_ended = True
+        elif db_game.status == "created":
+            # 3+ player game still going — promote a pre-play ``created``
+            # row to ``active`` so the games-list and spectator UI know
+            # the match is live. Matches the transition the MCP
+            # ``submit_actions`` tool performs on the first regular
+            # submission.
+            from datetime import UTC, datetime
+
+            from sqlalchemy import update as sa_update
+
+            from ..database.models import Game as GameModel
+
+            now = datetime.now(UTC).replace(tzinfo=None)
+            await self.repo.session.execute(
+                sa_update(GameModel)
+                .where(GameModel.id == game_id)
+                .values(status="active", turn_started_at=now)
+            )
+
+        # Keep the cache in sync so subsequent reads don't serve stale
+        # entities belonging to the eliminated player.
+        self._game_cache[game_id] = state
+
+        return {
+            "game_id": game_id,
+            "resigned_by": player_id,
+            "game_ended": game_ended,
+            "winner": winner,
+            "remaining_players": active_players,
+        }
+
     async def submit_player_actions(
         self, game_id: str, player_id: PlayerId, actions: list[Action]
     ) -> None:
@@ -352,7 +431,27 @@ class PersistentGameController:
         overwrites) and then delegates to
         ``turn_resolution.check_and_resolve_turn``, which is the single
         source of truth shared with the MCP ``submit_actions`` tool.
+
+        Resignation is special-cased: if a ``ResignAction`` is present
+        anywhere in the submission it is applied immediately via
+        ``resign_player`` and the rest of the submission is discarded.
+        Resignation doesn't wait on other seats or on a turn resolution;
+        the game either ends (2-player) or the resigner's assets are
+        razed and play continues.
+
+        Detection is by ``type`` string rather than ``isinstance`` —
+        FastAPI's Pydantic smart-union coercion can classify a bare
+        ``{"type": "RESIGN"}`` payload as a sibling type that has only
+        an optional discriminator field, so the instance class alone is
+        unreliable.
         """
+        if any(getattr(a, "type", None) == "RESIGN" for a in actions):
+            await self.resign_player(game_id, player_id)
+            refreshed = await self.load_game_from_database(game_id)
+            if refreshed is not None:
+                self._game_cache[game_id] = refreshed
+            return
+
         state = await self.get_game_state(game_id)
         if not state:
             raise ValueError(f"Game {game_id} not found")

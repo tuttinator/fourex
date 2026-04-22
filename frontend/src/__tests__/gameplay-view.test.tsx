@@ -1822,4 +1822,43 @@ describe("GameplayView", () => {
 			expect(screen.getByTestId("idle-unit-count")).toHaveTextContent("2"),
 		);
 	});
+
+	// --- Phase 3 spectated-agents: resignation --------------------------
+
+	it("Resign shows a confirmation and posts RESIGN on confirm", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		const resign = vi.spyOn(api, "resignGame").mockResolvedValue({
+			status: "actions_submitted",
+			count: "1",
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Confirmation surface is hidden until the player opens it.
+		expect(screen.queryByTestId("resign-confirm")).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId("resign-open"));
+		expect(screen.getByText(/Resign from this game/)).toBeInTheDocument();
+
+		// Cancel closes the confirmation without calling the API.
+		fireEvent.click(screen.getByTestId("resign-cancel"));
+		expect(resign).not.toHaveBeenCalled();
+		await waitFor(() =>
+			expect(screen.getByTestId("resign-open")).toBeInTheDocument(),
+		);
+
+		// Re-open and confirm — the API is called exactly once.
+		fireEvent.click(screen.getByTestId("resign-open"));
+		fireEvent.click(screen.getByTestId("resign-confirm"));
+		await waitFor(() => expect(resign).toHaveBeenCalledTimes(1));
+		expect(resign).toHaveBeenCalledWith("g1");
+	});
 });

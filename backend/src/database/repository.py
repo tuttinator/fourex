@@ -172,19 +172,36 @@ class GameRepository:
         await self.update_game_state(game_id, state)
 
     async def end_game(
-        self, game_id: str, winner: str | None = None, victory_type: str = "score"
+        self,
+        game_id: str,
+        winner: str | None = None,
+        victory_type: str = "score",
+        end_reason: str | None = None,
+        resigned_by: str | None = None,
     ) -> None:
-        """Mark game as ended."""
+        """Mark game as ended.
+
+        ``end_reason`` is the canonical enum read by the frontend
+        (``domination`` | ``score`` | ``resignation`` | ``abandoned``). It
+        defaults to ``victory_type`` when not supplied so callers that
+        predate the column (everything except the resignation path) keep
+        working without changes. ``resigned_by`` and ``resigned_at`` are
+        only set when the end-reason is a resignation.
+        """
+        now = self._utcnow()
+        values: dict[str, Any] = {
+            "status": "ended",
+            "winner": winner,
+            "victory_type": victory_type,
+            "ended_at": now,
+            "updated_at": now,
+            "end_reason": end_reason if end_reason is not None else victory_type,
+        }
+        if resigned_by is not None:
+            values["resigned_by"] = resigned_by
+            values["resigned_at"] = now
         await self.session.execute(
-            update(Game)
-            .where(Game.id == game_id)
-            .values(
-                status="ended",
-                winner=winner,
-                victory_type=victory_type,
-                ended_at=self._utcnow(),
-                updated_at=self._utcnow(),
-            )
+            update(Game).where(Game.id == game_id).values(**values)
         )
 
     async def save_turn_result(

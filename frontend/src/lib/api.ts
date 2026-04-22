@@ -282,6 +282,16 @@ export const api = {
 		});
 	},
 
+	async resignGame(
+		gameId: string,
+	): Promise<{ status: string; count: string }> {
+		return fetchApi(`/actions?game_id=${encodeURIComponent(gameId)}`, {
+			method: "POST",
+			body: JSON.stringify([{ type: "RESIGN" }]),
+			gameId,
+		});
+	},
+
 	async getMySubmission(gameId: string): Promise<MySubmissionResponse> {
 		return fetchApi(
 			`/games/${encodeURIComponent(gameId)}/my-submission`,

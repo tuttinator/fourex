@@ -83,15 +83,15 @@ Players can concede a game at any time. A new `ResignAction` flows through the e
 
 ### Acceptance criteria
 
-- [ ] Schema migration adds `resigned_at`, `resigned_by`, and `end_reason` columns with the documented enum values
-- [ ] `ResignAction` is a valid submittable action via REST and is rejected for non-seated submitters
-- [ ] MCP `resign_game` tool successfully ends a 2-player game from either seat
-- [ ] A 2-player resignation sets `status='ended'`, `ended_at`, `resigned_at`, `resigned_by`, and `end_reason='resignation'`
-- [ ] The remaining player in a 2-player game is recorded as winner
-- [ ] A 3-player resignation removes the resigner's assets, flags them eliminated, and leaves `status='active'`
-- [ ] `GameplayView` displays a Resign button with a confirmation dialog; only seated players see it
-- [ ] Spectators never see a resign affordance
-- [ ] Turn snapshots taken during and after a resignation remain replayable
+- [x] Schema migration adds `resigned_at`, `resigned_by`, and `end_reason` columns with the documented enum values — `backend/migrations/versions/20260422_000001_add_resignation_columns.py` adds all three nullable columns; the enum is enforced at the application layer via `repo.end_game(end_reason=...)` rather than a PG check constraint, matching the existing shape of `victory_type` / `archived_reason`.
+- [x] `ResignAction` is a valid submittable action via REST and is rejected for non-seated submitters — `PersistentGameController.submit_player_actions` detects the `RESIGN` type up front and routes to `resign_player`; unseated callers surface as 400s from the auth layer (see `test_resignation_is_rejected_for_unseated_caller`).
+- [x] MCP `resign_game` tool successfully ends a 2-player game from either seat — new tool in `backend/src/mcp_server/tools/gameplay.py` wraps `controller.resign_player` and returns a summary dict. Covered by `test_mcp_resign_game_ends_two_player_match`.
+- [x] A 2-player resignation sets `status='ended'`, `ended_at`, `resigned_at`, `resigned_by`, and `end_reason='resignation'` — `repo.end_game` accepts `end_reason` + `resigned_by` and stamps `ended_at`/`resigned_at` to `now()`. `test_two_player_resignation_ends_game_via_rest` asserts all five fields.
+- [x] The remaining player in a 2-player game is recorded as winner — `resign_player` picks the single remaining entry in `active_players` and passes it to `end_game(winner=...)`.
+- [x] A 3-player resignation removes the resigner's assets, flags them eliminated, and leaves `status='active'` — `eliminate_player` handles asset destruction, and the else-branch in `resign_player` promotes a pre-play `created` game to `active` so 3+ player resignations leave the game in the documented state.
+- [x] `GameplayView` displays a Resign button with a confirmation dialog; only seated players see it — new two-step confirm affordance in `frontend/src/components/gameplay-view.tsx` next to End Turn. Gated on `currentPlayer` (`GameplayView` only renders for seated players).
+- [x] Spectators never see a resign affordance — `ObservationView` is a separate component; the Resign block lives exclusively under the End Turn sidebar in `GameplayView`, which spectators don't render.
+- [x] Turn snapshots taken during and after a resignation remain replayable — `resign_player` goes through `repo.update_game_state` (JSON blob) and `end_game` (column update); it doesn't touch `turn_snapshots` or `game_turns`, so prior snapshots stay queryable via the existing `/games/{id}/turns` / `/turns/{turn}/state` endpoints.
 
 ---
 

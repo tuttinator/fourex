@@ -45,6 +45,7 @@ import {
   FileSignature,
   Hammer,
   Handshake,
+  Flag,
   Landmark,
   Loader2,
   Lock,
@@ -185,6 +186,8 @@ function describeAction(action: GameAction): string {
       return `Set unit #${action.unit_id} → ${action.mode.replace(/_/g, ' ')}`
     case 'CLEAR_AUTOMATION':
       return `Clear automation on unit #${action.unit_id}`
+    case 'RESIGN':
+      return 'Resign'
   }
 }
 
@@ -1368,6 +1371,36 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     },
   })
 
+  // Phase 3 (spectated-agents): resignation. Applied immediately by the
+  // backend — this mutation does not queue onto the turn submission
+  // buffer. In a 2-player game the remaining seat wins on return; in a
+  // 3+ game the resigner is eliminated and play continues for the
+  // others. Only visible to seated players.
+  const [confirmingResign, setConfirmingResign] = useState(false)
+  const resignMutation = useMutation({
+    mutationFn: async () => api.resignGame(gameId),
+    onSuccess: () => {
+      setConfirmingResign(false)
+      toast({
+        title: 'Resigned',
+        description: 'You have conceded the game.',
+      })
+      queryClient.invalidateQueries({ queryKey: stateQueryKey })
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.gameDetail(gameId),
+      })
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiError ? err.message : (err as Error).message
+      toast({
+        title: 'Resignation failed',
+        description: message,
+        variant: 'destructive',
+      })
+    },
+  })
+
   const lastHandledTurn = useRef<number | null>(null)
   useEffect(() => {
     if (!lastEvent || lastEvent.type !== 'turn.resolved') return
@@ -2007,7 +2040,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
           </Card>
           </div>
 
-          <div className="p-3 border-t shrink-0">
+          <div className="p-3 border-t shrink-0 space-y-2">
             <Button
               className="w-full"
               disabled={submitMutation.isPending || waiting}
@@ -2020,6 +2053,61 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                   ? 'Waiting…'
                   : `End Turn${queue.length ? ` (${queue.length})` : ''}`}
             </Button>
+            {/* Phase 3 (spectated-agents): Resign affordance. Only seated
+                players see this block — GameplayView is already gated on
+                ``currentPlayer`` resolving to the viewer's own seat, so
+                spectators never reach this branch. Two-step confirm
+                mirrors the Declare War pattern so an errant click can't
+                silently concede the game. */}
+            {!confirmingResign ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs text-destructive hover:bg-destructive/10"
+                disabled={resignMutation.isPending}
+                onClick={() => setConfirmingResign(true)}
+                data-testid="resign-open"
+              >
+                <Flag className="h-3.5 w-3.5 mr-1" />
+                Resign
+              </Button>
+            ) : (
+              <div
+                className="space-y-2 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs"
+                data-testid="resign-confirm-root"
+              >
+                <p className="font-medium text-destructive">
+                  Resign from this game?
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Your cities and units will be destroyed. In a 2-player
+                  game the other player wins immediately.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="flex-1 text-xs"
+                    disabled={resignMutation.isPending}
+                    onClick={() => resignMutation.mutate()}
+                    data-testid="resign-confirm"
+                  >
+                    <Flag className="h-3.5 w-3.5 mr-1" />
+                    {resignMutation.isPending ? 'Resigning…' : 'Confirm'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-xs"
+                    disabled={resignMutation.isPending}
+                    onClick={() => setConfirmingResign(false)}
+                    data-testid="resign-cancel"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -37,6 +37,7 @@ from ...game.models import (
     QueueOrderAction,
     ReorderCityQueueAction,
     ResearchState,
+    ResignAction,
     RespondToTreatyAction,
     SendMessageAction,
     SetActiveResearchAction,
@@ -125,6 +126,23 @@ def _validate_actions_against_state(
             r = execute_set_automation(test_state, player_id, action)
         elif isinstance(action, ClearAutomationAction):
             r = execute_clear_automation(test_state, player_id, action)
+        elif isinstance(action, ResignAction):
+            # Resignation is applied immediately at submit time (not
+            # through the turn resolver), so dry-run validation reports
+            # it as valid as long as the caller is seated. The REST /
+            # MCP submit path will dispatch it to ``resign_player``.
+            if player_id not in test_state.players:
+                results.append(
+                    {"valid": False, "message": "Player is not seated in this game."}
+                )
+                continue
+            if player_id in test_state.eliminated_players:
+                results.append(
+                    {"valid": False, "message": "Player has already been eliminated."}
+                )
+                continue
+            results.append({"valid": True, "message": "Resignation accepted."})
+            continue
         else:
             results.append(
                 {"valid": False, "message": f"Unsupported action type: {action.type}"}
@@ -245,6 +263,28 @@ def register(mcp: FastMCP) -> None:
                 return {
                     "error": "Some actions are invalid.",
                     "validation": validation,
+                }
+
+            # Resignation is applied immediately and bypasses the turn
+            # queue entirely — mirror the REST ``submit_player_actions``
+            # path so an MCP submission carrying ``RESIGN`` gets the same
+            # end-game semantics without waiting for the other seat.
+            if any(isinstance(a, ResignAction) for a in parsed):
+                from ...api.persistent_game_controller import (
+                    get_persistent_game_controller,
+                )
+
+                controller = get_persistent_game_controller(session)
+                summary = await controller.resign_player(auth.game_id, auth.player_id)
+                await session.commit()
+                return {
+                    "game_id": auth.game_id,
+                    "player": auth.player_id,
+                    "turn": state.turn,
+                    "resigned": True,
+                    "game_ended": summary["game_ended"],
+                    "winner": summary["winner"],
+                    "remaining_players": summary["remaining_players"],
                 }
 
             # Activate the game on first submission
@@ -533,6 +573,58 @@ def register(mcp: FastMCP) -> None:
                 "progress": research.progress,
             },
         }
+
+    @mcp.tool(
+        name="resign_game",
+        description=(
+            "Resign from the current game. Takes effect immediately — in a "
+            "2-player game the remaining seat is declared winner and the "
+            "game ends with end_reason='resignation'. In a 3+ player game "
+            "the resigner's cities, units, and tile ownership are razed, "
+            "the resigner is flagged as eliminated, and play continues."
+        ),
+        annotations=ToolAnnotations(
+            title="Resign Game",
+            readOnlyHint=False,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["gameplay", "action"]},
+    )
+    async def resign_game(api_key: str) -> dict[str, Any]:
+        """Concede the game.
+
+        Args:
+            api_key: Your player API key.
+
+        Returns:
+            Summary of the resignation: whether the game ended, the
+            declared winner (if any), and the list of remaining players.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as e:
+                return {"error": str(e)}
+
+            from ...api.persistent_game_controller import (
+                get_persistent_game_controller,
+            )
+
+            controller = get_persistent_game_controller(session)
+            try:
+                summary = await controller.resign_player(auth.game_id, auth.player_id)
+            except ValueError as e:
+                return {"error": str(e)}
+            await session.commit()
+
+            return {
+                "game_id": auth.game_id,
+                "player": auth.player_id,
+                "resigned": True,
+                "game_ended": summary["game_ended"],
+                "winner": summary["winner"],
+                "remaining_players": summary["remaining_players"],
+            }
 
     @mcp.tool(
         name="get_rules_reference",
