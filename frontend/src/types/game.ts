@@ -186,10 +186,24 @@ export interface TurnResult {
 }
 
 // Game summary for listing
+
+/** One seat on a game's roster as exposed by /games. The backend includes
+ * the seat's ``user_identity_id`` so the frontend can tell Resume apart
+ * from Observe and flag agent-only games — MCP-minted keys leave
+ * ``user_identity_id`` null, human-minted (Auth.js) keys carry the id. */
+export interface SeatSummary {
+	player_id: string;
+	user_identity_id: number | null;
+}
+
 export interface GameSummary {
 	game_id: string;
 	player_slots: number;
 	players: PlayerId[];
+	/** Ordered seat roster with per-seat identity attribution. May be absent
+	 * on older API responses; callers should treat ``undefined`` as "no seat
+	 * metadata available" rather than an empty roster. */
+	seats?: SeatSummary[];
 	turn: number;
 	max_turns: number;
 	status: "waiting" | "active" | "ended" | "created";

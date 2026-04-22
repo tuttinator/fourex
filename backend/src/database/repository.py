@@ -645,6 +645,34 @@ class GameRepository:
 
         return api_key
 
+    async def list_seats_for_games(
+        self, game_ids: list[str]
+    ) -> dict[str, list[tuple[str, int | None]]]:
+        """Return seat rosters grouped by game.
+
+        For each game id, yields the ordered list of ``(player_id,
+        user_identity_id)`` pairs that have been minted a player API key.
+        Seats whose key is MCP-minted have ``user_identity_id == None``;
+        human-minted (Auth.js) keys carry the identity. Used by the games
+        list endpoint so the frontend can distinguish Resume vs Observe
+        and surface the "Agent vs Agent" badge with one query per page.
+        """
+        if not game_ids:
+            return {}
+        result = await self.session.execute(
+            select(
+                PlayerApiKey.game_id,
+                PlayerApiKey.player_id,
+                PlayerApiKey.user_identity_id,
+            )
+            .where(PlayerApiKey.game_id.in_(game_ids))
+            .order_by(PlayerApiKey.game_id, PlayerApiKey.id)
+        )
+        seats: dict[str, list[tuple[str, int | None]]] = {gid: [] for gid in game_ids}
+        for game_id, player_id, user_identity_id in result.all():
+            seats.setdefault(game_id, []).append((player_id, user_identity_id))
+        return seats
+
     async def expire_player_api_keys(
         self,
         game_id: str,

@@ -129,10 +129,38 @@ and Postgres.
 | `mise run classic` | 3-player game (preset `classic_3p`, 75 turns) |
 | `mise run showcase` | 4-player profile showcase (100 turns) |
 | `mise run self-play` | Self-play smoke test with invariant checks |
+| `mise run observe-demo` | Spectated 2-player AI-vs-AI demo (LLM Studio vs OpenAI) |
 | `mise run run-cli` | Run the pure-engine CLI with a fixed seed (no MCP, no DB) |
 
 Available profiles: `aggressive`, `economic`, `explorer`, `balanced`.
 Run `uv run python agents/run_agents.py --list-profiles` to print them.
+
+### Watching agents play
+
+`mise run observe-demo` stands up a two-player AI-vs-AI game through the
+public MCP surface, prints the observe URL before the first turn, then
+runs the game to completion. Open the URL in a signed-in browser
+session to drop into the existing `ObservationView` with fog-of-war
+toggle and per-player perspective selector.
+
+```bash
+export LLM_STUDIO_URL=http://localhost:1234/v1   # default
+export LLM_STUDIO_MODEL=qwen/qwen3-32b           # default
+export OPENAI_API_KEY=sk-...                     # required
+export OPENAI_MODEL=gpt-4o-mini                  # default
+export OBSERVE_BASE_URL=http://localhost:3000    # default
+
+mise run backend        # in one terminal
+mise run frontend       # in another
+mise run observe-demo   # in a third — prints the observe URL on stdout
+```
+
+The task runs a preflight check: if `LLM_STUDIO_URL` isn't answering on
+`/models` or `OPENAI_API_KEY` isn't set, it exits with a clear error
+before touching the database. Today the turn loop uses the offline
+heuristic planner — the provider assignments are pinned up-front so the
+LLM-driven turn loop (Phase 6) slots in without changing the task
+surface.
 
 ## REST API
 

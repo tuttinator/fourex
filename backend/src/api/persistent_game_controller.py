@@ -436,8 +436,14 @@ class PersistentGameController:
         offset: int = 0,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-    ) -> tuple[list[DBGame], int]:
-        """List games with full metadata and total count."""
+    ) -> tuple[list[DBGame], int, dict[str, list[tuple[str, int | None]]]]:
+        """List games with full metadata, total count, and seat rosters.
+
+        The third tuple element maps ``game_id`` to an ordered list of
+        ``(player_id, user_identity_id)`` pairs; callers use it to tell
+        Resume vs Observe apart (is the signed-in user seated?) and to
+        detect agent-only games for the "Agent vs Agent" badge.
+        """
         games = await self.repo.list_games(
             status=status,
             limit=limit,
@@ -446,7 +452,8 @@ class PersistentGameController:
             sort_order=sort_order,
         )
         total = await self.repo.count_games(status=status)
-        return games, total
+        seats = await self.repo.list_seats_for_games([g.id for g in games])
+        return games, total, seats
 
     async def get_game_info(self, game_id: str) -> DBGame | None:
         """Get game database record with metadata."""

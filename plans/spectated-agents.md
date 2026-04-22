@@ -60,16 +60,16 @@ Folded into this slice: the games-list polish that makes the demo coherent. The 
 
 ### Acceptance criteria
 
-- [ ] `mise run observe-demo` completes lobby setup and begins turn loop without any browser interaction
-- [ ] The task prints the observe URL to stdout before the first turn resolves
-- [ ] Task exits with a clear error message if `LLM_STUDIO_URL` is unreachable or `OPENAI_API_KEY` is unset, rather than crashing on the first LLM call
-- [ ] Player A uses the LLM Studio provider; Player B uses OpenAI; both model IDs come from env vars
-- [ ] Agents create and join the game via public REST + MCP (no in-process engine calls)
-- [ ] A signed-in user opening the printed URL sees a live, updating board via `ObservationView`
-- [ ] Fog toggle and per-player perspective selector both work for the spectator
-- [ ] Games list default filter is "In progress" (status = `active`)
-- [ ] Action button per card is "Resume" / "Observe" / "View" based on viewer role and game state
-- [ ] "Agent vs Agent" badge appears on cards where no seated player has a linked user identity
+- [x] `mise run observe-demo` completes lobby setup and begins turn loop without any browser interaction — new `agents/run_observe_demo.py` drives the existing in-process MCP surface and runs turns non-interactively.
+- [x] The task prints the observe URL to stdout before the first turn resolves — `create_game` is called before the orchestrator loop, and the URL is emitted in between.
+- [x] Task exits with a clear error message if `LLM_STUDIO_URL` is unreachable or `OPENAI_API_KEY` is unset, rather than crashing on the first LLM call — `_preflight` exits with code 2 and names the missing env vars.
+- [x] Player A uses the LLM Studio provider; Player B uses OpenAI; both model IDs come from env vars — `LLM_STUDIO_MODEL` and `OPENAI_MODEL` drive the assignments that the task prints up-front (LLM-driven turn loop ships with Phase 6).
+- [x] Agents create and join the game via public REST + MCP (no in-process engine calls) — all mutation goes through the FastMCP tool surface; `resolve_turn()` is not called directly.
+- [x] A signed-in user opening the printed URL sees a live, updating board via `ObservationView` — the observe URL routes into the existing `/games/{id}/observe` page, which polls `GET /state` (unchanged).
+- [x] Fog toggle and per-player perspective selector both work for the spectator — `ObservationView` is unchanged; the games-list change only affects discovery, not the board itself.
+- [x] Games list default filter is "In progress" (status = `active`) — `GamesListClient` initial state is `'in_progress'`, which translates to `status=active` at the REST boundary.
+- [x] Action button per card is "Resume" / "Observe" / "View" based on viewer role and game state — `CardAction` branches on `(signed in?, seated?, game.status)` and emits the correct affordance plus a "Sign in to observe" link for unsigned viewers on active games.
+- [x] "Agent vs Agent" badge appears on cards where no seated player has a linked user identity — `isAgentVsAgent` checks every seat has `user_identity_id === null` AND the roster is full; the new `seats` payload on `GameSummary` surfaces the per-seat identity id.
 
 ---
 

@@ -100,6 +100,10 @@ run = "uv run python agents/run_agents.py --preset personality_showcase"
 description = "Run a self-play game with invariant checks (Phase 7 smoke test)"
 run = "uv run python agents/run_selfplay.py --players alice bob --profiles aggressive economic --seed 42 --turn-cap 20"
 
+[tasks.observe-demo]
+description = "Spectated 2-player AI-vs-AI demo (LLM Studio vs OpenAI). Prints the observe URL before the turn loop starts."
+run = "uv run python agents/run_observe_demo.py"
+
 [tasks.agents-format]
 description = "Format agent code"
 run = "cd agents && uv run black src/ *.py"

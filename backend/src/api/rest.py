@@ -590,12 +590,27 @@ async def read_scratchpad(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SeatSummary(BaseModel):
+    """One seat in a game's roster, as surfaced on the games list.
+
+    ``user_identity_id`` is null when the seat was taken via an
+    MCP-minted key (agents), and populated when a signed-in human
+    joined through the frontend. The games list consumer uses this to
+    decide whether the viewer is seated (Resume) vs a spectator
+    (Observe), and to flag agent-only games.
+    """
+
+    player_id: str
+    user_identity_id: int | None
+
+
 class GameSummary(BaseModel):
     """Summary of a single game for listing."""
 
     game_id: str
     player_slots: int
     players: list[str]
+    seats: list[SeatSummary]
     turn: int
     max_turns: int
     status: str
@@ -635,7 +650,7 @@ async def list_games(
     """
     try:
         controller = get_persistent_game_controller(session)
-        games, total = await controller.list_games_with_metadata(
+        games, total, seats_by_game = await controller.list_games_with_metadata(
             status=status,
             limit=limit,
             offset=offset,
@@ -648,6 +663,13 @@ async def list_games(
                     game_id=g.id,
                     player_slots=g.player_slots,
                     players=g.players,
+                    seats=[
+                        SeatSummary(
+                            player_id=player_id,
+                            user_identity_id=user_identity_id,
+                        )
+                        for player_id, user_identity_id in seats_by_game.get(g.id, [])
+                    ],
                     turn=g.turn,
                     max_turns=g.max_turns,
                     status=g.status,
