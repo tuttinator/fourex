@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .agent_runtime import MCPAgent, TurnTrace
+from .agent_runtime import MCPAgent, TelemetryConfig, TurnTrace
 from .mcp_client import MCPClient
 from .profiles import BALANCED, AgentProfile, get_profile
 
@@ -96,6 +96,8 @@ class MCPGameOrchestrator:
         client: MCPClient,
         game: OrchestratedGame,
         profiles: dict[str, AgentProfile] | None = None,
+        *,
+        telemetry: dict[str, TelemetryConfig] | None = None,
     ):
         self._client = client
         self._game = game
@@ -108,6 +110,7 @@ class MCPGameOrchestrator:
                 api_key=game.api_keys[player],
                 profile=profile,
                 player_id=player,
+                telemetry=(telemetry or {}).get(player),
             )
 
     @property

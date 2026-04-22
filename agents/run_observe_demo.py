@@ -35,11 +35,16 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.src.agents import InProcessMCPClient  # noqa: E402 — after path setup
+from backend.src.agents.agent_runtime import TelemetryConfig  # noqa: E402
 from backend.src.agents.orchestrator import (  # noqa: E402
     MCPGameOrchestrator,
     create_game,
 )
 from backend.src.agents.profiles import get_profile  # noqa: E402
+from backend.src.agents.telemetry import (  # noqa: E402
+    ContextWindowConfig,
+    TelemetryWriter,
+)
 from backend.src.mcp_server.server import create_mcp_server  # noqa: E402
 
 console = Console()
@@ -89,6 +94,55 @@ def _preflight(llm_studio_url: str, openai_api_key: str | None) -> None:
         sys.exit(2)
 
 
+def _build_llm_summariser(provider: str, model: str, llm_studio_url: str):
+    """Return an async summariser that calls the named provider, or
+    ``None`` if that provider isn't configured. Failures fall through so
+    compaction can still proceed with a canned fallback."""
+
+    async def _summarise(joined: str, first: int, last: int) -> str:
+        try:
+            # Lazy import so the demo shim boots without the agents/src
+            # package on the Python path during unit tests.
+            from agents.src.llm_providers import (  # type: ignore[import-not-found]
+                LLMStudioProvider,
+                OpenAIProvider,
+            )
+        except Exception:
+            return (
+                f"turns {first}-{last}: (llm provider unavailable — canned summary)"
+            )
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an agent summarising your own recent 4X game turns "
+                    "so you can keep playing under a tight context budget. "
+                    "Return 2-3 sentences naming what happened and why it matters."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Summarise your turns {first}-{last}:\n\n{joined}"
+                ),
+            },
+        ]
+        try:
+            if provider == "openai":
+                provider_instance = OpenAIProvider(model=model)
+            else:
+                provider_instance = LLMStudioProvider(
+                    model=model, base_url=llm_studio_url
+                )
+            resp = await provider_instance.generate(messages, max_tokens=200)
+            return resp.content or f"turns {first}-{last}: (empty summary)"
+        except Exception as exc:  # noqa: BLE001 — degraded-but-running path
+            return f"turns {first}-{last}: (summariser error: {exc})"
+
+    return _summarise
+
+
 async def _run(
     *,
     seed: int,
@@ -100,6 +154,8 @@ async def _run(
     llm_studio_url: str,
     llm_studio_model: str,
     openai_model: str,
+    enable_telemetry: bool,
+    telemetry_dir: str,
 ) -> None:
     player_a = "Studio"
     player_b = "OpenAI"
@@ -144,7 +200,44 @@ async def _run(
     console.print("[dim]Open the observe URL in a signed-in browser session.[/dim]")
     console.print()
 
-    orch = MCPGameOrchestrator(client, game, profiles=profiles)
+    telemetry_map: dict[str, TelemetryConfig] = {}
+    writers: list[TelemetryWriter] = []
+    if enable_telemetry:
+        ctx = ContextWindowConfig.from_env()
+        studio_writer = TelemetryWriter(
+            game_id=game.game_id, base_dir=Path(telemetry_dir) / player_a
+        )
+        openai_writer = TelemetryWriter(
+            game_id=game.game_id, base_dir=Path(telemetry_dir) / player_b
+        )
+        writers.extend([studio_writer, openai_writer])
+        telemetry_map[player_a] = TelemetryConfig(
+            writer=studio_writer,
+            provider="llm_studio",
+            model=llm_studio_model,
+            context=ctx,
+            summariser=_build_llm_summariser(
+                "llm_studio", llm_studio_model, llm_studio_url
+            ),
+            game_id=game.game_id,
+        )
+        telemetry_map[player_b] = TelemetryConfig(
+            writer=openai_writer,
+            provider="openai",
+            model=openai_model,
+            context=ctx,
+            summariser=_build_llm_summariser(
+                "openai", openai_model, llm_studio_url
+            ),
+            game_id=game.game_id,
+        )
+        console.print(
+            f"[dim]Telemetry → {studio_writer.path} and {openai_writer.path}[/dim]"
+        )
+
+    orch = MCPGameOrchestrator(
+        client, game, profiles=profiles, telemetry=telemetry_map or None
+    )
 
     console.print("[bold]Starting turn loop…[/bold]")
     started = time.time()
@@ -185,7 +278,11 @@ async def _run(
             )
         )
 
-    await _run_with_progress()
+    try:
+        await _run_with_progress()
+    finally:
+        for writer in writers:
+            writer.close()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -217,6 +314,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip the LLM Studio / OpenAI reachability check (useful for CI).",
     )
+    parser.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help=(
+            "Disable per-turn JSONL telemetry and compaction. Default: enabled. "
+            "Logs land under $AGENT_TELEMETRY_DIR (default ``logs/``)."
+        ),
+    )
+    parser.add_argument(
+        "--telemetry-dir",
+        default=os.environ.get("AGENT_TELEMETRY_DIR", "logs"),
+        help="Directory for per-player JSONL telemetry (default ``logs/``).",
+    )
     return parser.parse_args(argv)
 
 
@@ -242,6 +352,8 @@ def main(argv: list[str] | None = None) -> None:
             llm_studio_url=llm_studio_url,
             llm_studio_model=llm_studio_model,
             openai_model=openai_model,
+            enable_telemetry=not args.no_telemetry,
+            telemetry_dir=args.telemetry_dir,
         )
     )
 

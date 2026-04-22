@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     archive_sweep_interval_seconds: int = 86400
     archive_sweep_enabled: bool = True
 
+    # Phase 6 (spectated-agents): per-provider context-window defaults
+    # for the agent-side compaction trigger. Used by
+    # ``backend.src.agents.telemetry.ContextWindowConfig`` and
+    # overridable via env vars (``OPENAI_CONTEXT_WINDOW`` etc.).
+    openai_context_window: int = 128_000
+    llm_studio_context_window: int = 32_000
+    modal_ollama_context_window: int = 32_000
+    agent_compaction_threshold_ratio: float = 0.70
+    agent_telemetry_dir: str = "logs"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

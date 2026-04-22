@@ -25,6 +25,7 @@ tools an agent does.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,15 @@ from typing import Any
 from .mcp_client import MCPClient
 from .planner import plan_actions
 from .profiles import AgentProfile, MemoryKind
+from .telemetry import (
+    CompactionEvent,
+    ContextWindowConfig,
+    Summariser,
+    TelemetryRecord,
+    TelemetryWriter,
+    TurnHistory,
+    format_compaction_append,
+)
 
 # Tool-name maps keep the runtime from growing a tangle of if/elif.
 _MEMORY_READ_TOOLS: dict[MemoryKind, str] = {
@@ -59,6 +69,44 @@ PlannerFn = Callable[
 ]
 
 
+# Set of MCP tool names the telemetry layer recognises as scratchpad
+# reads/writes. Kept out of the MCPAgent class so tests can sanity-check
+# it in isolation and so future memory tools can opt in explicitly.
+_SCRATCHPAD_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "read_scratchpad",
+        "read_strategic_goals",
+        "read_opponent_models",
+        "read_turn_notes",
+    }
+)
+_SCRATCHPAD_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_scratchpad",
+        "write_strategic_goals",
+        "write_opponent_model",
+        "write_turn_notes",
+    }
+)
+
+
+@dataclass
+class TelemetryConfig:
+    """What an MCPAgent needs to emit telemetry + run compaction.
+
+    All fields are optional at the MCPAgent API level; supplying a
+    ``TelemetryConfig`` at all switches the behaviour on. Providing a
+    ``summariser`` additionally enables compaction.
+    """
+
+    writer: TelemetryWriter | None = None
+    provider: str = "heuristic"
+    model: str = "heuristic"
+    context: ContextWindowConfig = field(default_factory=ContextWindowConfig)
+    summariser: Summariser | None = None
+    game_id: str = ""
+
+
 @dataclass
 class TurnTrace:
     """Everything that happened during one ``play_turn`` call.
@@ -82,6 +130,8 @@ class TurnTrace:
     submit_result: dict[str, Any] = field(default_factory=dict)
     skipped: bool = False
     errors: list[str] = field(default_factory=list)
+    telemetry: TelemetryRecord | None = None
+    compaction: CompactionEvent | None = None
 
 
 def _build_opponent_model(
@@ -160,12 +210,23 @@ class MCPAgent:
         *,
         player_id: str | None = None,
         planner: PlannerFn | None = None,
+        telemetry: TelemetryConfig | None = None,
     ):
         self._client = client
         self._api_key = api_key
         self._profile = profile
         self._player_id = player_id
         self._planner: PlannerFn = planner or plan_actions
+        self._telemetry = telemetry
+        self._history: TurnHistory | None = None
+        if telemetry is not None:
+            self._history = TurnHistory(
+                provider=telemetry.provider, config=telemetry.context
+            )
+        # Per-turn counters populated in ``_call``; reset at the top of
+        # each ``play_turn``.
+        self._scratchpad_reads = 0
+        self._scratchpad_writes = 0
 
     @property
     def profile(self) -> AgentProfile:
@@ -182,6 +243,10 @@ class MCPAgent:
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
         trace.tool_calls.append((name, arguments))
+        if name in _SCRATCHPAD_READ_TOOLS:
+            self._scratchpad_reads += 1
+        elif name in _SCRATCHPAD_WRITE_TOOLS:
+            self._scratchpad_writes += 1
         try:
             result = await self._client.call_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 — boundary
@@ -199,6 +264,9 @@ class MCPAgent:
         we managed to do before giving up.
         """
         trace = TurnTrace(profile_name=self._profile.name)
+        self._scratchpad_reads = 0
+        self._scratchpad_writes = 0
+        started = time.perf_counter()
 
         # 1. Observe
         is_turn = await self._call(trace, "is_my_turn", {"api_key": self._api_key})
@@ -275,6 +343,15 @@ class MCPAgent:
         # 7. Memorise — in priority order.
         await self._memorise(trace, state, player_id, validated)
 
+        # 8. Telemetry + optional compaction (no-op if telemetry is off).
+        await self._record_telemetry(
+            trace,
+            state,
+            turn_number=turn_number,
+            validated=validated,
+            wall_ms=int((time.perf_counter() - started) * 1000),
+        )
+
         return trace
 
     async def _memorise(
@@ -338,6 +415,77 @@ class MCPAgent:
 
         return None
 
+    # ------------------------------------------------------------------
+    # Telemetry + compaction
+    # ------------------------------------------------------------------
+
+    async def _record_telemetry(
+        self,
+        trace: TurnTrace,
+        state: dict[str, Any],
+        *,
+        turn_number: int,
+        validated: list[dict[str, Any]],
+        wall_ms: int,
+    ) -> None:
+        tel = self._telemetry
+        if tel is None or self._history is None:
+            return
+
+        entry_text = _build_turn_notes(
+            state, trace.player_id, trace.analysis_results, validated
+        )
+        self._history.append(turn_number, entry_text)
+
+        # Prompt-token estimate is the rendered history + current state
+        # summary. ``completion_tokens`` maps to the action count's textual
+        # representation so the record always reflects real work even
+        # when no LLM call was made.
+        prompt_tokens = self._history.total_tokens()
+        completion_tokens = self._history._counter.count(
+            "\n".join(str(a) for a in validated)
+        )
+
+        compaction_event: CompactionEvent | None = None
+        if tel.summariser is not None and self._history.should_compact():
+            compaction_event = await self._history.compact(tel.summariser)
+            if compaction_event is not None:
+                await self._append_scratchpad_compaction(trace, compaction_event)
+
+        record = TelemetryRecord(
+            game_id=tel.game_id,
+            player_id=trace.player_id,
+            turn=turn_number,
+            provider=tel.provider,
+            model=tel.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            thinking_tokens=0,
+            scratchpad_reads=self._scratchpad_reads,
+            scratchpad_writes=self._scratchpad_writes,
+            wall_ms=wall_ms,
+            action_count=len(validated),
+            compacted=compaction_event is not None,
+        )
+        trace.telemetry = record
+        trace.compaction = compaction_event
+        if tel.writer is not None:
+            tel.writer.write(record)
+
+    async def _append_scratchpad_compaction(
+        self, trace: TurnTrace, event: CompactionEvent
+    ) -> None:
+        """Read-modify-write the scratchpad so compaction summaries
+        accumulate without truncating prior notes."""
+        current = await self._call(trace, "read_scratchpad", {"api_key": self._api_key})
+        existing = current.get("text") if isinstance(current, dict) else None
+        new_text = format_compaction_append(existing, event)
+        await self._call(
+            trace,
+            "write_scratchpad",
+            {"api_key": self._api_key, "text": new_text},
+        )
+
 
 async def run_agent_turn(
     client: MCPClient,
@@ -346,9 +494,17 @@ async def run_agent_turn(
     *,
     player_id: str | None = None,
     planner: PlannerFn | None = None,
+    telemetry: TelemetryConfig | None = None,
 ) -> TurnTrace:
     """Convenience wrapper — one-shot a single turn for this agent."""
-    agent = MCPAgent(client, api_key, profile, player_id=player_id, planner=planner)
+    agent = MCPAgent(
+        client,
+        api_key,
+        profile,
+        player_id=player_id,
+        planner=planner,
+        telemetry=telemetry,
+    )
     return await agent.play_turn()
 
 
@@ -356,6 +512,7 @@ async def run_agent_turn(
 # don't need to drag in typing.Awaitable separately.
 __all__ = [
     "MCPAgent",
+    "TelemetryConfig",
     "TurnTrace",
     "PlannerFn",
     "run_agent_turn",
