@@ -366,6 +366,10 @@ export interface MapCanvasProps {
 	queuedOrderPath?: Coord[] | null;
 	/** Active queued destination for the selected unit. */
 	queuedOrderDestination?: Coord | null;
+	/** Phase 7: when set, the map recentres on this tile. Wrapped in a
+	 * fresh object reference each time the cycler fires so repeated
+	 * requests to focus the same tile still trigger a recentre. */
+	focusTile?: Coord | null;
 }
 
 export interface PlayerListProps {

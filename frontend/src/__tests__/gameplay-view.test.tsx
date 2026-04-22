@@ -49,6 +49,7 @@ type MockPixiProps = {
 	selectedCityId?: number | null;
 	highlightedTiles?: { x: number; y: number }[];
 	attackTiles?: { x: number; y: number }[];
+	focusTile?: { x: number; y: number } | null;
 };
 
 vi.mock("@/components/pixi-map", () => ({
@@ -58,6 +59,7 @@ vi.mock("@/components/pixi-map", () => ({
 		selectedCityId,
 		highlightedTiles,
 		attackTiles,
+		focusTile,
 	}: MockPixiProps) => (
 		<div data-testid="mock-pixi">
 			<span data-testid="selected-unit-id">{selectedUnitId ?? "none"}</span>
@@ -66,6 +68,9 @@ vi.mock("@/components/pixi-map", () => ({
 				{highlightedTiles?.length ?? 0}
 			</span>
 			<span data-testid="attack-count">{attackTiles?.length ?? 0}</span>
+			<span data-testid="focus-tile">
+				{focusTile ? `${focusTile.x},${focusTile.y}` : "none"}
+			</span>
 			<button
 				data-testid="click-friendly-unit"
 				onClick={() =>
@@ -1632,6 +1637,189 @@ describe("GameplayView", () => {
 		});
 		await waitFor(() =>
 			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("2"),
+		);
+	});
+
+	// ---- Phase 7 gameplay-improvements: idle unit & city cycling -----
+
+	it("N hotkey cycles through idle friendly units and focuses the map on each", async () => {
+		// All four alice units in sampleState (1, 2, 3) have moves_left > 0,
+		// no queued orders, and no automation — so the initial idle set is
+		// [1, 2, 3]. Unit 99 is bob's, excluded.
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 0,
+			moves_left: 0,
+			moves: [],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Counter shows 3 idle units.
+		await waitFor(() =>
+			expect(screen.getByTestId("idle-unit-count")).toHaveTextContent("3"),
+		);
+		expect(screen.getByTestId("focus-tile")).toHaveTextContent("none");
+
+		// First N → unit 1 at (0,0).
+		act(() => {
+			fireEvent.keyDown(window, { key: "n" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("1"),
+		);
+		expect(screen.getByTestId("focus-tile")).toHaveTextContent("0,0");
+
+		// Second N → unit 2 at (4,4).
+		act(() => {
+			fireEvent.keyDown(window, { key: "n" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("2"),
+		);
+		expect(screen.getByTestId("focus-tile")).toHaveTextContent("4,4");
+
+		// Third N → unit 3 at (4,4).
+		act(() => {
+			fireEvent.keyDown(window, { key: "n" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("3"),
+		);
+
+		// Fourth N → wraps back to unit 1.
+		act(() => {
+			fireEvent.keyDown(window, { key: "n" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("1"),
+		);
+	});
+
+	it("B hotkey cycles idle cities and the idle sets exclude queued/automated entities", async () => {
+		// Modify the fixture: unit 2 has a queued order, unit 3 is on
+		// auto-improve, unit 1 is fully idle. City 11 has a build queue,
+		// city 12 is idle.
+		const state = {
+			...sampleState,
+			units: {
+				...sampleState.units,
+				2: {
+					...sampleState.units[2],
+					orders_queue: [
+						{
+							type: "move" as const,
+							destination: { x: 9, y: 9 },
+							known_enemy_ids: [],
+						},
+					],
+				},
+				3: {
+					...sampleState.units[3],
+					automation: "auto_improve" as const,
+				},
+			},
+			cities: {
+				...sampleState.cities,
+				11: {
+					...sampleState.cities[11],
+					build_queue: [
+						{ type: "unit", target: "scout", progress: 0, total_cost: 5 },
+					],
+				},
+			},
+		};
+		vi.spyOn(api, "getGameState").mockResolvedValue(state as GameState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 0,
+			moves_left: 0,
+			moves: [],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Only unit 1 is idle (2 is queued, 3 is automated, 99 is bob's).
+		await waitFor(() =>
+			expect(screen.getByTestId("idle-unit-count")).toHaveTextContent("1"),
+		);
+		// Only city 12 is idle (11 has build_queue).
+		expect(screen.getByTestId("idle-city-count")).toHaveTextContent("1");
+
+		// B hotkey → focuses city 12 at (4,4).
+		act(() => {
+			fireEvent.keyDown(window, { key: "b" });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-city-id")).toHaveTextContent("12"),
+		);
+		expect(screen.getByTestId("focus-tile")).toHaveTextContent("4,4");
+	});
+
+	it("HUD buttons mirror the hotkeys and the counter drops after an order is queued", async () => {
+		vi.spyOn(api, "getGameState").mockResolvedValue(sampleState);
+		stubAffordanceQueries();
+		vi.spyOn(api, "getValidMoves").mockResolvedValue({
+			game_id: "g1",
+			unit_id: 1,
+			moves_left: 2,
+			moves: [
+				{
+					x: 1,
+					y: 0,
+					terrain: "plains",
+					cost: 1,
+					distance: 1,
+					path: [{ x: 1, y: 0 }],
+				},
+			],
+		});
+
+		const client = newClient();
+		render(<GameplayView gameId="g1" currentPlayer="alice" />, {
+			wrapper: wrapper(client),
+		});
+
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-pixi")).toBeInTheDocument(),
+		);
+
+		// Three units idle at start.
+		await waitFor(() =>
+			expect(screen.getByTestId("idle-unit-count")).toHaveTextContent("3"),
+		);
+
+		// Button click cycles to unit 1.
+		fireEvent.click(screen.getByTestId("idle-unit-button"));
+		await waitFor(() =>
+			expect(screen.getByTestId("selected-unit-id")).toHaveTextContent("1"),
+		);
+
+		// Queue a MOVE for unit 1 by clicking a highlighted tile — this
+		// should mark unit 1 as addressed and drop the count to 2.
+		await waitFor(() =>
+			expect(screen.getByTestId("highlight-count")).toHaveTextContent("1"),
+		);
+		fireEvent.click(screen.getByTestId("click-highlighted-tile"));
+		await waitFor(() =>
+			expect(screen.getByTestId("idle-unit-count")).toHaveTextContent("2"),
 		);
 	});
 });

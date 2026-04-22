@@ -53,6 +53,7 @@ export function PixiMap({
   queueablePathsByTile,
   queuedOrderPath,
   queuedOrderDestination,
+  focusTile,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
@@ -589,6 +590,26 @@ export function PixiMap({
 
     world.addChild(interactiveLayer)
   }, [gameState, selectedPlayer, fogOfWarEnabled, onTileClick, onUnitClick, onCityClick, pixiReady, selectedUnitId, selectedCityId, highlightedTiles, movePathsByTile, attackTiles, queueableTiles, queueablePathsByTile, queuedOrderPath, queuedOrderDestination, hover])
+
+  // Phase 7 gameplay-improvements: recentre the viewport on a caller-
+  // supplied tile. Fires whenever ``focusTile`` changes reference — the
+  // caller wraps the coord in a fresh object so repeated cycles to the
+  // same tile still retrigger. Uses the current world scale so we don't
+  // zoom-fight the user's existing pan/zoom state.
+  useEffect(() => {
+    if (!focusTile) return
+    const world = worldRef.current
+    const container = containerRef.current
+    if (!world || !container) return
+    const rect = container.getBoundingClientRect()
+    const centreX = rect.width / 2
+    const centreY = rect.height / 2
+    const scale = world.scale.x
+    const tileCentreWorldX = (focusTile.x + 0.5) * TILE_SIZE
+    const tileCentreWorldY = (focusTile.y + 0.5) * TILE_SIZE
+    world.x = centreX - tileCentreWorldX * scale
+    world.y = centreY - tileCentreWorldY * scale
+  }, [focusTile, pixiReady])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {

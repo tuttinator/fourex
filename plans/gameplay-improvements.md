@@ -165,11 +165,11 @@ Surface idle entities to the player. "Idle unit" is defined as `owner == current
 
 ### Acceptance criteria
 
-- [ ] `N` cycles to the next idle unit; wraps around.
-- [ ] `B` cycles to the next idle city; wraps around.
-- [ ] HUD buttons trigger the same cycling as the hotkeys.
-- [ ] Units with a queued order or `AutoImprove` automation are excluded from the idle cycle.
-- [ ] Cities with a production queued are excluded from the idle cycle.
-- [ ] Idle counters reflect the current counts and update live as orders are issued.
-- [ ] Counters reach zero when nothing is idle.
-- [ ] Tests: idle definitions; exclusion of queued/automated units; counter updates after order submission.
+- [x] `N` cycles to the next idle unit; wraps around.
+- [x] `B` cycles to the next idle city; wraps around.
+- [x] HUD buttons trigger the same cycling as the hotkeys.
+- [x] Units with a queued order or `AutoImprove` automation are excluded from the idle cycle.
+- [x] Cities with a production queued are excluded from the idle cycle.
+- [x] Idle counters reflect the current counts and update live as orders are issued.
+- [x] Counters reach zero when nothing is idle.
+- [x] Tests: idle definitions; exclusion of queued/automated units; counter updates after order submission.

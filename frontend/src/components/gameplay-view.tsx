@@ -1199,6 +1199,134 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     return out
   }, [queue, selectedCityId])
 
+  // Phase 7: idle unit & city cycling. "Idle" is defined by the PRD as
+  // owner == currentPlayer, moves_left > 0, no queued orders, no
+  // automation (units), and empty build queue (cities). We also treat
+  // any pending local action targeting the entity as "addressed" — the
+  // user has given it something to do this turn even if End Turn hasn't
+  // fired yet — so the counters tick down as the player works.
+  const busyUnitIds = useMemo(() => {
+    const set = new Set<number>()
+    for (const { action } of queue) {
+      switch (action.type) {
+        case 'MOVE':
+          set.add(action.unit_id)
+          break
+        case 'ATTACK':
+          set.add(action.attacker_id)
+          break
+        case 'FOUND_CITY':
+        case 'BUILD_IMPROVEMENT':
+          set.add(action.worker_id)
+          break
+        case 'QUEUE_ORDER':
+        case 'CANCEL_ORDER':
+        case 'SET_AUTOMATION':
+        case 'CLEAR_AUTOMATION':
+          set.add(action.unit_id)
+          break
+      }
+    }
+    return set
+  }, [queue])
+
+  const busyCityIds = useMemo(() => {
+    const set = new Set<number>()
+    for (const { action } of queue) {
+      switch (action.type) {
+        case 'TRAIN_UNIT':
+        case 'BUILD_BUILDING':
+        case 'SET_CITY_PRODUCTION':
+        case 'CANCEL_CITY_PRODUCTION':
+        case 'REORDER_CITY_QUEUE':
+          set.add(action.city_id)
+          break
+      }
+    }
+    return set
+  }, [queue])
+
+  const idleUnitIds = useMemo<number[]>(() => {
+    if (!gameState) return []
+    const out: number[] = []
+    for (const unit of Object.values(gameState.units)) {
+      if (unit.owner !== currentPlayer) continue
+      if (unit.moves_left <= 0) continue
+      if ((unit.orders_queue?.length ?? 0) > 0) continue
+      if (unit.automation != null) continue
+      if (busyUnitIds.has(unit.id)) continue
+      out.push(unit.id)
+    }
+    out.sort((a, b) => a - b)
+    return out
+  }, [gameState, currentPlayer, busyUnitIds])
+
+  const idleCityIds = useMemo<number[]>(() => {
+    if (!gameState) return []
+    const out: number[] = []
+    for (const city of Object.values(gameState.cities)) {
+      if (city.owner !== currentPlayer) continue
+      if ((city.build_queue?.length ?? 0) > 0) continue
+      if (busyCityIds.has(city.id)) continue
+      out.push(city.id)
+    }
+    out.sort((a, b) => a - b)
+    return out
+  }, [gameState, currentPlayer, busyCityIds])
+
+  // Wrapped in a fresh object each cycle so PixiMap's focusTile effect
+  // retriggers even when the player cycles back to the same tile.
+  const [focusTile, setFocusTile] = useState<Coord | null>(null)
+
+  const cycleIdleUnit = useCallback(() => {
+    if (!gameState || idleUnitIds.length === 0) return
+    const currentIdx = idleUnitIds.indexOf(selectedUnitId ?? -1)
+    const nextIdx = (currentIdx + 1) % idleUnitIds.length
+    const nextId = idleUnitIds[nextIdx]
+    const unit = gameState.units[nextId]
+    if (!unit) return
+    setSelectedCityId(null)
+    setSelectedUnitId(nextId)
+    setStackSelector(null)
+    setFocusTile({ x: unit.loc.x, y: unit.loc.y })
+  }, [gameState, idleUnitIds, selectedUnitId])
+
+  const cycleIdleCity = useCallback(() => {
+    if (!gameState || idleCityIds.length === 0) return
+    const currentIdx = idleCityIds.indexOf(selectedCityId ?? -1)
+    const nextIdx = (currentIdx + 1) % idleCityIds.length
+    const nextId = idleCityIds[nextIdx]
+    const city = gameState.cities[nextId]
+    if (!city) return
+    setSelectedUnitId(null)
+    setSelectedCityId(nextId)
+    setStackSelector(null)
+    setFocusTile({ x: city.loc.x, y: city.loc.y })
+  }, [gameState, idleCityIds, selectedCityId])
+
+  // N cycles idle units, B cycles idle cities. Suppressed when focus is
+  // inside a form control so typing in the diplomacy composer isn't
+  // hijacked, and while any modifier key is held so browser shortcuts
+  // like ⌘N keep working.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const key = e.key.toLowerCase()
+      if (key !== 'n' && key !== 'b') return
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        if (target.isContentEditable) return
+      }
+      e.preventDefault()
+      if (key === 'n') cycleIdleUnit()
+      else cycleIdleCity()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cycleIdleUnit, cycleIdleCity])
+
   // Last SET_ACTIVE_RESEARCH in the queue wins — the tech panel shows
   // the queued pick as "selected" ahead of server confirmation so the
   // click-to-set-active interaction feels immediate. ``undefined`` when
@@ -1534,6 +1662,48 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               computeYieldBreakdown(gameState, currentPlayer).total.science
             }
           />
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-xs"
+              data-testid="idle-unit-button"
+              aria-label="Cycle to next idle unit (N)"
+              title="Cycle to next idle unit (N)"
+              onClick={cycleIdleUnit}
+              disabled={idleUnitIds.length === 0}
+            >
+              <span>Idle units</span>
+              <Badge
+                variant={idleUnitIds.length === 0 ? 'secondary' : 'default'}
+                className="h-4 px-1.5 text-[10px]"
+                data-testid="idle-unit-count"
+              >
+                {idleUnitIds.length}
+              </Badge>
+              <span className="text-[10px] text-muted-foreground">N</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-xs"
+              data-testid="idle-city-button"
+              aria-label="Cycle to next idle city (B)"
+              title="Cycle to next idle city (B)"
+              onClick={cycleIdleCity}
+              disabled={idleCityIds.length === 0}
+            >
+              <span>Idle cities</span>
+              <Badge
+                variant={idleCityIds.length === 0 ? 'secondary' : 'default'}
+                className="h-4 px-1.5 text-[10px]"
+                data-testid="idle-city-count"
+              >
+                {idleCityIds.length}
+              </Badge>
+              <span className="text-[10px] text-muted-foreground">B</span>
+            </Button>
+          </div>
           <div className="text-xs text-muted-foreground">
             {Object.keys(gameState.units).length} units &middot;{' '}
             {Object.keys(gameState.cities).length} cities
@@ -1557,6 +1727,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             queueablePathsByTile={queueablePathsByTile}
             queuedOrderPath={committedOrderPath}
             queuedOrderDestination={committedOrderDestination}
+            focusTile={focusTile}
             onTileClick={handleTileClick}
           />
           {stackSelector && stackSelectorEntries.length >= 2 ? (
