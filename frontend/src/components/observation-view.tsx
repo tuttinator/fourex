@@ -6,7 +6,7 @@ import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
 import { api, queryKeys, ApiError } from '@/lib/api'
 import { EventLog } from '@/components/event-log'
 import { PixiMap } from '@/components/pixi-map'
-import { PerspectiveSelector } from '@/components/perspective-selector'
+import { PerspectiveSwitcher } from '@/components/perspective-switcher'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -105,7 +105,7 @@ export function ObservationView({ gameId }: ObservationViewProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Status bar */}
-      <div className="border-b px-4 py-2 flex items-center justify-between bg-muted/30">
+      <div className="border-b px-4 py-2 flex items-center justify-between gap-4 bg-muted/30 flex-wrap">
         <div className="flex items-center gap-3 text-sm">
           <span className="font-medium">Turn {gameState.turn} / {gameState.max_turns}</span>
           {isActive && (
@@ -120,12 +120,15 @@ export function ObservationView({ gameId }: ObservationViewProps) {
           {isEnded && (
             <Badge variant="outline" className="text-xs">Ended</Badge>
           )}
-          {isFogOfWar && (
-            <Badge variant="secondary" className="text-xs">
-              {perspective}&apos;s view
-            </Badge>
-          )}
         </div>
+        {/* Perspective pills — the primary way a spectator switches between
+            players' views. Promoted out of the sidebar so the control is
+            visible without opening a tab. */}
+        <PerspectiveSwitcher
+          players={allPlayers}
+          perspective={perspective}
+          onPerspectiveChange={setPerspective}
+        />
         <div className="text-xs text-muted-foreground">
           {allPlayers.length} players &middot; {Object.keys(gameState.units).length} units &middot; {Object.keys(gameState.cities).length} cities
         </div>
@@ -151,12 +154,41 @@ export function ObservationView({ gameId }: ObservationViewProps) {
               <TabsTrigger value="stats">Stats</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="players" className="flex-1 overflow-auto">
-              <PerspectiveSelector
-                players={allPlayers}
-                perspective={perspective}
-                onPerspectiveChange={setPerspective}
-              />
+            <TabsContent value="players" className="flex-1 overflow-auto p-4 space-y-3">
+              {/* The header bar owns the perspective switcher now; this tab
+                  just lists per-player stats so spectators can compare
+                  rosters without losing map focus. */}
+              {allPlayers.map((player) => {
+                const units = Object.values(gameState.units).filter((u) => u.owner === player)
+                const cities = Object.values(gameState.cities).filter((c) => c.owner === player)
+                const resources = gameState.stockpiles[player]
+                return (
+                  <Card key={player}>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        <span>{player}</span>
+                        {perspective === player && (
+                          <Badge variant="secondary" className="text-xs">viewing</Badge>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-1 text-xs">
+                        <span>Units: {units.length}</span>
+                        <span>Cities: {cities.length}</span>
+                        {resources && (
+                          <>
+                            <span>Food: {resources.food}</span>
+                            <span>Wood: {resources.wood}</span>
+                            <span>Ore: {resources.ore}</span>
+                            <span>Crystal: {resources.crystal}</span>
+                          </>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </TabsContent>
 
             <TabsContent value="events" className="flex-1 overflow-auto">

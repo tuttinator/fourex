@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { api, queryKeys, ApiError } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
-import { PerspectiveSelector } from '@/components/perspective-selector'
+import { PerspectiveSwitcher } from '@/components/perspective-switcher'
 import { PromptAccordion } from '@/components/prompt-accordion'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -185,12 +185,16 @@ export default function ReplayPage() {
               <span className="text-muted-foreground">
                 Turn {effectiveTurn} / {totalTurns}
               </span>
-              {isFogOfWar && (
-                <Badge variant="secondary" className="text-xs">
-                  {perspective}&apos;s view
-                </Badge>
-              )}
             </div>
+          </div>
+          {/* Perspective pills — prominent so researchers can flip between
+              players' fog-of-war views without digging into the sidebar. */}
+          <div className="mt-3">
+            <PerspectiveSwitcher
+              players={allPlayers}
+              perspective={perspective}
+              onPerspectiveChange={setPerspective}
+            />
           </div>
         </div>
       </div>
@@ -380,12 +384,6 @@ export default function ReplayPage() {
 
             {/* Players / Perspective Tab */}
             <TabsContent value="players" className="flex-1 overflow-auto">
-              <PerspectiveSelector
-                players={allPlayers}
-                perspective={perspective}
-                onPerspectiveChange={setPerspective}
-              />
-
               {turnState && (
                 <div className="p-4 space-y-3">
                   {allPlayers.map((player) => {
