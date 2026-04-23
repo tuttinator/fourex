@@ -28,8 +28,13 @@ import type {
 	ValidMovesResponse,
 } from "@/types/game";
 
-const API_BASE_URL =
-	process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010/api/v1";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+if (!API_BASE_URL) {
+	throw new Error(
+		"NEXT_PUBLIC_API_URL is not set. It must be defined at build time — " +
+			"Next.js inlines NEXT_PUBLIC_* vars into the client bundle.",
+	);
+}
 
 export class ApiError extends Error {
 	constructor(

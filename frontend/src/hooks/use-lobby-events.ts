@@ -39,8 +39,13 @@ interface UseLobbyEventsResult {
 }
 
 function resolveWsUrl(gameId: string, apiKey: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010/api/v1";
+  const base = process.env.NEXT_PUBLIC_API_URL;
+  if (!base) {
+    throw new Error(
+      "NEXT_PUBLIC_API_URL is not set. It must be defined at build time — " +
+        "Next.js inlines NEXT_PUBLIC_* vars into the client bundle.",
+    );
+  }
   // Swap protocol: http(s) → ws(s). The env var is the REST base so we
   // reuse it verbatim for the WS path, avoiding a second env var that
   // can drift.
