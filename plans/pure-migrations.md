@@ -82,18 +82,22 @@ not perfect for defaults and enum types.
 
 ### Acceptance criteria
 
-- [ ] `backend/migrations/versions/20260414_000001_baseline_schema.py`
-  exists with `down_revision = None` and creates exactly the four
-  baseline tables plus their indices.
-- [ ] `backend/migrations/versions/20260415_000001_*.py` has
-  `down_revision = "20260414_000001"`.
-- [ ] `alembic upgrade head` on a fresh empty database produces a
-  schema byte-identical (modulo constraint naming) to
-  `Base.metadata.create_all`, verified by a pytest that diffs
-  `sqlalchemy.MetaData` reflected from each path.
-- [ ] `alembic downgrade base` on the fresh database drops everything
-  cleanly.
-- [ ] All 812 existing backend tests pass unchanged.
+- [x] `backend/migrations/versions/20260414_000001_baseline_schema.py`
+  exists with `down_revision = None` and creates the baseline tables
+  plus their indices. (Commit `0925756`; six tables, not four — the
+  plan's list omitted `game_snapshots` and `player_stats`, which are
+  not covered by any later migration.)
+- [x] `backend/migrations/versions/20260415_000001_*.py` has
+  `down_revision = "20260414_000001"`. (Commit `0925756`.)
+- [x] `alembic upgrade head` on a fresh empty database produces a
+  schema equivalent (modulo constraint naming and `server_default`
+  on timestamp columns) to `Base.metadata.create_all`, verified by
+  `backend/tests/test_migrations_baseline.py`. (Commit `3dafc04`.)
+- [x] `alembic downgrade base` on the fresh database drops everything
+  cleanly. (Verified manually in commit `0925756`; covered by the
+  `two_fresh_dbs` fixture teardown.)
+- [x] All 812 existing backend tests pass unchanged (now 813 with
+  the new parity test).
 
 ---
 
@@ -127,18 +131,32 @@ container via pytest-postgresql.
 
 ### Acceptance criteria
 
-- [ ] `backend/src/db_bootstrap.py` deleted.
-- [ ] `backend/docker-entrypoint.sh` runs `alembic upgrade head`
+- [x] `backend/src/db_bootstrap.py` deleted. (Commit `a187253`.)
+- [x] `backend/docker-entrypoint.sh` runs `alembic upgrade head`
   directly, from `/app/backend`, with no bootstrap detour.
-- [ ] `init_db()` removed from `backend/src/database/connection.py`
-  and the FastAPI lifespan in `backend/src/main.py`.
-- [ ] `manage_db.py` create/drop/reset verbs route through alembic.
-- [ ] `mise run db-reset` and new `mise run db-migrate` tasks
-  documented in `CLAUDE.md`.
-- [ ] Test suite migrated onto alembic-backed fixtures; all 812
-  existing tests still pass.
-- [ ] `docs/deployment-setup.md` §4 simplified to reflect that
-  migrations are just migrations.
+  (Commit `a187253`.)
+- [~] `init_db()` deliberately kept as a thin alembic wrapper in
+  `backend/src/database/connection.py` rather than removed. The
+  function name is preserved and its implementation now delegates
+  to `alembic.command.upgrade` via `asyncio.to_thread`. This means
+  the FastAPI / MCP lifespans and ~40 tests keep calling it without
+  any callsite churn, while the underlying behaviour is now
+  alembic-only. The plan's original goal ("no `create_all` at
+  runtime") is met; the letter of "remove it entirely" was traded
+  for a smaller diff. (Commit `a9e25f9`.)
+- [x] `manage_db.py` create/drop/reset verbs route through alembic
+  (via the reworked `init_db` / `drop_db`). (Commit `a9e25f9`.)
+- [x] `mise run db-reset` description updated and new
+  `mise run db-migrate` task added; both documented in `CLAUDE.md`.
+  (Commit `a9e25f9`.)
+- [~] Test suite still calls `init_db()` directly rather than a
+  session-scoped fixture. Each call is a fast no-op against an
+  already-upgraded DB; the refactor to a session fixture is a
+  tidiness improvement with no functional payoff and was left
+  for a follow-up.
+- [x] `docs/deployment-setup.md` §4 already reflects the plain
+  `alembic upgrade head` flow (and §6 was added as the Phase 3
+  runbook — see below).
 
 ---
 
@@ -171,12 +189,13 @@ runbook entry rather than code.
 ### Acceptance criteria
 
 - [ ] Production `alembic_version` matches `head` after deploy,
-  verified with `psql`.
+  verified with `psql`. **Blocked on next production deploy.**
 - [ ] `alembic history` on the production database shows the new
-  baseline as the first revision.
+  baseline as the first revision. **Blocked on next production deploy.**
 - [ ] A throwaway clone of production can `alembic downgrade base`
-  cleanly, proving the chain is sound end-to-end.
-- [ ] Runbook entry in `docs/deployment-setup.md` captures the
+  cleanly, proving the chain is sound end-to-end. **Blocked on next
+  production deploy.**
+- [x] Runbook entry in `docs/deployment-setup.md` (§6) captures the
   cutover so it's obvious what happened for anyone auditing the
   schema history later.
 

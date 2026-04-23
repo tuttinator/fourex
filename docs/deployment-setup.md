@@ -94,6 +94,47 @@ curl -sfI https://parley.quest
 
 All three must succeed before closing the Phase 1 PR.
 
+## 6. Migration history runbook
+
+The live Postgres was originally bootstrapped by commit `e02bfc1`
+using `Base.metadata.create_all` followed by `alembic stamp head`
+— at the time, the earliest Alembic revision assumed baseline
+tables like `games` already existed. The `plans/pure-migrations.md`
+work closed that gap: commit `0925756` added a real baseline
+migration (`20260414_000001_baseline_schema`), commits `a187253`
+and `a9e25f9` retired the bootstrap script and routed `init_db()`
+through Alembic.
+
+Net effect on the production database:
+
+- `alembic_version` already points at the latest revision (it was
+  stamped there by the original bootstrap).
+- The baseline migration was inserted *behind* the existing chain;
+  head did not move, so `alembic upgrade head` on the next deploy
+  is a no-op.
+- Downgrades now walk one revision further back to the new
+  baseline before reaching empty — useful for a full-reset clone,
+  not normally run against production.
+
+Post-deploy verification (run once, after the first boot that
+includes the baseline migration):
+
+```bash
+# From a Railway service shell or psql session against production.
+psql "$PARLEY_DATABASE_URL" -c "SELECT version_num FROM alembic_version;"
+# Expected: the current head (see backend/migrations/versions/).
+```
+
+If the value is missing, the bootstrap never ran and the next
+deploy should recreate it via `alembic upgrade head`. If the
+value points at an unknown revision, someone has deployed a
+branch ahead of main — do not stamp blindly; reconcile first.
+
+For a full chain-integrity check, clone the production database
+into a throwaway target and run `alembic downgrade base` there.
+The chain should unwind cleanly and leave only `alembic_version`
+behind. Never run this against production.
+
 ## Notes for later phases
 
 - Phase 2 adds GitHub Actions CI/CD — no Railway dashboard work required
