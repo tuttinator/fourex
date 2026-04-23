@@ -1,19 +1,19 @@
 #!/bin/sh
-# Production container entrypoint. Bootstraps the database against
-# ``PARLEY_DATABASE_URL`` (or ``DATABASE_URL`` as a fallback) before
-# handing off to the server command.
+# Production container entrypoint. Applies pending migrations and
+# hands off to the server command.
 #
-# ``db_bootstrap`` handles both fresh databases (runs ``create_all`` +
-# ``alembic stamp head``) and already-initialised ones (runs
-# ``alembic upgrade head``). See ``backend/src/db_bootstrap.py`` for
-# why the fresh-db path differs from a plain ``alembic upgrade``.
+# Migrations run from ``/app/backend`` because ``alembic.ini``'s
+# ``prepend_sys_path = .`` and ``script_location = migrations`` are
+# both relative to that directory. ``PARLEY_DATABASE_URL`` (falling
+# back to ``DATABASE_URL``) is read by ``migrations/env.py``.
 
 set -eu
 
+cd /app/backend
+
+echo "[docker-entrypoint] Running alembic upgrade head..."
+uv run alembic upgrade head
+
 cd /app
-
-echo "[docker-entrypoint] Bootstrapping database..."
-uv run python -m backend.src.db_bootstrap
-
 echo "[docker-entrypoint] Starting: $*"
 exec "$@"

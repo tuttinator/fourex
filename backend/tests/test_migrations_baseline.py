@@ -10,8 +10,8 @@ The test:
 
 1. Creates two throwaway Postgres databases side by side.
 2. Populates one via ``alembic upgrade head`` (subprocess, because
-   alembic wants to own its own event loop — see
-   ``db_bootstrap.py``'s comment for the same reason).
+   ``migrations/env.py`` calls ``asyncio.run`` internally and that
+   cannot nest inside the pytest-asyncio loop).
 3. Populates the other via ``Base.metadata.create_all``.
 4. Reflects ``MetaData`` from each and compares tables, columns,
    indexes, unique constraints, and foreign keys.
