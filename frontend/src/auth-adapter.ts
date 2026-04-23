@@ -28,20 +28,24 @@ function requiredEnv(name: string): string {
 }
 
 export function HttpIdentityAdapter(): Adapter {
-  const baseUrl = process.env.INTERNAL_API_URL ?? "http://localhost:8010";
-  // Reading this at construction time means a missing secret crashes the
-  // Next.js boot rather than every `/api/auth/*` request with a cryptic 500.
-  const serviceSecret = requiredEnv("IDENTITY_SERVICE_SECRET");
-
-  const headers = {
-    "Content-Type": "application/json",
-    "X-Identity-Service-Secret": serviceSecret,
-  } as const;
+  // Env vars are read lazily — if we read them at construction time, Next.js
+  // 16's Turbopack "collecting page data" step (which evaluates route modules
+  // during ``next build``) crashes before any secret has been injected into
+  // the build environment. Reading on first use still fails fast at runtime
+  // on the first ``/api/auth/*`` request, but lets the production image
+  // build without requiring the secret to be present at build time.
+  const getBaseUrl = () =>
+    process.env.INTERNAL_API_URL ?? "http://localhost:8010";
+  const getHeaders = () =>
+    ({
+      "Content-Type": "application/json",
+      "X-Identity-Service-Secret": requiredEnv("IDENTITY_SERVICE_SECRET"),
+    }) as const;
 
   async function getByEmail(email: string): Promise<AdapterUserRow | null> {
-    const url = new URL(`${baseUrl}/api/v1/identities/by-email`);
+    const url = new URL(`${getBaseUrl()}/api/v1/identities/by-email`);
     url.searchParams.set("email", email);
-    const resp = await fetch(url, { headers, method: "GET" });
+    const resp = await fetch(url, { headers: getHeaders(), method: "GET" });
     if (resp.status === 404) return null;
     if (!resp.ok) {
       throw new Error(
@@ -52,9 +56,9 @@ export function HttpIdentityAdapter(): Adapter {
   }
 
   async function getById(id: string): Promise<AdapterUserRow | null> {
-    const url = new URL(`${baseUrl}/api/v1/identities/by-id`);
+    const url = new URL(`${getBaseUrl()}/api/v1/identities/by-id`);
     url.searchParams.set("id", id);
-    const resp = await fetch(url, { headers, method: "GET" });
+    const resp = await fetch(url, { headers: getHeaders(), method: "GET" });
     if (resp.status === 404) return null;
     if (!resp.ok) {
       throw new Error(
@@ -65,9 +69,9 @@ export function HttpIdentityAdapter(): Adapter {
   }
 
   async function upsertByEmail(email: string): Promise<AdapterUserRow> {
-    const resp = await fetch(`${baseUrl}/api/v1/identities/upsert`, {
+    const resp = await fetch(`${getBaseUrl()}/api/v1/identities/upsert`, {
       method: "POST",
-      headers,
+      headers: getHeaders(),
       body: JSON.stringify({ email }),
     });
     if (!resp.ok) {
@@ -120,10 +124,10 @@ export function HttpIdentityAdapter(): Adapter {
 
     async createVerificationToken({ identifier, token, expires }) {
       const resp = await fetch(
-        `${baseUrl}/api/v1/identities/verification-tokens`,
+        `${getBaseUrl()}/api/v1/identities/verification-tokens`,
         {
           method: "POST",
-          headers,
+          headers: getHeaders(),
           body: JSON.stringify({
             identifier,
             token,
@@ -150,10 +154,10 @@ export function HttpIdentityAdapter(): Adapter {
 
     async useVerificationToken({ identifier, token }) {
       const resp = await fetch(
-        `${baseUrl}/api/v1/identities/verification-tokens/consume`,
+        `${getBaseUrl()}/api/v1/identities/verification-tokens/consume`,
         {
           method: "POST",
-          headers,
+          headers: getHeaders(),
           body: JSON.stringify({ identifier, token }),
         }
       );
