@@ -2,6 +2,7 @@
 Database connection and session management.
 """
 
+import asyncio
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -14,8 +15,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
-
-from .models import Base
 
 # Load environment variables from .env file.
 # Try both CWD/.env and backend/.env to support running from project root
@@ -73,22 +72,50 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _run_alembic(cmd: str) -> None:
+    """Run ``alembic upgrade head`` or ``alembic downgrade base`` in-process.
+
+    Imported lazily so modules that just need a session don't pay the
+    alembic/mako import cost.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(_BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_DIR / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+    if cmd == "upgrade":
+        command.upgrade(cfg, "head")
+    elif cmd == "downgrade":
+        command.downgrade(cfg, "base")
+    else:
+        raise ValueError(f"unknown alembic command: {cmd!r}")
+
+
 async def init_db() -> None:
+    """Apply pending Alembic migrations up to ``head``.
+
+    Replaces the historical ``Base.metadata.create_all`` path so every
+    environment (prod, local dev, tests) creates its schema through the
+    same mechanism. Alembic's ``command.upgrade`` is synchronous and
+    calls ``asyncio.run`` internally via ``migrations/env.py`` — running
+    it in a worker thread keeps it safe to ``await`` from an existing
+    event loop (e.g. FastAPI lifespan, pytest-asyncio tests).
     """
-    Initialize database tables.
-    Creates all tables defined in models.
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await asyncio.to_thread(_run_alembic, "upgrade")
 
 
 async def drop_db() -> None:
+    """Downgrade all the way to ``base`` — drops every migration-managed table.
+
+    WARNING: This will delete all data. Used by ``manage_db.py reset``
+    and the database init CLI; not used at runtime.
     """
-    Drop all database tables.
-    WARNING: This will delete all data!
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    await asyncio.to_thread(_run_alembic, "downgrade")
 
 
 async def get_engine() -> AsyncEngine:

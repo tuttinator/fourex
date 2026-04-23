@@ -1,6 +1,8 @@
 import asyncio
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
@@ -16,8 +18,18 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# ``alembic.ini``'s ``prepend_sys_path = .`` assumes the CLI was invoked
+# from ``backend/``. That covers ``uv run alembic`` but not library
+# callers (e.g. ``init_db()`` invoking ``alembic.command.upgrade`` from
+# the FastAPI lifespan or a test runner), where CWD is the repo root.
+# Add the backend directory explicitly so ``from src.database...``
+# resolves either way.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
 # Add your model's MetaData object here for 'autogenerate' support
-from src.database.models import Base
+from src.database.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 

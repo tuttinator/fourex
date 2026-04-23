@@ -63,8 +63,12 @@ description = "Drop all database tables (WARNING: deletes all data!)"
 run = "cd backend && uv run python manage_db.py drop"
 
 [tasks.db-reset]
-description = "Drop and recreate all database tables"
+description = "Drop and recreate all database tables (alembic downgrade base + upgrade head)"
 run = "cd backend && uv run python manage_db.py reset"
+
+[tasks.db-migrate]
+description = "Apply pending alembic migrations (alembic upgrade head)"
+run = "cd backend && uv run alembic upgrade head"
 
 [tasks.db-check]
 description = "Check database connection"

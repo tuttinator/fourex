@@ -40,8 +40,9 @@ mise run inspect-http          # MCP Inspector against HTTP server
 mise run format                # black + ruff --fix
 mise run lint                  # black --check + ruff + pyrefly
 
-# Database
-mise run db-reset              # drop + recreate tables
+# Database (schema managed by alembic; migrations in backend/migrations/)
+mise run db-migrate            # apply pending migrations (alembic upgrade head)
+mise run db-reset              # downgrade base + upgrade head (drops all data)
 mise run db-check              # verify connection
 
 # Frontend feedback loops (run all four before committing any frontend
