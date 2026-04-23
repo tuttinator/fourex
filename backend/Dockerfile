@@ -16,13 +16,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # cairo is required by cairosvg (PNG map rendering). libpq is pulled in as a
 # transitive for some build tooling; the runtime actually uses asyncpg.
+# Note: the gdk-pixbuf package was renamed from ``libgdk-pixbuf2.0-0`` to
+# ``libgdk-pixbuf-2.0-0`` in Debian trixie (Debian 13) — the base image
+# ``python:3.12-slim`` now resolves to trixie, so use the new name.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libcairo2 \
         libpango-1.0-0 \
         libpangocairo-1.0-0 \
-        libgdk-pixbuf2.0-0 \
+        libgdk-pixbuf-2.0-0 \
         libffi-dev \
         libpq-dev \
         curl \
