@@ -1,0 +1,44 @@
+# Shared .dockerignore for the repo-root build context used by
+# ``backend/Dockerfile``. Keeps the Docker build context lean — excludes
+# local venvs, caches, tests, logs, and the frontend tree (frontend has
+# its own Dockerfile with its own context).
+
+.git/
+.github/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.pyrefly_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Frontend has its own Dockerfile + build context
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/cypress/
+
+# Tests and fixtures aren't needed in the runtime image
+backend/tests/
+tests/
+
+# Local environment and logs
+.env
+.env.*
+logs/
+agents/logs/
+*.log
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
+.claude/
+ralph/
+
+# Plan scratch
+plans/*.md

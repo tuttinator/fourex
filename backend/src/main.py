@@ -134,6 +134,12 @@ async def health():
     }
 
 
+@app.get("/healthz", tags=["health"])
+async def healthz():
+    """Kubernetes/Railway-style health probe (api.parley.quest/healthz)."""
+    return {"status": "ok", "server": "4x-api"}
+
+
 @app.websocket("/test-ws")
 async def test_websocket(websocket: WebSocket):
     """Test WebSocket endpoint."""

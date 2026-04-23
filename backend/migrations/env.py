@@ -21,9 +21,18 @@ from src.database.models import Base
 
 target_metadata = Base.metadata
 
-# Override sqlalchemy.url from environment if available
-database_url = os.getenv("DATABASE_URL")
+# Override sqlalchemy.url from environment if available.
+# ``PARLEY_DATABASE_URL`` is the canonical production name (Railway Postgres
+# plugin); ``DATABASE_URL`` remains as a fallback for local + CI.
+# Railway's plugin ships a ``postgresql://`` URL; this project uses the
+# asyncpg driver, so we normalise the scheme here rather than requiring
+# operators to remember the ``+asyncpg`` suffix.
+database_url = os.getenv("PARLEY_DATABASE_URL") or os.getenv("DATABASE_URL")
 if database_url:
+    if database_url.startswith("postgres://"):
+        database_url = "postgresql+asyncpg://" + database_url[len("postgres://") :]
+    elif database_url.startswith("postgresql://"):
+        database_url = "postgresql+asyncpg://" + database_url[len("postgresql://") :]
     config.set_main_option("sqlalchemy.url", database_url)
 
 

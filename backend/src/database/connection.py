@@ -25,10 +25,23 @@ _backend_dir = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_backend_dir / ".env")
 load_dotenv()  # Also load CWD .env (won't overwrite existing vars)
 
-# Database configuration
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://fourex:fourex@localhost:5432/fourex"
+# Database configuration.
+# ``PARLEY_DATABASE_URL`` is the canonical production name (Railway's Postgres
+# plugin is configured to inject it under that key). ``DATABASE_URL`` is kept
+# as a backwards-compatible fallback for local ``.env`` files and existing
+# CI setups — see ``plans/deployment-prd.md``.
+DATABASE_URL = (
+    os.getenv("PARLEY_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+    or "postgresql+asyncpg://fourex:fourex@localhost:5432/fourex"
 )
+# Railway's Postgres plugin emits a ``postgresql://`` URL; this project uses
+# the asyncpg driver, so normalise the scheme so operators don't have to
+# hand-edit the injected value.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+asyncpg://" + DATABASE_URL[len("postgres://") :]
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+asyncpg://" + DATABASE_URL[len("postgresql://") :]
 
 # Create async engine
 engine: AsyncEngine = create_async_engine(
