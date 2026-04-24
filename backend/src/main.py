@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database
     try:
         await init_db()
-        print("Database initialized successfully")
+        print("Database migrations applied successfully")
     except Exception as e:
         print(f"Database initialization failed: {e}")
         raise
