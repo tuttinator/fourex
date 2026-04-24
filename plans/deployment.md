@@ -80,9 +80,9 @@ This phase is demoed by making one trivial change in each tree (a Next.js copy t
 - [x] Backend CI job runs `mise run lint` and `mise run test`; `mise run backend-test` is identical to `mise run test` in this repo (same pytest command), so only one invocation is wired in to avoid redundant runtime
 - [x] `.github/workflows/deploy.yml` runs on push to `main` with per-service jobs gated on path filters (two explicit `deploy-backend` / `deploy-frontend` jobs rather than a `strategy.matrix`; the plan's intent — "only deploy services whose paths changed" — is met, and per-job `if:` filters are clearer than conditional matrix includes driven by `needs.*.outputs`)
 - [x] Deploy workflow authenticates to Railway via a `RAILWAY_TOKEN` repository secret
-- [ ] A demo frontend-only PR triggers only the frontend CI job and, after merge, only the frontend deploy **— blocked on opening a demo PR after this lands**
-- [ ] A demo backend-only PR triggers only the backend CI job and, after merge, only the backend deploy **— blocked on opening a demo PR after this lands**
-- [ ] Branch protection on `main` requires passing CI before merge **— manual GitHub Settings change; require the `CI / CI` check once it's been observed at least once**
+- [x] A demo frontend-only PR triggers only the frontend CI job and, after merge, only the frontend deploy — verified on PR #2 (`demo/frontend-copy-tweak`, CI run 24872822054 / merge-deploy run 24881943350): Frontend CI `success`, Backend CI `skipped`; Deploy frontend `success`, Deploy backend `skipped`
+- [x] A demo backend-only PR triggers only the backend CI job and, after merge, only the backend deploy — verified on PR #3 (`demo/backend-log-tweak`, CI run 24872879204 / merge-deploy run 24881928632): Backend CI `success`, Frontend CI `skipped`; Deploy backend `success`, Deploy frontend `skipped`
+- [ ] Branch protection on `main` requires passing CI before merge **— manual GitHub Settings change; repo currently reports `Branch not protected` (per `gh api repos/tuttinator/fourex/branches/main/protection`). Add `CI / CI` (the meta-job, `name: CI`) as the sole required status check — do **not** add `Backend` / `Frontend` directly, they legitimately `skipped` on path-filter misses and branch protection would then wait forever. Successful `CI` runs have now been observed on `main` (e.g. runs 24872148015, 24881928615, 24881943296, 24893966563, 24894210316) so the check is selectable in the Settings UI.**
 
 ---
 
