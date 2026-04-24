@@ -79,10 +79,14 @@ class Game(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+        DateTime,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -141,7 +145,7 @@ class GameTurn(Base):
 
     # Timestamps
     started_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -179,7 +183,7 @@ class PlayerAction(Base):
 
     # Timestamps
     submitted_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -220,7 +224,7 @@ class PromptLog(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     # Relationships
@@ -249,10 +253,14 @@ class AgentMemory(Base):
     scratchpad_text: Mapped[str] = mapped_column(String(4000), nullable=False)
     structured_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+        DateTime,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     game = relationship("Game", back_populates="agent_memories")
@@ -279,7 +287,7 @@ class TurnSnapshot(Base):
     turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
     state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     game = relationship("Game", back_populates="turn_snapshots")
@@ -307,7 +315,7 @@ class TurnAction(Base):
         JSONB, nullable=False
     )
     submitted_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     game = relationship("Game", back_populates="turn_actions")
@@ -334,7 +342,7 @@ class PlayerApiKey(Base):
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     game = relationship("Game", back_populates="player_api_keys")
@@ -363,7 +371,7 @@ class UserIdentity(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     api_keys = relationship("PlayerApiKey", back_populates="user_identity")
@@ -390,7 +398,7 @@ class AuthVerificationToken(Base):
     token: Mapped[str] = mapped_column(String(255), primary_key=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     __table_args__ = (Index("idx_auth_verification_tokens_expiry", "expires_at"),)
@@ -419,7 +427,7 @@ class GameSnapshot(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), nullable=False
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     # Indexes
@@ -456,7 +464,11 @@ class PlayerStats(Base):
 
     # Timestamps
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+        DateTime,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     # Constraints and indexes

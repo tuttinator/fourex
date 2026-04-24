@@ -25,12 +25,12 @@ Differences deliberately ignored when comparing:
   — ``auth_verification_tokens_pkey`` vs ``pk_auth_verification_tokens``
   are equivalent, and autogenerate picks different names than
   SQLAlchemy's declarative defaults).
-- Column ``server_default`` values (our migrations set
-  ``server_default=func.now()`` on timestamp columns; ``create_all``
-  emits nothing because the model uses Python-side ``default=func.now()``).
-  This is a pre-existing divergence between the two paths that the
-  plan does not require closing; the structural comparison is what
-  matters for "do the schemas have the same shape".
+
+Server defaults ARE compared: the model's timestamp columns use
+``server_default=func.now()`` (not the client-side
+``default=func.now()``), so ``create_all`` and the alembic chain
+both emit ``DEFAULT now()`` in the DDL and the reflected
+``server_default`` values line up.
 
 Skips if no Postgres is reachable at the default dev URL — CI can
 opt in by setting ``PARLEY_TEST_DATABASE_URL`` to a Postgres that
@@ -161,11 +161,26 @@ async def _reflect(db_name: str) -> MetaData:
     return md
 
 
+def _normalise_server_default(col) -> str | None:
+    """Reflected ``server_default`` text, normalised to compare across paths.
+
+    Postgres reflects ``DEFAULT now()`` as either ``now()`` or
+    ``CURRENT_TIMESTAMP`` depending on driver quirks; equate them.
+    """
+    sd = col.server_default
+    if sd is None:
+        return None
+    # ``DefaultClause.arg`` is a TextClause or SQL element.
+    text = str(getattr(sd, "arg", sd)).strip().lower()
+    if text in {"now()", "current_timestamp"}:
+        return "now()"
+    return text
+
+
 def _summarise_table(table) -> dict:
     """Structural snapshot of a table — comparable across migration paths.
 
-    Deliberately omits constraint names and column server defaults; see
-    module docstring for rationale.
+    Deliberately omits constraint names; see module docstring.
     """
     return {
         "columns": {
@@ -173,6 +188,7 @@ def _summarise_table(table) -> dict:
                 "type": str(col.type),
                 "nullable": col.nullable,
                 "primary_key": col.primary_key,
+                "server_default": _normalise_server_default(col),
             }
             for col in table.columns
         },
