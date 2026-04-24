@@ -45,6 +45,13 @@ function secretBytes(): Uint8Array {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // Auth.js v5 only auto-trusts the request host on Vercel; on Railway
+  // (or any other platform) it rejects the incoming ``Host`` header with
+  // ``UntrustedHost`` until the app opts in. Trusting the host is safe
+  // here because Railway terminates TLS with a cert pinned to
+  // ``parley.quest`` — the ``Host`` header cannot be spoofed without
+  // also presenting a matching cert.
+  trustHost: true,
   adapter: HttpIdentityAdapter(),
   providers: [
     Resend({
