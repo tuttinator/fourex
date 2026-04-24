@@ -75,14 +75,14 @@ This phase is demoed by making one trivial change in each tree (a Next.js copy t
 
 ### Acceptance criteria
 
-- [ ] `.github/workflows/ci.yml` runs on all PRs with path-filtered frontend and backend jobs
-- [ ] Frontend CI job runs `npm run type-check`, `npm run lint`, `npm run test -- --run`, and `npm run build`
-- [ ] Backend CI job runs `mise run lint`, `mise run backend-test`, and `mise run test`
-- [ ] `.github/workflows/deploy.yml` runs on push to `main` with a matrix that only deploys services whose paths changed
-- [ ] Deploy workflow authenticates to Railway via a `RAILWAY_TOKEN` repository secret
-- [ ] A demo frontend-only PR triggers only the frontend CI job and, after merge, only the frontend deploy
-- [ ] A demo backend-only PR triggers only the backend CI job and, after merge, only the backend deploy
-- [ ] Branch protection on `main` requires passing CI before merge
+- [x] `.github/workflows/ci.yml` runs on all PRs with path-filtered frontend and backend jobs, plus a ``ci`` meta-job that branch protection can require
+- [x] Frontend CI job runs `npm run type-check`, `npm run lint`, `npm run test -- --run`, and `npm run build`
+- [x] Backend CI job runs `mise run lint` and `mise run test`; `mise run backend-test` is identical to `mise run test` in this repo (same pytest command), so only one invocation is wired in to avoid redundant runtime
+- [x] `.github/workflows/deploy.yml` runs on push to `main` with per-service jobs gated on path filters (two explicit `deploy-backend` / `deploy-frontend` jobs rather than a `strategy.matrix`; the plan's intent — "only deploy services whose paths changed" — is met, and per-job `if:` filters are clearer than conditional matrix includes driven by `needs.*.outputs`)
+- [x] Deploy workflow authenticates to Railway via a `RAILWAY_TOKEN` repository secret
+- [ ] A demo frontend-only PR triggers only the frontend CI job and, after merge, only the frontend deploy **— blocked on opening a demo PR after this lands**
+- [ ] A demo backend-only PR triggers only the backend CI job and, after merge, only the backend deploy **— blocked on opening a demo PR after this lands**
+- [ ] Branch protection on `main` requires passing CI before merge **— manual GitHub Settings change; require the `CI / CI` check once it's been observed at least once**
 
 ---
 

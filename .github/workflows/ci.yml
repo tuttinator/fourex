@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Path filter diffs ``HEAD^..HEAD`` for push events; the
+          # default ``fetch-depth: 1`` would only have HEAD.
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # Default behaviour: PRs diff against the base branch,
+          # pushes diff against the parent commit. Both are correct
+          # for re-running the full suite on merge while keeping PR
+          # runs scoped to what actually changed.
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'agents/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'mise.toml'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+
+  backend:
+    name: Backend
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    # Spin up Postgres so tests that call ``init_db()`` (which now
+    # runs ``alembic upgrade head``) have a real database to target.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fourex
+          POSTGRES_PASSWORD: fourex
+          POSTGRES_DB: fourex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PARLEY_DATABASE_URL: postgresql+asyncpg://fourex:fourex@localhost:5432/fourex
+      PARLEY_TEST_DATABASE_URL: postgresql://fourex:fourex@localhost:5432/fourex
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      # ``uv`` is not declared in ``mise.toml``'s ``[tools]``; the
+      # project expects it on PATH. Install separately and cache by
+      # the ``uv.lock`` hash so cold CI stays fast.
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: mise run install
+      - run: mise run lint
+      - run: mise run test
+
+  frontend:
+    name: Frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # ``next build`` inlines ``NEXT_PUBLIC_*`` vars; the value used
+      # here is cosmetic since we're only verifying the build works,
+      # not shipping the artefact. Runtime env lives on Railway.
+      NEXT_PUBLIC_API_URL: https://api.parley.quest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run lint
+      - run: npm run test -- --run
+      - run: npm run build
+
+  # Meta-job so branch protection can require a single check that
+  # passes regardless of whether the path-filtered jobs ran. Without
+  # this, requiring ``backend`` / ``frontend`` as required checks
+  # would block PRs that legitimately skip one (or both) of them.
+  ci:
+    name: CI
+    needs: [detect, backend, frontend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify path-filtered jobs succeeded or skipped
+        run: |
+          backend='${{ needs.backend.result }}'
+          frontend='${{ needs.frontend.result }}'
+          echo "backend=$backend frontend=$frontend"
+          for r in "$backend" "$frontend"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::dependency failed ($r)"; exit 1 ;;
+            esac
+          done

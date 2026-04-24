@@ -1,0 +1,91 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Deploys must run serially against the same environment — let the
+# previous run finish before starting the next so Railway doesn't
+# see two ``railway up`` for the same service interleaved.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ``dorny/paths-filter`` needs prior history to diff
+          # ``HEAD^..HEAD`` for push events.
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'agents/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'mise.toml'
+              - '.github/workflows/deploy.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/deploy.yml'
+
+  deploy-backend:
+    name: Deploy backend
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install Railway CLI
+        # Railway publishes an ``@railway/cli`` npm package. Using
+        # the npm path avoids curl-pipe-sh; a floating ``latest`` is
+        # fine for now — pin to a major once the first deploy works
+        # and we know which one we trust.
+        run: npm install -g @railway/cli
+      - name: Deploy backend service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        # ``--ci`` disables interactive prompts; ``--service`` pins
+        # the upload to the named Railway service. A project-scoped
+        # ``RAILWAY_TOKEN`` auto-links to the right project so no
+        # separate ``railway link`` step is required.
+        run: railway up --service backend --ci
+
+  deploy-frontend:
+    name: Deploy frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install Railway CLI
+        # Railway publishes an ``@railway/cli`` npm package. Using
+        # the npm path avoids curl-pipe-sh; a floating ``latest`` is
+        # fine for now — pin to a major once the first deploy works
+        # and we know which one we trust.
+        run: npm install -g @railway/cli
+      - name: Deploy frontend service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service frontend --ci
