@@ -60,7 +60,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         <CardHeader>
           <CardTitle>Sign in to Parley</CardTitle>
           <CardDescription>
-            Enter your email and we’ll send you a magic link. No password needed.
+            Enter your email and we’ll send you a magic link — no password needed.
           </CardDescription>
         </CardHeader>
         <CardContent>
