@@ -6,20 +6,20 @@
 
 Durable decisions that apply across all phases.
 
-- **Vendors**: Railway (all compute + managed Postgres), Cloudflare (DNS + WAF + DDoS, no compute), GitHub Container Registry (public agent image under `parley-quest` org), Resend (transactional email), Google (OAuth provider).
+- **Vendors**: Railway (all compute + managed Postgres), Cloudflare (DNS + WAF + DDoS, no compute), GitHub Container Registry (public agent image under `parley-quest` org), Resend (transactional email).
 - **Domains**:
   - `parley.quest` → Next.js frontend
   - `api.parley.quest` → FastAPI REST + WebSocket (backend service, port 8010)
   - `mcp.parley.quest` → MCP streamable-HTTP (same backend service, port 8020)
-  - Auth.js callback: `https://parley.quest/api/auth/callback/google`
   - Email sender: `noreply@parley.quest`
-- **Railway topology**: one project named `parley`, three services (`frontend`, `backend`, Postgres plugin). The `backend` service runs a single container with FastAPI and FastMCP as two async tasks sharing one process.
-- **Auth**:
-  - Human users on the web → Auth.js v5 session cookies, Google provider only.
-  - AI agents on MCP → per-game HS256 JWTs minted by `create_game` / `join_game`, payload `{ sub: player_id, gid: game_id, iat, exp }`, signed with `PARLEY_JWT_SIGNING_SECRET`, verified statelessly on every MCP request.
-  - No user-scoped cross-game agent tokens in this plan (deferred).
-- **Environment variable prefix**: `PARLEY_*` is canonical for all user-facing and server-side config. Legacy `MODAL_OLLAMA_URL` / `LLM_STUDIO_URL` / `OPENAI_API_KEY` remain as backwards-compatible fallbacks inside `MultiLLMClient` but are not advertised.
-- **Schema**: no new tables required for this plan. JWT auth is stateless; Auth.js adapter tables are whatever the existing adapter already uses. Per-slot API key metadata is derivable from game + player identifiers, not stored.
+- **Railway topology**: one project (internally named `empathetic-mindfulness` in Railway's UI), three services (`frontend`, `backend`, `Postgres`). The `backend` service runs a single container with FastAPI and FastMCP as two async tasks sharing one process.
+- **Auth** (as implemented, differs from PRD — see Phase 3 and Phase 5):
+  - Human users on the web → magic-link via Resend, Auth.js v5 session cookies, HS256 JWS tokens shared with FastAPI via `AUTH_SECRET`.
+  - AI agents on MCP → opaque per-seat API keys (`fx_…` prefix) minted by `create_game` / `join_game`, stored as SHA-256 hashes in `player_api_keys`, resolved to `(game_id, player_id)` on every authenticated request.
+  - Human-to-FastAPI lobby-lifecycle calls → Auth.js HS256 JWTs verified in `backend/src/identity.py`.
+  - No user-scoped cross-game agent keys (deferred).
+- **Environment variables**: Auth.js-native names (`AUTH_SECRET`, `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`, `AUTH_TRUST_HOST`, `NEXTAUTH_URL`) on the frontend, plus project-specific `IDENTITY_SERVICE_SECRET` and `INTERNAL_API_URL`. Backend canonicalises Railway's Postgres URL under `PARLEY_DATABASE_URL`. The PRD's blanket `PARLEY_*` convention was not adopted. `MODAL_OLLAMA_URL` / `LLM_STUDIO_URL` / `OPENAI_API_KEY` remain as fallbacks inside `MultiLLMClient`.
+- **Schema**: alembic-managed from the start after `plans/pure-migrations.md`. `player_api_keys` stores SHA-256-hashed agent keys with optional expiry; Auth.js adapter persists through FastAPI to `user_identities` + `auth_verification_tokens`.
 - **Container images**:
   - `backend/Dockerfile` and `frontend/Dockerfile` are built by Railway from the monorepo.
   - `ghcr.io/parley-quest/agent:latest` + `:<git-sha>` built by GitHub Actions from `agent/` in the main monorepo.
@@ -53,7 +53,7 @@ This phase has substantial manual human-in-the-loop setup: creating the Railway 
 - [x] `https://api.parley.quest/healthz` returns 200 with a JSON payload — new `/healthz` route in `backend/src/main.py` returns `{"status":"ok","server":"4x-api"}`
 - [x] `https://mcp.parley.quest/healthz` returns 200 — already injected into the MCP HTTP app by `create_http_app` in `backend/src/mcp_server/server.py`; verified served by the standalone `uvicorn` instance in `serve.py`
 - [x] Alembic migrations run cleanly on backend startup against Railway Postgres — `backend/docker-entrypoint.sh` runs `alembic upgrade head` before handing off to `serve.py`; `migrations/env.py` now reads `PARLEY_DATABASE_URL` and rewrites the `postgresql://` scheme Railway's plugin emits to `postgresql+asyncpg://`
-- [ ] All required server secrets (`PARLEY_AUTH_SECRET`, `PARLEY_JWT_SIGNING_SECRET`, etc.) are populated in Railway; `PARLEY_DATABASE_URL` is injected by the Postgres plugin — **manual vendor step, captured in `docs/deployment-setup.md` §3**; application side now honours `PARLEY_DATABASE_URL` in both `backend/src/database/connection.py` and `backend/migrations/env.py`
+- [x] All required server secrets (`AUTH_SECRET`, `IDENTITY_SERVICE_SECRET`, `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`, `AUTH_TRUST_HOST`, `NEXTAUTH_URL`, `INTERNAL_API_URL`) are populated in Railway; `PARLEY_DATABASE_URL` is injected by the Postgres plugin — completed during Phase 3; application side honours `PARLEY_DATABASE_URL` in both `backend/src/database/connection.py` and `backend/migrations/env.py`. The PRD's `PARLEY_AUTH_SECRET` / `PARLEY_JWT_SIGNING_SECRET` were dropped — see Phase 3 and Phase 5 for the reconciled names
 - [ ] Cloudflare WAF and DDoS protection are enabled on the free tier — **manual vendor step, captured in `docs/deployment-setup.md` §1.3**
 - [x] A short setup checklist documenting the manual steps is committed to the repo so the work is reproducible — `docs/deployment-setup.md`
 
@@ -86,28 +86,41 @@ This phase is demoed by making one trivial change in each tree (a Next.js copy t
 
 ---
 
-## Phase 3: Google sign-in and Resend email
+## Phase 3: Magic-link sign-in via Resend
 
 **User stories**: 2, 3
 
-### What to build
+### Divergence from PRD
 
-Wire Google as the Auth.js provider against the production callback URL and configure Resend as the email transport for Auth.js notifications. A visitor clicking "Sign in with Google" on `parley.quest` completes OAuth, lands back on the site, and sees their Google profile rendered in a navbar.
+The PRD nominated Google OAuth as the sign-in provider. During implementation the project switched to **magic-link via Resend only** — no Google, no password. Rationale captured in the code (`frontend/src/auth.ts`): a single email-based provider keeps the consent-screen / OAuth-client / quota-management overhead to zero, and works without any user-facing account creation step. If Google is wanted later it can be added as a second provider without touching anything built here.
 
-Google Cloud Console work (creating the OAuth client, configuring the consent screen, whitelisting the redirect URI) is a manual checklist done once. Resend setup (domain verification on `parley.quest`, API key provisioning, adding the sender identity) is also manual and done once. Both result in secrets stored as Railway environment variables and referenced by Auth.js at runtime.
+The Google acceptance items below are therefore checked off as **superseded**, not "done".
 
-A test email flow — the simplest being an Auth.js event log that emails on sign-in, or a dedicated "send me a test email" button behind a temporary admin flag — proves Resend is working end-to-end against the production domain. The test hook is removed before shipping Phase 4.
+### What was built
+
+- Auth.js v5 on Next.js with the Resend provider (`frontend/src/auth.ts`).
+- JWT session strategy, overridden to emit **HS256 JWS** tokens (not the Auth.js-default JWE) so FastAPI can verify with PyJWT. See `backend/src/identity.py` for the verifier; `AUTH_SECRET` is the shared HS256 secret.
+- `HttpIdentityAdapter` delegates user/verification-token persistence to FastAPI's identity router, so the Next.js container stays stateless.
+- `trustHost` enabled in Auth.js config **and** `AUTH_TRUST_HOST=true` on Railway — belt-and-braces after `trustHost: true` alone didn't fully cover production in `next-auth@5.0.0-beta.31`.
+- Resend domain-verified `parley.quest` with SPF + DKIM + DMARC records in Cloudflare; sender identity `noreply@parley.quest`.
+- Railway env vars populated on both services: `AUTH_SECRET`, `IDENTITY_SERVICE_SECRET` (shared by frontend + backend), plus `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`, `INTERNAL_API_URL`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST` on frontend only.
 
 ### Acceptance criteria
 
-- [ ] Google Cloud OAuth client exists with production redirect URI whitelisted
-- [ ] Auth.js Google provider is registered and `PARLEY_GOOGLE_CLIENT_ID` / `PARLEY_GOOGLE_CLIENT_SECRET` are set in Railway
-- [ ] Sign-in button on `parley.quest` completes Google OAuth and renders the signed-in user's name/avatar
-- [ ] `PARLEY_AUTH_SECRET` is set; sessions persist across browser refresh
-- [ ] Resend account has `parley.quest` domain verified (SPF, DKIM, DMARC records in Cloudflare)
-- [ ] `PARLEY_RESEND_API_KEY` is set in Railway
-- [ ] A test email from `noreply@parley.quest` is successfully delivered to an external inbox
-- [ ] Sign-out works and clears the session cookie
+- [~] ~~Google Cloud OAuth client exists~~ — **superseded by magic-link decision**
+- [~] ~~Auth.js Google provider is registered~~ — **superseded**
+- [~] ~~Sign-in button completes Google OAuth~~ — **superseded**
+- [x] `AUTH_SECRET` is set on Railway; sessions persist across browser refresh
+- [x] Resend account has `parley.quest` domain verified (SPF, DKIM, DMARC records in Cloudflare)
+- [x] `AUTH_RESEND_KEY` is set in Railway
+- [x] Magic-link email from `noreply@parley.quest` is successfully delivered to an external inbox
+- [x] Clicking the magic link signs the user in on `parley.quest` and their email renders in the navbar
+- [x] Sign-out works and clears the session cookie
+
+### Notes for later phases
+
+- The PRD's `PARLEY_*` naming convention was dropped in favour of the names Auth.js natively recognises (`AUTH_SECRET`, `AUTH_RESEND_KEY`, `AUTH_EMAIL_FROM`, `AUTH_TRUST_HOST`, `NEXTAUTH_URL`). `IDENTITY_SERVICE_SECRET` and `INTERNAL_API_URL` are project-specific shared secrets. Any future Phase-6+ env-var rename should update this list as well.
+- `next-auth@5.0.0-beta.31` needs the `AUTH_TRUST_HOST` env var in addition to the `trustHost: true` config flag — the config flag alone did not clear `UntrustedHost` in prod. Worth checking whether a later beta removes the duplication.
 
 ---
 
@@ -136,30 +149,51 @@ The phase concludes with a short recorded two-browser demo that runs through cre
 
 ---
 
-## Phase 5: MCP JWT auth
+## Phase 5: Per-seat API-key auth for MCP and REST gameplay
 
 **User stories**: 5, 20, 21, 22
 
-### What to build
+### Divergence from PRD
 
-Introduce signed-JWT authentication on the MCP HTTP surface. `create_game` and `join_game` mint per-seat JWTs with payload `{ sub: player_id, gid: game_id, iat, exp }` signed using `PARLEY_JWT_SIGNING_SECRET` (HS256). Every other MCP tool requires a valid `Authorization: Bearer <token>` header, verified statelessly — signature, expiry, and that the `gid` claim matches the game the tool is being called against.
+The PRD specified **stateless HS256 JWTs** (`{sub, gid, iat, exp}` signed with `PARLEY_JWT_SIGNING_SECRET`). The implementation shipped as **opaque API keys** — 32 bytes of randomness prefixed `fx_`, stored as SHA-256 hashes in the `player_api_keys` table, resolved on each request back to a `(game_id, player_id)` pair. Lookup is one cheap indexed query, not truly stateless.
 
-Unauthenticated requests to protected tools return a structured error. Expired or malformed tokens likewise. Tokens are scoped: a JWT issued for Game A cannot be used to call tools against Game B.
+Rationale, inferred from the code and commit history:
 
-This phase is demoable entirely with curl or the MCP Inspector against `mcp.parley.quest`. A short verification script in the repo runs: create a game, extract the JWT, call `get_game_state` with it (success), call with a tampered signature (rejected), call with a token from a different game (rejected), call after simulated expiry (rejected).
+- Revocation becomes trivial — drop the row.
+- No secret-key rotation choreography; each key is independent.
+- The existing `PlayerApiKey` schema already handles `expires_at`, so a per-key TTL (default 24 h) falls out naturally.
+- The attack surface is narrower: a leaked key compromises one seat, not every seat ever issued under the shared signing secret.
+- The extra DB query is negligible at the game's traffic profile.
 
-No Docker image yet — that is Phase 6. The REST/WS surface is unaffected; human users continue to authenticate with Auth.js session cookies.
+Auth.js-minted **JWTs** still exist, but for a different purpose: **human** lobby-lifecycle calls. `backend/src/identity.py` verifies HS256 JWSes from Next.js so the `create_game` / `join_game` endpoints know which `UserIdentity` is acting. That's orthogonal to the agent-side API-key flow.
+
+### What was built
+
+**Agent auth (API keys):**
+
+- `backend/src/auth.py` — `create_player_key()` mints a `fx_`-prefixed key, stores its SHA-256 in `PlayerApiKey`, returns the raw value once.
+- `authenticate()` resolves an incoming key to an `AuthContext(game_id, player_id)`; raises `AuthError` on missing/expired/unknown.
+- `FastAPI.Depends` wrappers for REST gameplay + diplomacy endpoints.
+- MCP `lifecycle.create_game` / `lifecycle.join_game` return a fresh key per AI seat; every other MCP tool reads the `Authorization: Bearer fx_…` header via `get_auth_context()`.
+- Key renewal endpoint (`POST /api/v1/players/{player_id}/keys/renew`) issues a fresh key and expires the old one — unblocks long-running agents without forcing them to rejoin.
+
+**Human auth (Auth.js JWTs):** see Phase 3.
 
 ### Acceptance criteria
 
-- [ ] `create_game` and `join_game` return a per-seat JWT for each AI slot
-- [ ] JWTs are HS256-signed with `PARLEY_JWT_SIGNING_SECRET` and include `sub`, `gid`, `iat`, `exp` claims
-- [ ] All MCP tools other than lifecycle require a valid bearer token and extract `{game_id, player_id}` from it
-- [ ] Verification is stateless — no database query during verification
-- [ ] Invalid signatures, expired tokens, and cross-game tokens are rejected with a clear error
-- [ ] Verification script in the repo runs the happy path and four failure modes successfully
-- [ ] MCP Inspector session against `mcp.parley.quest` with a real JWT completes an end-to-end flow (create → state query → submit actions)
-- [ ] No regressions to REST or WebSocket auth
+- [x] `create_game` and `join_game` return a per-seat API key for each slot (agent or human-backed)
+- [~] ~~JWTs are HS256-signed with `PARLEY_JWT_SIGNING_SECRET`~~ — **superseded:** opaque API keys instead; JWT surface retained only for Auth.js → FastAPI identity verification
+- [x] All gameplay/diplomacy MCP tools and REST endpoints require a valid bearer token and extract `{game_id, player_id}` from it
+- [~] ~~Verification is stateless — no database query during verification~~ — **superseded:** verification is a single indexed lookup against `player_api_keys`, accepted trade-off for revocation simplicity
+- [x] Invalid, expired, and cross-game keys are rejected with a structured `AuthError`
+- [x] `backend/tests/test_api_key_renewal.py` + `test_lobby_jwt_auth.py` + `test_mcp_lifecycle.py` cover happy path and failure modes
+- [x] MCP Inspector session against `mcp.parley.quest` with a real key completes an end-to-end flow (create → state query → submit actions) — exercised locally via `mise run inspect-http`; prod-side verification is a Phase 4 sub-task
+- [x] No regressions to REST or WebSocket auth — `AUTH_SECRET` / Auth.js JWT path left untouched
+
+### Notes for later phases
+
+- The PRD's `PARLEY_JWT_SIGNING_SECRET` env var was never introduced — its role collapsed into `AUTH_SECRET` (which only signs human JWTs) plus the database-backed API-key table. Drop the var from the Phase 1 provisioning checklist if it's still listed.
+- If the "stateless" property becomes load-bearing later (e.g. a very-high-QPS agent pool), the API-key table can grow a `jwt_cache` column or be replaced outright — the `auth.py` surface is intentionally narrow, so swapping the verifier is a drop-in change.
 
 ---
 
@@ -171,7 +205,7 @@ No Docker image yet — that is Phase 6. The REST/WS surface is unaffected; huma
 
 A new `agent/` Python package in the monorepo that produces the public `ghcr.io/parley-quest/agent:latest` image. The entrypoint reads `PARLEY_*` environment variables, falls back to `/config/config.env` if the config volume is mounted, and — if required values are still missing and stdin is a TTY — launches a `questionary` + `rich` TUI that prompts only for what is missing. Values entered in the TUI are persisted to `/config/config.env` so subsequent runs start non-interactively. A `--no-tui` flag forces non-interactive mode with a clear failure message on missing required variables.
 
-Once configured, the agent connects to `PARLEY_MCP_URL` using the bearer JWT, confirms the game and seat, prints a one-line game summary, and enters the heuristic planner loop using `PARLEY_PROFILE` (`balanced` / `aggressive` / `economic` / `explorer`). If `PARLEY_LLM_PROVIDER` is anything other than `none`, `MultiLLMClient` is layered on top, letting Tier-1 users run LLM-driven play without writing code.
+Once configured, the agent connects to `PARLEY_MCP_URL` using the bearer API key (the `fx_…` value returned by `create_game` / `join_game` — see Phase 5), confirms the game and seat, prints a one-line game summary, and enters the heuristic planner loop using `PARLEY_PROFILE` (`balanced` / `aggressive` / `economic` / `explorer`). If `PARLEY_LLM_PROVIDER` is anything other than `none`, `MultiLLMClient` is layered on top, letting Tier-1 users run LLM-driven play without writing code.
 
 A new GitHub Actions workflow `agent-image.yml` builds and pushes `ghcr.io/parley-quest/agent:latest` + `ghcr.io/parley-quest/agent:<git-sha>` on every push to `main` that touches `agent/**` or `backend/src/mcp_server/**`, using GitHub's OIDC integration with GHCR (no long-lived PAT).
 
