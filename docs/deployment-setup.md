@@ -88,6 +88,7 @@ commit them.
 | `AUTH_SECRET`              | 32+ random bytes. **Must match the frontend `AUTH_SECRET`** — this is how FastAPI verifies the HS256 JWTs issued by Auth.js (`backend/src/identity.py`). |
 | `IDENTITY_SERVICE_SECRET`  | 32+ random bytes. Shared with the frontend; gates the `/api/v1/identities/upsert` endpoint the Next.js server route calls on first magic-link verify. |
 | `CORS_ORIGINS`             | JSON list of allowed browser origins. Production value: `["https://parley.quest"]`. Without this, the default list (`localhost`) will cause the browser to reject real requests in Phase 4. |
+| `MCP_ALLOWED_HOSTS`        | JSON list (or comma-separated) of `Host` headers the streamable-http MCP server will accept. Production value: `["mcp.parley.quest"]`. FastMCP enables DNS-rebinding protection by default — without this, the deployed MCP endpoint returns `421 Invalid Host header` for every non-localhost request. |
 
 ### Frontend service
 
@@ -137,9 +138,18 @@ From a clean terminal:
 curl -sf https://api.parley.quest/healthz | jq
 curl -sf https://mcp.parley.quest/healthz | jq
 curl -sfI https://parley.quest
+
+# JSON-RPC reachability — exercises the host allow-list, not just the
+# /healthz route which bypasses MCP entirely. A 421 here means
+# MCP_ALLOWED_HOSTS is missing or wrong on the backend service.
+curl -sf -X POST https://mcp.parley.quest/ \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.1"}}}' \
+  | head -c 200
 ```
 
-All three must succeed.
+All four must succeed.
 
 ## 6. Migration history runbook
 

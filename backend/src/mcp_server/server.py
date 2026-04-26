@@ -9,12 +9,14 @@ import argparse
 import asyncio
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from ..config import settings
 from ..database.connection import close_db, init_db
 from .tools import analysis, diplomacy, gameplay, history, lifecycle, memory, rendering
 
@@ -28,8 +30,16 @@ def create_mcp_server() -> FastMCP:
             "Start by creating or joining a game to get an API key. "
             "Use that key in all subsequent tool calls."
         ),
-        # Internal path set to "/" so mounting at "/mcp" gives a clean "/mcp" external path
+        # Endpoint lives at the app root, so the public URL is
+        # e.g. ``https://mcp.parley.quest/`` (no ``/mcp`` suffix).
         streamable_http_path="/",
+        # FastMCP defaults to DNS-rebinding protection with an empty
+        # allow-list, which 421s every non-localhost request. Feed it the
+        # same lists FastAPI uses so production hostnames work.
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=settings.mcp_allowed_hosts,
+            allowed_origins=settings.cors_origins,
+        ),
     )
 
     # Register tool modules
