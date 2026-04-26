@@ -23,13 +23,18 @@ SlotDict = dict[str, Any]
 
 # Canonical keys for a slot record on disk and on the wire. Listed
 # explicitly so callers can iterate without leaking extra keys that
-# might be added by mistake.
+# might be added by mistake. ``plaintext_key`` is the Phase 3
+# transient field — populated for Agent slots while ``status ==
+# "waiting"`` so the lobby UI can render a copy-button affordance, and
+# stripped on game start so the lobby never doubles as a long-lived
+# secret store.
 SLOT_KEYS = (
     "slot_index",
     "type",
     "name",
     "reserved_email",
     "player_api_key_id",
+    "plaintext_key",
 )
 
 
@@ -51,6 +56,31 @@ def make_human_slot(
         "name": name,
         "reserved_email": reserved_email,
         "player_api_key_id": player_api_key_id,
+        "plaintext_key": None,
+    }
+
+
+def make_agent_slot(
+    slot_index: int,
+    *,
+    name: str,
+    player_api_key_id: int | None = None,
+    plaintext_key: str | None = None,
+) -> SlotDict:
+    """Build an Agent slot dict.
+
+    Agent slots are bound to a specific display name at create time and
+    carry the freshly minted API key as ``plaintext_key`` so the creator
+    can copy it out of the lobby UI. The plaintext lives only while the
+    game is in ``waiting`` — see ``strip_plaintext_keys``.
+    """
+    return {
+        "slot_index": slot_index,
+        "type": "agent",
+        "name": name,
+        "reserved_email": None,
+        "player_api_key_id": player_api_key_id,
+        "plaintext_key": plaintext_key,
     }
 
 
@@ -96,10 +126,32 @@ def coerce_slots(raw: Any, players: list[str], player_slots: int) -> list[SlotDi
                 "name": entry.get("name"),
                 "reserved_email": entry.get("reserved_email"),
                 "player_api_key_id": entry.get("player_api_key_id"),
+                "plaintext_key": entry.get("plaintext_key"),
             }
         )
     coerced.sort(key=lambda s: s["slot_index"])
     return coerced
+
+
+def strip_plaintext_keys(slots: list[SlotDict]) -> list[SlotDict]:
+    """Return a new slot list with every ``plaintext_key`` cleared.
+
+    Called when the game flips from ``waiting`` to ``active`` so the
+    lobby endpoint stops doubling as a secret store. Pure — does not
+    mutate the input.
+    """
+    return [{**slot, "plaintext_key": None} for slot in slots]
+
+
+def redact_plaintext_keys(slots: list[SlotDict]) -> list[SlotDict]:
+    """Return a slot list with ``plaintext_key`` removed from the wire.
+
+    Used by ``GET /games/{id}`` for any caller that isn't the creator
+    or for any game past ``waiting`` — the field is dropped entirely
+    rather than nulled so non-creator callers can't even infer the
+    presence of a key.
+    """
+    return [{**slot, "plaintext_key": None} for slot in slots]
 
 
 def fill_slot(

@@ -278,7 +278,11 @@ describe("api.getGameDetail", () => {
 		expect(result.game_id).toBe("test-game");
 		expect(result.player_slots).toBe(2);
 		const calledUrl = mockFetch.mock.calls[0][0] as string;
-		expect(calledUrl).toContain("/games/test-game");
+		// Phase 3: ``getGameDetail`` is routed through the Next.js BFF so
+		// the Auth.js JWT can be forwarded server-side and the backend can
+		// recognise the caller as the lobby's creator (needed to surface
+		// the per-slot Agent plaintext keys in the response).
+		expect(calledUrl).toBe("/api/lobbies/test-game");
 	});
 
 	it("returns 404 for missing game", async () => {

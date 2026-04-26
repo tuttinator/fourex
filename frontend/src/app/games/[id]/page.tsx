@@ -34,6 +34,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
 import {
   clearGameCredentials,
+  getGameApiKey,
   getGamePlayerId,
   setGameCredentials,
 } from '@/lib/game-auth'
@@ -63,6 +64,8 @@ export default function GameDetailPage() {
   const [joinPlayerId, setJoinPlayerId] = useState('')
   const [copied, setCopied] = useState(false)
   const [apiKeyCopied, setApiKeyCopied] = useState(false)
+  const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null)
+  const [confirmRegenSlot, setConfirmRegenSlot] = useState<number | null>(null)
 
   // Per-game player id is stored in localStorage when we create/join.
   // Re-read on every render so a fresh join reflects immediately.
@@ -87,7 +90,7 @@ export default function GameDetailPage() {
       api.joinLobby(gameId, { player_id: playerId }),
     onSuccess: ({ game, api_key }) => {
       setGameCredentials(game.game_id, {
-        apiKey: api_key,
+        apiKey: api_key ?? '',
         playerId: joinPlayerId.trim(),
       })
       setJoinPlayerId('')
@@ -114,7 +117,18 @@ export default function GameDetailPage() {
   })
 
   const startMutation = useMutation({
-    mutationFn: () => api.startGame(gameId),
+    mutationFn: async () => {
+      // Owners running an all-Agent game have no per-game API key, so
+      // ``startGame`` (per-game-key auth) won't work. The BFF-routed
+      // ``startGameAsOwner`` accepts the Auth.js JWT instead. Pick the
+      // right endpoint based on whether we hold a key for this game.
+      const playerId = getGamePlayerId(gameId)
+      const hasGameplayKey =
+        playerId !== null && game?.players.includes(playerId) === true
+      return hasGameplayKey
+        ? api.startGame(gameId)
+        : api.startGameAsOwner(gameId)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
       queryClient.invalidateQueries({ queryKey: ['games'] })
@@ -124,6 +138,38 @@ export default function GameDetailPage() {
       toast({ title: 'Failed to start', description: err.message, variant: 'destructive' })
     },
   })
+
+  const regenerateMutation = useMutation({
+    mutationFn: (slotIndex: number) => api.regenerateSlotKey(gameId, slotIndex),
+    onSuccess: () => {
+      setConfirmRegenSlot(null)
+      queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
+      toast({ title: 'Key regenerated', description: 'The previous key is now invalid.' })
+    },
+    onError: (err) => {
+      setConfirmRegenSlot(null)
+      toast({ title: 'Regenerate failed', description: err.message, variant: 'destructive' })
+    },
+  })
+
+  const copySlotKey = async (slotIndex: number, plaintext: string) => {
+    if (typeof window === 'undefined') return
+    try {
+      await navigator.clipboard.writeText(plaintext)
+      setCopiedSlotIndex(slotIndex)
+      toast({
+        title: `Slot ${slotIndex} key copied`,
+        description: 'Paste it into your agent now — it disappears when the game starts.',
+      })
+      setTimeout(() => setCopiedSlotIndex((prev) => (prev === slotIndex ? null : prev)), 1500)
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Select the key manually and copy.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const copyApiKey = async (apiKey: string) => {
     if (typeof window === 'undefined') return
@@ -267,8 +313,24 @@ export default function GameDetailPage() {
   // Waiting room view
   const isCreator = currentPlayer !== null && currentPlayer === game.creator
   const isInGame = currentPlayer !== null && game.players.includes(currentPlayer)
-  const isFull = game.players.length >= game.player_slots
+  // Phase 3: a slot is "ready" when it has a name (Human seated, or
+  // Agent name fixed at create) AND for Agents also has a minted
+  // key. That's the same check the backend's start_game guard runs.
+  const slotsArr = game.slots && game.slots.length > 0 ? game.slots : []
+  const allSlotsReady =
+    slotsArr.length === game.player_slots &&
+    slotsArr.every((s) => {
+      if (!s.name) return false
+      if (s.type === 'agent' && !s.player_api_key_id) return false
+      return true
+    })
+  const isFull = slotsArr.length > 0
+    ? allSlotsReady
+    : game.players.length >= game.player_slots
   const canStart = isCreator && isFull && game.status === 'waiting'
+  const agentSlotsWithKeys = slotsArr.filter(
+    (s) => s.type === 'agent' && s.plaintext_key,
+  )
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
@@ -331,7 +393,107 @@ export default function GameDetailPage() {
           </CardContent>
         </Card>
 
-        {game.api_key && game.creator === currentPlayer && (
+        {agentSlotsWithKeys.length > 0 && (
+          <Card data-testid="per-slot-agent-keys-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Bot className="h-4 w-4" />
+                Agent slot API keys
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Hand each Agent slot&apos;s key to its agent. Keys disappear from
+                this page the instant you press Start — copy them now or hit
+                <span className="font-medium"> Regenerate</span> to mint a fresh
+                one (the previous key stops working).
+              </p>
+              {agentSlotsWithKeys.map((slot) => (
+                <div
+                  key={slot.slot_index}
+                  className="rounded-lg border p-3 space-y-2"
+                  data-testid={`agent-slot-key-${slot.slot_index}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs text-muted-foreground">
+                        Slot {slot.slot_index} · Agent
+                      </span>
+                      <p className="font-medium text-sm">{slot.name}</p>
+                    </div>
+                    {confirmRegenSlot === slot.slot_index ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmRegenSlot(null)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => regenerateMutation.mutate(slot.slot_index)}
+                          disabled={regenerateMutation.isPending}
+                          data-testid={`agent-slot-key-${slot.slot_index}-regenerate-confirm`}
+                        >
+                          {regenerateMutation.isPending ? 'Working...' : 'Confirm'}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setConfirmRegenSlot(slot.slot_index)}
+                        data-testid={`agent-slot-key-${slot.slot_index}-regenerate`}
+                      >
+                        Regenerate
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={slot.plaintext_key ?? ''}
+                      readOnly
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        slot.plaintext_key &&
+                        copySlotKey(slot.slot_index, slot.plaintext_key)
+                      }
+                      data-testid={`agent-slot-key-${slot.slot_index}-copy`}
+                    >
+                      {copiedSlotIndex === slot.slot_index ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {(() => {
+          // Phase 1 hand-off panel for the seated creator's own
+          // per-game key. The backend echoes the key on a per-game-key
+          // bearer; the BFF-routed lobby fetch sends the JWT instead,
+          // so we fall back to the localStorage copy stashed when this
+          // user created the lobby.
+          const seatedCreator =
+            currentPlayer !== null && game.creator === currentPlayer
+          if (!seatedCreator) return null
+          const localKey =
+            typeof window !== 'undefined' ? getGameApiKey(gameId) : null
+          const apiKey = game.api_key || localKey || null
+          if (!apiKey) return null
+          return (
           <Card data-testid="agent-api-key-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -360,7 +522,7 @@ export default function GameDetailPage() {
                 <div className="mt-1 flex gap-2">
                   <Input
                     id="agent-api-key"
-                    value={game.api_key}
+                    value={apiKey}
                     readOnly
                     onFocus={(e) => e.currentTarget.select()}
                     className="font-mono text-xs"
@@ -369,7 +531,7 @@ export default function GameDetailPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => game.api_key && copyApiKey(game.api_key)}
+                    onClick={() => copyApiKey(apiKey)}
                     data-testid="agent-api-key-copy"
                   >
                     {apiKeyCopied ? (
@@ -390,7 +552,8 @@ export default function GameDetailPage() {
               </p>
             </CardContent>
           </Card>
-        )}
+          )
+        })()}
 
         {/* Player Slots */}
         <Card>
@@ -524,13 +687,32 @@ export default function GameDetailPage() {
                       ? 'Starting...'
                       : canStart
                         ? 'Start Game'
-                        : `Waiting for ${game.player_slots - game.players.length} more player${game.player_slots - game.players.length !== 1 ? 's' : ''}`}
+                        : 'Waiting for slots'}
                   </Button>
                 )}
               </div>
             )}
 
-            {!isInGame && isFull && (
+            {/* All-Agent (owner-only) creators aren't in ``players`` so the
+                ``isInGame`` branch above doesn't fire — surface the Start
+                control here instead. */}
+            {!isInGame && isCreator && (
+              <Button
+                onClick={() => startMutation.mutate()}
+                disabled={!canStart || startMutation.isPending}
+                className="w-full"
+                data-testid="owner-start-button"
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {startMutation.isPending
+                  ? 'Starting...'
+                  : canStart
+                    ? 'Start Game'
+                    : 'Waiting for slots'}
+              </Button>
+            )}
+
+            {!isInGame && !isCreator && isFull && (
               <p className="text-sm text-muted-foreground text-center">
                 This lobby is full.
               </p>

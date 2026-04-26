@@ -46,6 +46,15 @@ class Game(Base):
     # Lobby configuration
     player_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     creator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Phase 3 (lobby + skill split): the ``UserIdentity`` who created the
+    # lobby. Populated alongside ``creator`` for human-frontend lobbies; null
+    # on MCP-created and legacy rows. Lets the creator authorise Start /
+    # regenerate-key via the Auth.js JWT path even when they aren't seated
+    # in a player slot (all-Agent games). Falls back to the per-game key
+    # check when null so the old auth contract still works.
+    creator_user_identity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_identities.id"), nullable=True
+    )
 
     # Game state
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
@@ -127,6 +136,7 @@ class Game(Base):
         Index("idx_game_created", "created_at"),
         Index("idx_game_updated", "updated_at"),
         Index("idx_game_archived_at", "archived_at"),
+        Index("idx_games_creator_user_identity", "creator_user_identity_id"),
     )
 
 

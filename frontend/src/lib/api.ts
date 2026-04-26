@@ -208,11 +208,17 @@ export const api = {
 	},
 
 	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
-		// Pass ``gameId`` so the per-game bearer is attached when present.
-		// The backend uses this to echo the creator's plaintext key back
-		// in ``api_key`` while the game is in ``waiting`` status, so the
-		// lobby can render a copy-button affordance for an MCP agent.
-		return fetchApi(`/games/${encodeURIComponent(gameId)}`, { gameId });
+		// Routed through the BFF so the Auth.js JWT (HttpOnly cookie) is
+		// forwarded server-side. The backend uses either the per-game
+		// bearer (seated creator, attached automatically by fetchApi for
+		// gameplay calls) OR the JWT (all-Agent owner) to recognise the
+		// caller as the lobby's creator and surface the per-slot
+		// plaintext keys + ``api_key`` echo. Spectators (no JWT) get a
+		// public response.
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}`,
+			{ method: "GET" },
+		);
 	},
 
 	async joinLobby(
@@ -239,6 +245,32 @@ export const api = {
 			method: "POST",
 			gameId,
 		});
+	},
+
+	/** Phase 3: Start an all-Agent lobby as its (unseated) owner. The
+	 * owner has no per-game key in this case so the request is routed
+	 * through the BFF, which forwards the Auth.js JWT server-side. */
+	async startGameAsOwner(
+		gameId: string,
+	): Promise<{ status: string; game_id: string }> {
+		return fetchBff<{ status: string; game_id: string }>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/start-as-owner`,
+			{ method: "POST" },
+		);
+	},
+
+	/** Phase 3: Mint a fresh API key for an Agent slot. Routed through
+	 * the BFF so either auth path (per-game key OR JWT) is forwarded —
+	 * the BFF always sends the JWT, and the backend's
+	 * ``require_creator_auth`` accepts that for the all-Agent case. */
+	async regenerateSlotKey(
+		gameId: string,
+		slotIndex: number,
+	): Promise<{ slot_index: number; plaintext_key: string }> {
+		return fetchBff<{ slot_index: number; plaintext_key: string }>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/regenerate-key`,
+			{ method: "POST" },
+		);
 	},
 
 	async getGameState(gameId: string): Promise<GameState> {

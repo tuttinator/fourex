@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import create_player_key
 from ..database.models import Game as DBGame
 from ..database.repository import GameRepository
 from ..game.models import (
@@ -24,11 +25,13 @@ from ..game.rules import (
     update_discovery,
 )
 from .lobby_slots import (
+    SlotDict,
     clear_slot_by_name,
     coerce_slots,
     derive_slots_from_players,
     fill_slot,
     first_empty_slot_index,
+    strip_plaintext_keys,
 )
 from .turn_resolution import check_and_resolve_turn
 from .websocket import (
@@ -59,9 +62,20 @@ class PersistentGameController:
         map_width: int,
         map_height: int,
         seed: int,
-        creator: str,
+        creator: str | None,
+        creator_user_identity_id: int | None = None,
+        slot_configs: list[SlotDict] | None = None,
     ) -> None:
-        """Create a game lobby in waiting status. Map is generated but no units are placed."""
+        """Create a game lobby in waiting status.
+
+        Map is generated but no units are placed. ``slot_configs``
+        carries the Phase 3 per-slot type/name array; when omitted the
+        lobby seeds an all-Human slate (legacy behaviour). Agent slots
+        in ``slot_configs`` are written with their display name but
+        their ``player_api_key_id`` / ``plaintext_key`` are populated
+        separately by the REST/MCP caller after a key is minted —
+        keeping the auth layer as the single key-minting site.
+        """
         if player_slots < 2 or player_slots > 8:
             raise ValueError("Games require 2-8 player slots")
 
@@ -92,20 +106,135 @@ class PersistentGameController:
             max_turns=100,
             player_slots=player_slots,
             creator=creator,
+            creator_user_identity_id=creator_user_identity_id,
             status="waiting",
         )
 
-        # Seed lobby_slots with one empty Human slot per index. Phase 2
-        # always writes Human slots; Phase 3 introduces Agent slots and a
-        # dedicated configuration step.
-        empty_slots = derive_slots_from_players([], player_slots)
-        await self.repo.update_lobby_slots(game_id, empty_slots)
+        # Seed lobby_slots: when the caller provides a per-slot config
+        # array (Phase 3 create dialog) we honour it; otherwise we fall
+        # back to all-Human (Phase 2 / legacy behaviour).
+        if slot_configs is None:
+            initial_slots = derive_slots_from_players([], player_slots)
+        else:
+            initial_slots = list(slot_configs)
+        await self.repo.update_lobby_slots(game_id, initial_slots)
 
         # Update game state in database
         await self.repo.update_game_state(game_id, state)
 
         # Cache the game state
         self._game_cache[game_id] = state
+
+    async def seat_agent(
+        self,
+        game_id: str,
+        slot_index: int,
+        player_id: str,
+    ) -> None:
+        """Append an Agent player to ``Game.players`` for a pre-created Agent slot.
+
+        Phase 3 creates Agent slots up front in ``create_lobby`` (with a
+        name but no key); this helper mirrors that name into the
+        ``players`` roster so the engine, fog-of-war, and ``whoami``
+        slot-index lookup all see the agent as a real seat. The slot's
+        ``player_api_key_id`` is patched separately via
+        ``link_slot_api_key`` once the REST/MCP caller has minted the
+        key.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+        if db_game.status != "waiting":
+            raise ValueError(f"Game {game_id} is not in waiting status")
+
+        players = list(db_game.players)
+        if player_id in players:
+            raise ValueError(f"Player {player_id} is already in the game")
+        if len(players) >= db_game.player_slots:
+            raise ValueError(f"Game {game_id} is full")
+
+        players.append(player_id)
+        await self.repo.update_game_players(game_id, players)
+
+        # Update the cached state's players list so subsequent reads stay
+        # consistent — start_game will overwrite this from the canonical
+        # roster anyway.
+        if game_id in self._game_cache:
+            self._game_cache[game_id].players = players
+
+        await broadcast_lobby_player_joined(game_id, player_id, players)
+
+    async def store_slot_plaintext(
+        self,
+        game_id: str,
+        slot_index: int,
+        plaintext_key: str | None,
+    ) -> None:
+        """Set or clear the transient ``plaintext_key`` on an Agent slot.
+
+        Stored on the slot (rather than on ``PlayerApiKey``) because the
+        plaintext is intentionally short-lived: ``start_game`` strips
+        every slot's ``plaintext_key`` when the game flips to ``active``,
+        so the lobby endpoint can't double as a long-lived secret store.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            return
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        updated: list[SlotDict] = []
+        for slot in slots:
+            if slot.get("slot_index") == slot_index:
+                updated.append({**slot, "plaintext_key": plaintext_key})
+            else:
+                updated.append(dict(slot))
+        await self.repo.update_lobby_slots(game_id, updated)
+
+    async def regenerate_agent_key(
+        self,
+        game_id: str,
+        slot_index: int,
+    ) -> str:
+        """Mint a fresh API key for an Agent slot, invalidating the previous.
+
+        Returns the plaintext so the REST handler can echo it back to the
+        creator. Restricted by the caller's auth layer — this method
+        trusts that the creator check has already been done.
+
+        The previous key is rotated in place (same ``PlayerApiKey`` row,
+        new hash + new TTL) so the slot's ``player_api_key_id`` doesn't
+        need updating. The new plaintext is stashed on the slot's
+        transient ``plaintext_key`` so the GET endpoint surfaces it
+        until the game starts.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+        if db_game.status != "waiting":
+            raise ValueError("Slot keys can only be regenerated while waiting")
+
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        slot = next((s for s in slots if s.get("slot_index") == slot_index), None)
+        if slot is None:
+            raise ValueError(f"Slot {slot_index} not found")
+        if slot.get("type") != "agent":
+            raise ValueError("Only Agent slots have a regenerable API key")
+        name = slot.get("name")
+        if not name:
+            raise ValueError(f"Slot {slot_index} has no agent name")
+
+        # ``create_player_key`` is upsert-on-(game, player) — it replaces
+        # the existing row's hash + expiry, which is exactly what
+        # "regenerate" means here.
+        plaintext = await create_player_key(
+            self.repo.session, game_id, name, user_identity_id=None
+        )
+        await self.link_slot_api_key(game_id, name)
+        await self.store_slot_plaintext(game_id, slot_index, plaintext)
+        return plaintext
 
     async def join_game(self, game_id: str, player_id: str) -> None:
         """A player joins a joinable game.
@@ -218,8 +347,22 @@ class PersistentGameController:
 
         await broadcast_lobby_player_left(game_id, player_id, players)
 
-    async def start_game(self, game_id: str, creator: str) -> None:
-        """Creator starts a waiting game. Validates slots are full, places units, transitions to active."""
+    async def start_game(
+        self,
+        game_id: str,
+        creator: str | None = None,
+        creator_user_identity_id: int | None = None,
+    ) -> None:
+        """Creator starts a waiting game.
+
+        Authorises by either ``creator`` (per-game player_id from the
+        seated creator's API key — legacy path) or
+        ``creator_user_identity_id`` (Auth.js JWT — Phase 3 all-Agent
+        games where the creator isn't seated). Validates that every
+        slot is filled, places units, transitions to ``active``, and
+        strips the transient ``plaintext_key`` from each slot so the
+        lobby UI stops showing keys.
+        """
         db_game = await self.repo.get_game(game_id)
         if not db_game:
             raise ValueError(f"Game {game_id} not found")
@@ -227,15 +370,34 @@ class PersistentGameController:
         if db_game.status != "waiting":
             raise ValueError(f"Game {game_id} is not in waiting status")
 
-        if db_game.creator != creator:
+        is_creator = False
+        if creator is not None and db_game.creator == creator:
+            is_creator = True
+        elif (
+            creator_user_identity_id is not None
+            and db_game.creator_user_identity_id is not None
+            and db_game.creator_user_identity_id == creator_user_identity_id
+        ):
+            is_creator = True
+        if not is_creator:
             raise ValueError("Only the game creator can start the game")
 
-        players = list(db_game.players)
-        if len(players) != db_game.player_slots:
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        unfilled = [
+            s["slot_index"]
+            for s in slots
+            if not s.get("name")
+            or (s.get("type") == "agent" and not s.get("player_api_key_id"))
+        ]
+        if unfilled:
             raise ValueError(
-                f"All {db_game.player_slots} slots must be filled before starting "
-                f"(currently {len(players)})"
+                f"All slots must be filled before starting (slots without "
+                f"a player or agent key: {unfilled})"
             )
+
+        players = [s["name"] for s in slots if s.get("name")]
 
         # Load the game state (map was generated at lobby creation)
         state = await self.get_game_state(game_id)
@@ -258,9 +420,16 @@ class PersistentGameController:
         # Seed discovered-players sets from starting visibility.
         update_discovery(state)
 
-        # Transition to active
+        # Transition to active. The DB roster also needs to be synced so
+        # ``state.players`` and ``Game.players`` agree once Agent slots
+        # are part of the equation.
+        await self.repo.update_game_players(game_id, players)
         await self.repo.update_game_status(game_id, "active")
         await self.repo.update_game_state(game_id, state)
+
+        # Strip plaintext keys from the slot array — the lobby endpoint
+        # must stop returning them the instant the game flips to active.
+        await self.repo.update_lobby_slots(game_id, strip_plaintext_keys(slots))
 
         # Cache
         self._game_cache[game_id] = state
@@ -289,11 +458,19 @@ class PersistentGameController:
         legacy rows by deriving slots from the pre-join roster, which
         excludes the new player so the next-open lookup still finds an
         empty slot.
+
+        Phase 3: when the slot was already pre-named (e.g. the create
+        dialog put the creator into a specific Human slot at create
+        time), this helper is a no-op — re-filling would double-seat
+        the player into a second slot. The check matches by name so
+        re-joins after a leave still find the slot.
         """
         pre_join_players = [p for p in players_after_join if p != player_id]
         slots = coerce_slots(
             db_game.lobby_slots, pre_join_players, db_game.player_slots
         )
+        if any(s.get("name") == player_id for s in slots):
+            return
         idx = first_empty_slot_index(slots)
         if idx is None:
             return

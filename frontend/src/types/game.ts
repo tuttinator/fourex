@@ -232,12 +232,30 @@ export interface CreateGameRequest {
 	seed?: number;
 }
 
+/** Phase 3: per-slot configuration sent on POST /games. ``type``
+ * selects Human / Agent. ``name`` is required for Agent slots and
+ * matches the seated creator for the creator's Human slot; left null
+ * for open Human slots. ``reserved_email`` is forward-compat with
+ * Phase 5 invites and persisted but not yet acted on. */
+export interface SlotConfigRequest {
+	type: "human" | "agent";
+	name?: string | null;
+	reserved_email?: string | null;
+}
+
 export interface CreateLobbyRequest {
 	player_id: string;
 	player_slots: number;
 	map_width?: number;
 	map_height?: number;
 	seed?: number;
+	/** Phase 3: false → owner-only / all-Agent game; the creator is
+	 * not seated in any slot and has no per-game API key. */
+	creator_seated?: boolean;
+	/** Phase 3: explicit per-slot type/name. Length must equal
+	 * ``player_slots``. Omit for the legacy all-Human, creator-in-slot-0
+	 * behaviour. */
+	slots?: SlotConfigRequest[];
 }
 
 export interface JoinLobbyRequest {
@@ -246,7 +264,10 @@ export interface JoinLobbyRequest {
 
 export interface LobbyKeyResponse {
 	game: GameDetailResponse;
-	api_key: string;
+	/** Phase 3: null when the creator opted out of taking a slot
+	 * (all-Agent games). The owner authorises subsequent Start /
+	 * regenerate-key actions via their Auth.js JWT in that case. */
+	api_key: string | null;
 }
 
 /** Phase 2 lobby redesign: per-slot configuration surfaced on the
@@ -261,6 +282,10 @@ export interface SlotSummary {
 	name: string | null;
 	reserved_email: string | null;
 	player_api_key_id: number | null;
+	/** Phase 3: plaintext API key for an Agent slot, surfaced only
+	 * to the creator while ``status === "waiting"``. Cleared when the
+	 * game starts; absent (null) for non-creators and Human slots. */
+	plaintext_key?: string | null;
 }
 
 export interface GameDetailResponse {

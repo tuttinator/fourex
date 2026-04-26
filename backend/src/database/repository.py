@@ -48,6 +48,7 @@ class GameRepository:
         map_height: int = 20,
         player_slots: int = 2,
         creator: str | None = None,
+        creator_user_identity_id: int | None = None,
         status: str = "created",
     ) -> Game:
         """Create a new game record."""
@@ -79,6 +80,7 @@ class GameRepository:
             players=players,
             player_slots=player_slots,
             creator=creator,
+            creator_user_identity_id=creator_user_identity_id,
             status=status,
         )
 
@@ -762,6 +764,18 @@ class GameRepository:
 
         result = await self.session.execute(stmt.values(expires_at=expiry))
         return result.rowcount or 0
+
+    async def get_player_api_key_by_id(self, api_key_id: int) -> PlayerApiKey | None:
+        """Read a PlayerApiKey row by its primary key.
+
+        Used by the Phase 3 regenerate-key endpoint, which already has
+        the slot's ``player_api_key_id`` and wants to confirm the row
+        exists (and belongs to the right game) before rotating it.
+        """
+        result = await self.session.execute(
+            select(PlayerApiKey).where(PlayerApiKey.id == api_key_id)
+        )
+        return result.scalar_one_or_none()
 
     async def save_enhanced_prompt_log(
         self,
