@@ -24,15 +24,24 @@ class Settings(BaseSettings):
         "http://localhost:8080",
     ]
 
-    @field_validator("cors_origins", mode="before")
+    # Hosts the streamable-http MCP server will accept on the inbound
+    # ``Host`` header. FastMCP enables DNS-rebinding protection by default
+    # and rejects everything except localhost when this list is empty —
+    # production must include the public hostname (e.g. ``mcp.parley.quest``).
+    mcp_allowed_hosts: Annotated[list[str], NoDecode] = [
+        "localhost",
+        "127.0.0.1",
+    ]
+
+    @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
-    def _parse_cors_origins(cls, value: object) -> object:
+    def _parse_string_list(cls, value: object) -> object:
         if not isinstance(value, str):
             return value
         stripped = value.strip()
         if stripped.startswith("["):
             return json.loads(stripped)
-        return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        return [item.strip() for item in stripped.split(",") if item.strip()]
 
     max_players_per_game: int = 8
     max_concurrent_games: int = 20

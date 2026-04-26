@@ -110,6 +110,32 @@ describe("api.listGames", () => {
 
 		await expect(api.listGames()).rejects.toThrow(ApiError);
 	});
+
+	it("formats pydantic validation arrays into a readable message", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 422,
+			json: async () => ({
+				detail: [
+					{
+						type: "less_than_equal",
+						loc: ["body", "map_width"],
+						msg: "Input should be less than or equal to 100",
+					},
+					{
+						type: "less_than_equal",
+						loc: ["body", "map_height"],
+						msg: "Input should be less than or equal to 100",
+					},
+				],
+			}),
+		});
+
+		await expect(api.listGames()).rejects.toThrow(
+			"map_width: Input should be less than or equal to 100; " +
+				"map_height: Input should be less than or equal to 100",
+		);
+	});
 });
 
 describe("api.getGameState", () => {

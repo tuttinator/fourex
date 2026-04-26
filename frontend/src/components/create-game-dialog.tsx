@@ -100,11 +100,31 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
       return
     }
 
+    const width = parseInt(mapWidth)
+    if (isNaN(width) || width < 10 || width > 100) {
+      toast({
+        title: 'Invalid map width',
+        description: 'Map width must be between 10 and 100.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const height = parseInt(mapHeight)
+    if (isNaN(height) || height < 10 || height > 100) {
+      toast({
+        title: 'Invalid map height',
+        description: 'Map height must be between 10 and 100.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const request: CreateLobbyRequest = {
       player_id: playerId.trim(),
       player_slots: slots,
-      map_width: parseInt(mapWidth) || 20,
-      map_height: parseInt(mapHeight) || 20,
+      map_width: width,
+      map_height: height,
       seed: parseInt(seed) || 42,
     }
 
@@ -174,6 +194,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
                 max={100}
                 className="mt-1"
               />
+              <p className="text-xs text-muted-foreground mt-1">10-100 tiles</p>
             </div>
             <div>
               <Label htmlFor="mapHeight">Map Height</Label>
@@ -186,6 +207,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
                 max={100}
                 className="mt-1"
               />
+              <p className="text-xs text-muted-foreground mt-1">10-100 tiles</p>
             </div>
           </div>
 

@@ -46,6 +46,29 @@ export class ApiError extends Error {
 	}
 }
 
+// FastAPI returns pydantic validation errors as an array of objects
+// (`{loc, msg, type, ...}`). Naively stringifying that yields
+// `[object Object],[object Object]`, so we format each entry as
+// `field: msg` to surface a useful message in toasts.
+function formatErrorDetail(detail: unknown): string | null {
+	if (typeof detail === "string") return detail;
+	if (Array.isArray(detail)) {
+		const parts = detail.map((entry) => {
+			if (entry && typeof entry === "object") {
+				const e = entry as { loc?: unknown[]; msg?: string };
+				const field = Array.isArray(e.loc)
+					? e.loc.filter((p) => p !== "body").join(".")
+					: "";
+				const msg = e.msg ?? JSON.stringify(entry);
+				return field ? `${field}: ${msg}` : msg;
+			}
+			return String(entry);
+		});
+		return parts.join("; ");
+	}
+	return null;
+}
+
 interface FetchApiOptions extends RequestInit {
 	/** Scope the per-game API key lookup. If omitted, no Authorization header. */
 	gameId?: string | null;
@@ -86,7 +109,9 @@ async function fetchApi<T>(
 				.catch(() => ({ message: "Unknown error" }));
 			throw new ApiError(
 				response.status,
-				errorData.detail || errorData.message || "Request failed",
+				formatErrorDetail(errorData.detail) ||
+					errorData.message ||
+					"Request failed",
 			);
 		}
 
@@ -117,7 +142,9 @@ async function fetchBff<T>(path: string, init: RequestInit): Promise<T> {
 			.catch(() => ({ detail: "Unknown error" }));
 		throw new ApiError(
 			response.status,
-			errorData.detail || errorData.message || "Request failed",
+			formatErrorDetail(errorData.detail) ||
+				errorData.message ||
+				"Request failed",
 		);
 	}
 	return response.json();
