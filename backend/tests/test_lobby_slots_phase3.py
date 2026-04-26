@@ -574,6 +574,116 @@ class TestKeyVisibility:
             assert slot["plaintext_key"] is None
 
 
+class TestViewerIsCreator:
+    """Phase 6 cleanup: ``viewer_is_creator`` echoes the server's
+    creator-recognition decision so the lobby UI can authoritatively
+    show / hide creator-only affordances (e.g. the Start button for an
+    unseated all-Agent owner). The flag must be true for both the
+    seated-creator-with-per-game-key path and the JWT-only all-Agent
+    owner path, and false for everyone else."""
+
+    @pytest.mark.asyncio
+    async def test_jwt_owner_of_all_agent_lobby_is_recognised(
+        self, client: TestClient, _clean: None
+    ) -> None:
+        uid = await _seed_identity("vic-owner@slotsp3.example.com")
+        token = _mint_jwt(uid)
+        game_id = _game_id("vic_owner")
+
+        client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={
+                "player_id": "owner",
+                "player_slots": 2,
+                "creator_seated": False,
+                "slots": [
+                    {"type": "agent", "name": "alpha"},
+                    {"type": "agent", "name": "beta"},
+                ],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        # JWT-only owner — no per-game key, ``Game.creator`` is null.
+        # ``viewer_is_creator`` MUST still be true so the lobby page
+        # can render the Start-as-owner control.
+        resp = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["viewer_is_creator"] is True
+        assert body["creator"] is None
+
+    @pytest.mark.asyncio
+    async def test_seated_creator_with_per_game_key_is_recognised(
+        self, client: TestClient, _clean: None
+    ) -> None:
+        uid = await _seed_identity("vic-seated@slotsp3.example.com")
+        token = _mint_jwt(uid)
+        game_id = _game_id("vic_seated")
+
+        create = client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={
+                "player_id": "alice",
+                "player_slots": 2,
+                "creator_seated": True,
+                "slots": [
+                    {"type": "human", "name": "alice"},
+                    {"type": "agent", "name": "bot"},
+                ],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        ).json()
+        creator_key = create["api_key"]
+
+        resp = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {creator_key}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["viewer_is_creator"] is True
+
+    @pytest.mark.asyncio
+    async def test_non_creator_and_anonymous_get_false(
+        self, client: TestClient, _clean: None
+    ) -> None:
+        owner_uid = await _seed_identity("vic-other-owner@slotsp3.example.com")
+        owner_token = _mint_jwt(owner_uid)
+        game_id = _game_id("vic_other")
+
+        client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={
+                "player_id": "owner",
+                "player_slots": 2,
+                "creator_seated": False,
+                "slots": [
+                    {"type": "agent", "name": "alpha"},
+                    {"type": "agent", "name": "beta"},
+                ],
+            },
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+
+        # Anonymous.
+        anon = client.get(f"/api/v1/games/{game_id}")
+        assert anon.status_code == 200
+        assert anon.json()["viewer_is_creator"] is False
+
+        # Different signed-in user.
+        intruder_uid = await _seed_identity("vic-intruder@slotsp3.example.com")
+        intruder_token = _mint_jwt(intruder_uid)
+        intruder = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {intruder_token}"},
+        )
+        assert intruder.status_code == 200
+        assert intruder.json()["viewer_is_creator"] is False
+
+
 class TestStartGuard:
     @pytest.mark.asyncio
     async def test_start_blocked_with_open_human_slot(

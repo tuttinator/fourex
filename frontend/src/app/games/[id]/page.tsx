@@ -452,7 +452,15 @@ export default function GameDetailPage() {
   }
 
   // Waiting room view
-  const isCreator = currentPlayer !== null && currentPlayer === game.creator
+  // ``viewer_is_creator`` is the canonical signal — the backend resolves
+  // it from the caller's JWT (or per-game API key) and recognises both
+  // seated creators AND unseated all-Agent owners. The localStorage
+  // fallback is kept for backwards compat with response shapes that
+  // predate the field, but on a fresh deploy ``viewer_is_creator`` is
+  // always present.
+  const isCreator =
+    game.viewer_is_creator === true ||
+    (currentPlayer !== null && currentPlayer === game.creator)
   const isInGame = currentPlayer !== null && game.players.includes(currentPlayer)
   // Phase 3: a slot is "ready" when it has a name (Human seated, or
   // Agent name fixed at create) AND for Agents also has a minted

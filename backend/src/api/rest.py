@@ -970,6 +970,7 @@ class GameDetailResponse(BaseModel):
     ended_at: str | None
     api_key: str | None = None
     slots: list[SlotSummary] = Field(default_factory=list)
+    viewer_is_creator: bool = False
 
 
 class JoinLeaveRequest(BaseModel):
@@ -1836,6 +1837,7 @@ def _game_detail_response(
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,
         slots=[SlotSummary(**s) for s in slots],
+        viewer_is_creator=viewer_is_creator,
     )
 
 
