@@ -341,6 +341,15 @@ export interface GameDetailResponse {
 	 * case. Always length ``player_slots`` once Phase 2 is deployed.
 	 */
 	slots?: SlotSummary[];
+	/**
+	 * Phase 6: server-resolved creator flag. The backend computes this
+	 * from the caller's auth context (per-game API key OR Auth.js JWT
+	 * matching ``creator_user_identity_id``), so the lobby page can
+	 * recognise an unseated all-Agent owner who has neither a slot in
+	 * ``players`` nor a localStorage playerId. Defaults to ``false``
+	 * for callers the backend doesn't recognise as creator.
+	 */
+	viewer_is_creator?: boolean;
 }
 
 export interface GamesListResponse {
