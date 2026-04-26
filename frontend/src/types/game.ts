@@ -262,6 +262,13 @@ export interface JoinLobbyRequest {
 	player_id: string;
 }
 
+/** Phase 4: body for ``PUT /games/{id}/slots`` — the creator sends the
+ * full target slot array. The backend diffs against the current
+ * lobby_slots and applies the legal transitions atomically. */
+export interface ReconfigureSlotsRequest {
+	slots: SlotConfigRequest[];
+}
+
 export interface LobbyKeyResponse {
 	game: GameDetailResponse;
 	/** Phase 3: null when the creator opted out of taking a slot

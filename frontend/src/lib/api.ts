@@ -12,6 +12,7 @@ import type {
 	GameState,
 	JoinLobbyRequest,
 	LobbyKeyResponse,
+	ReconfigureSlotsRequest,
 	MessageListResponse,
 	MySubmissionResponse,
 	QueueableTilesResponse,
@@ -270,6 +271,23 @@ export const api = {
 		return fetchBff<{ slot_index: number; plaintext_key: string }>(
 			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/regenerate-key`,
 			{ method: "POST" },
+		);
+	},
+
+	/** Phase 4: replace the lobby's slot configuration. Routed through
+	 * the BFF so the Auth.js JWT (HttpOnly cookie) reaches the
+	 * backend's ``require_creator_auth`` for both seated-creator and
+	 * all-Agent-owner cases. The backend diffs the supplied slot array
+	 * against the current ``lobby_slots`` and applies the legal
+	 * transitions (Human→Agent for empty slots, Agent→Human invalidates
+	 * the agent's key, Agent rename re-binds the existing key). */
+	async reconfigureSlots(
+		gameId: string,
+		request: ReconfigureSlotsRequest,
+	): Promise<GameDetailResponse> {
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots`,
+			{ method: "PUT", body: JSON.stringify(request) },
 		);
 	},
 

@@ -29,6 +29,8 @@ import {
   KeyRound,
   Copy,
   AlertTriangle,
+  Pencil,
+  X,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
@@ -66,6 +68,11 @@ export default function GameDetailPage() {
   const [apiKeyCopied, setApiKeyCopied] = useState(false)
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null)
   const [confirmRegenSlot, setConfirmRegenSlot] = useState<number | null>(null)
+  // Phase 4: which slot is currently being edited (type toggle / rename),
+  // and the in-progress form state. ``null`` means no edit in flight.
+  const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(null)
+  const [editType, setEditType] = useState<'human' | 'agent'>('human')
+  const [editName, setEditName] = useState('')
 
   // Per-game player id is stored in localStorage when we create/join.
   // Re-read on every render so a fresh join reflects immediately.
@@ -136,6 +143,19 @@ export default function GameDetailPage() {
     },
     onError: (err) => {
       toast({ title: 'Failed to start', description: err.message, variant: 'destructive' })
+    },
+  })
+
+  const reconfigureMutation = useMutation({
+    mutationFn: (slots: { type: 'human' | 'agent'; name: string | null; reserved_email: string | null }[]) =>
+      api.reconfigureSlots(gameId, { slots }),
+    onSuccess: () => {
+      setEditingSlotIndex(null)
+      queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
+      toast({ title: 'Slot updated', description: 'The lobby has been reconfigured.' })
+    },
+    onError: (err) => {
+      toast({ title: 'Reconfigure failed', description: err.message, variant: 'destructive' })
     },
   })
 
@@ -571,21 +591,155 @@ export default function GameDetailPage() {
                 // response predates the column (legacy server, null
                 // column), synthesise an all-Human view from
                 // ``players`` so the UI degrades cleanly.
-                const slots: { slot_index: number; type: 'human' | 'agent'; name: string | null }[] =
+                const slots: { slot_index: number; type: 'human' | 'agent'; name: string | null; reserved_email: string | null }[] =
                   game.slots && game.slots.length > 0
                     ? game.slots.map((s) => ({
                         slot_index: s.slot_index,
                         type: s.type,
                         name: s.name,
+                        reserved_email: s.reserved_email ?? null,
                       }))
                     : Array.from({ length: game.player_slots }, (_, i) => ({
                         slot_index: i,
                         type: 'human' as const,
                         name: game.players[i] ?? null,
+                        reserved_email: null,
                       }))
+
+                const startEdit = (slotIndex: number) => {
+                  const s = slots[slotIndex]
+                  setEditingSlotIndex(slotIndex)
+                  setEditType(s.type)
+                  setEditName(s.name ?? '')
+                }
+                const saveEdit = () => {
+                  if (editingSlotIndex === null) return
+                  const trimmed = editName.trim()
+                  if (editType === 'agent' && !trimmed) {
+                    toast({
+                      title: 'Agent name required',
+                      description: 'Give the agent a display name.',
+                      variant: 'destructive',
+                    })
+                    return
+                  }
+                  // Build the full slot array: every other slot keeps its
+                  // current shape, the edited slot picks up the form state.
+                  // Occupied Human slots have their existing name preserved
+                  // server-side regardless of what we send, but mirroring
+                  // the current value here keeps the request descriptive.
+                  const payload = slots.map((s) => {
+                    if (s.slot_index === editingSlotIndex) {
+                      return {
+                        type: editType,
+                        name: editType === 'agent'
+                          ? trimmed
+                          : s.name,
+                        reserved_email: s.reserved_email,
+                      }
+                    }
+                    return {
+                      type: s.type,
+                      name: s.name,
+                      reserved_email: s.reserved_email,
+                    }
+                  })
+                  reconfigureMutation.mutate(payload)
+                }
+
                 return slots.map((slot) => {
                   const i = slot.slot_index
                   const player = slot.name
+                  const occupiedHuman = slot.type === 'human' && !!player
+                  const isEditing = editingSlotIndex === i
+                  const canEdit = isCreator && game.status === 'waiting'
+
+                  if (isEditing) {
+                    return (
+                      <div
+                        key={i}
+                        className="p-3 rounded-lg border space-y-3"
+                        data-testid={`lobby-slot-${i}-edit`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: getPlayerColor(i) }}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            Slot {i}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs items-center">
+                          <Label className="mr-1">Type:</Label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={editType === 'human' ? 'default' : 'outline'}
+                            onClick={() => setEditType('human')}
+                            disabled={occupiedHuman}
+                            data-testid={`lobby-slot-${i}-edit-type-human`}
+                          >
+                            Human
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={editType === 'agent' ? 'default' : 'outline'}
+                            onClick={() => setEditType('agent')}
+                            disabled={occupiedHuman}
+                            data-testid={`lobby-slot-${i}-edit-type-agent`}
+                          >
+                            Agent
+                          </Button>
+                          {occupiedHuman && (
+                            <span className="text-muted-foreground ml-2">
+                              {player} is seated — they must leave before the
+                              slot can flip to Agent.
+                            </span>
+                          )}
+                        </div>
+                        {editType === 'agent' && (
+                          <div>
+                            <Label htmlFor={`slot-${i}-name`} className="text-xs">
+                              Agent name
+                            </Label>
+                            <Input
+                              id={`slot-${i}-name`}
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              placeholder="bot"
+                              maxLength={64}
+                              className="mt-1"
+                              data-testid={`lobby-slot-${i}-edit-name`}
+                            />
+                          </div>
+                        )}
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingSlotIndex(null)}
+                            disabled={reconfigureMutation.isPending}
+                          >
+                            <X className="h-4 w-4 mr-1" /> Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={saveEdit}
+                            disabled={reconfigureMutation.isPending}
+                            data-testid={`lobby-slot-${i}-edit-save`}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            {reconfigureMutation.isPending ? 'Saving...' : 'Save'}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   return (
                     <div
                       key={i}
@@ -609,6 +763,17 @@ export default function GameDetailPage() {
                         </Badge>
                         {player && i === 0 && game.creator === player && (
                           <Badge variant="outline" className="text-xs">Creator</Badge>
+                        )}
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => startEdit(i)}
+                            data-testid={`lobby-slot-${i}-edit-button`}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
                         )}
                       </div>
                     </div>

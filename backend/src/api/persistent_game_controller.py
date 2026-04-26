@@ -31,6 +31,8 @@ from .lobby_slots import (
     derive_slots_from_players,
     fill_slot,
     first_empty_slot_index,
+    make_agent_slot,
+    make_human_slot,
     strip_plaintext_keys,
 )
 from .turn_resolution import check_and_resolve_turn
@@ -235,6 +237,152 @@ class PersistentGameController:
         await self.link_slot_api_key(game_id, name)
         await self.store_slot_plaintext(game_id, slot_index, plaintext)
         return plaintext
+
+    async def reconfigure_slots(
+        self,
+        game_id: str,
+        new_configs: list[SlotDict],
+    ) -> None:
+        """Apply a slot-reconfiguration diff while the game is ``waiting``.
+
+        Phase 4: the creator can flip slot types and rename Agent slots
+        in the lobby. The legal transitions are:
+
+        * Human (empty) → Agent: mint a fresh key, append the agent
+          name to ``Game.players``, write the slot record.
+        * Agent → Human: invalidate the agent's key (so its bearer
+          stops working), drop the agent name from ``Game.players``,
+          clear the slot's name + ``player_api_key_id``.
+        * Agent rename (Agent → Agent with a different name): re-bind
+          the existing ``PlayerApiKey`` row to the new name (the
+          plaintext key is preserved — only the in-game identity
+          changes). Rotate ``Game.players`` to match.
+        * Human (occupied) → Agent: rejected with 400; the seated
+          human must leave first.
+        * Human (empty / occupied) → Human: no-op for the player /
+          key, ``reserved_email`` is updated for forward-compat with
+          Phase 5 invites.
+
+        The whole reconfiguration is built up as a fresh slot array
+        before any commit so a validation failure mid-loop doesn't
+        leave the lobby half-mutated. Cross-slot uniqueness (Agent
+        names, Agent vs seated-Human collision) is checked up front.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            raise ValueError(f"Game {game_id} not found")
+        if db_game.status != "waiting":
+            raise ValueError("Slots can only be reconfigured while waiting")
+
+        if len(new_configs) != db_game.player_slots:
+            raise ValueError(
+                f"slots length ({len(new_configs)}) must equal "
+                f"player_slots ({db_game.player_slots})"
+            )
+
+        current_slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        current_by_idx = {s["slot_index"]: s for s in current_slots}
+        new_indices: list[int] = []
+        for s in new_configs:
+            idx = s.get("slot_index")
+            if not isinstance(idx, int):
+                raise ValueError("each slot must carry an integer slot_index")
+            new_indices.append(idx)
+        if sorted(new_indices) != sorted(current_by_idx.keys()):
+            raise ValueError("slot indices must match the existing slots exactly")
+
+        # Up-front cross-slot validation.
+        agent_names: list[str] = []
+        seated_human_names: list[str] = []
+        for new_slot in new_configs:
+            idx = new_slot["slot_index"]
+            old = current_by_idx[idx]
+            if new_slot["type"] == "agent":
+                name = (new_slot.get("name") or "").strip()
+                if not name:
+                    raise ValueError(f"Agent slot {idx} requires a name")
+                if name in agent_names:
+                    raise ValueError(f"Agent name '{name}' is duplicated across slots")
+                agent_names.append(name)
+            elif old.get("type") == "human" and old.get("name"):
+                seated_human_names.append(old["name"])
+        collision = sorted(set(agent_names) & set(seated_human_names))
+        if collision:
+            raise ValueError(
+                f"Agent name(s) {collision} collide with seated human player names"
+            )
+
+        # Reject blocked transitions before mutating anything.
+        for new_slot in new_configs:
+            idx = new_slot["slot_index"]
+            old = current_by_idx[idx]
+            if (
+                old.get("type") == "human"
+                and new_slot["type"] == "agent"
+                and old.get("name")
+            ):
+                raise ValueError(
+                    f"Slot {idx} is occupied by '{old['name']}' — "
+                    f"that player must leave before flipping the slot to Agent"
+                )
+
+        # Apply the diff. Players list is rebuilt as we go so the
+        # broadcast at the end reflects the final state.
+        players = list(db_game.players)
+        output_slots: list[SlotDict] = []
+        for new_slot in new_configs:
+            idx = new_slot["slot_index"]
+            old = current_by_idx[idx]
+            old_type = old.get("type")
+            new_type = new_slot["type"]
+            new_email = new_slot.get("reserved_email")
+
+            if old_type == "human" and new_type == "human":
+                output_slots.append({**old, "reserved_email": new_email})
+
+            elif old_type == "human" and new_type == "agent":
+                new_name = (new_slot.get("name") or "").strip()
+                players.append(new_name)
+                plaintext = await create_player_key(
+                    self.repo.session, game_id, new_name, user_identity_id=None
+                )
+                api_key_row = await self.repo.get_player_api_key(game_id, new_name)
+                output_slots.append(
+                    make_agent_slot(
+                        idx,
+                        name=new_name,
+                        player_api_key_id=api_key_row.id if api_key_row else None,
+                        plaintext_key=plaintext,
+                    )
+                )
+
+            elif old_type == "agent" and new_type == "human":
+                old_name = old.get("name")
+                if old_name:
+                    await self.repo.expire_player_api_keys(game_id, player_id=old_name)
+                    players = [p for p in players if p != old_name]
+                output_slots.append(make_human_slot(idx, reserved_email=new_email))
+
+            else:  # agent → agent
+                old_name = old.get("name")
+                new_name = (new_slot.get("name") or "").strip()
+                if old_name == new_name:
+                    output_slots.append(dict(old))
+                else:
+                    if old_name:
+                        await self.repo.rename_player_api_key(
+                            game_id, old_name, new_name
+                        )
+                        players = [new_name if p == old_name else p for p in players]
+                    output_slots.append({**old, "name": new_name})
+
+        await self.repo.update_game_players(game_id, players)
+        await self.repo.update_lobby_slots(game_id, output_slots)
+
+        if game_id in self._game_cache:
+            self._game_cache[game_id].players = players
 
     async def join_game(self, game_id: str, player_id: str) -> None:
         """A player joins a joinable game.

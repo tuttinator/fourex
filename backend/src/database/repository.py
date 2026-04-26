@@ -777,6 +777,30 @@ class GameRepository:
         )
         return result.scalar_one_or_none()
 
+    async def rename_player_api_key(
+        self, game_id: str, old_player_id: str, new_player_id: str
+    ) -> bool:
+        """Re-bind a PlayerApiKey row to a new ``player_id`` in the same game.
+
+        Used by Phase 4 slot reconfiguration when an Agent slot is
+        renamed but its plaintext key is intentionally preserved — the
+        key hash and TTL stay put, so the agent's existing bearer keeps
+        working and ``authenticate`` resolves it to the new name. The
+        ``(game_id, player_id)`` index also stays valid because we move
+        the row rather than duplicate it.
+        """
+        result = await self.session.execute(
+            update(PlayerApiKey)
+            .where(
+                and_(
+                    PlayerApiKey.game_id == game_id,
+                    PlayerApiKey.player_id == old_player_id,
+                )
+            )
+            .values(player_id=new_player_id)
+        )
+        return (result.rowcount or 0) > 0
+
     async def save_enhanced_prompt_log(
         self,
         game_id: str,

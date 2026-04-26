@@ -1368,6 +1368,104 @@ async def start_game_as_owner(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class ReconfigureSlotsRequest(BaseModel):
+    """Request body for ``PUT /games/{game_id}/slots`` (Phase 4).
+
+    The full slot array is sent every call — the controller diffs it
+    against the current ``lobby_slots`` and applies one transition per
+    changed index. Sending the array in full keeps the wire shape
+    identical to the create-lobby ``slots`` field, so the same
+    ``SlotConfigRequest`` validator chain is reusable on both paths.
+    """
+
+    slots: list[SlotConfigRequest]
+
+
+def _build_reconfigure_configs(
+    request: ReconfigureSlotsRequest,
+) -> list[dict[str, Any]]:
+    """Normalise the PUT request into the slot-dict shape the controller wants.
+
+    Cross-slot validation (collision with seated humans, occupied-slot
+    flips) is done by the controller because it needs to read the
+    current ``lobby_slots`` first; this helper just shapes the request
+    and rejects per-slot problems early. The slot index is taken from
+    the request's array position.
+    """
+    configs: list[dict[str, Any]] = []
+    for i, slot in enumerate(request.slots):
+        if slot.type == "agent":
+            name = (slot.name or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agent slot {i} requires a name",
+                )
+            configs.append(make_agent_slot(i, name=name))
+        else:
+            configs.append(
+                make_human_slot(
+                    i,
+                    name=(slot.name or "").strip() or None,
+                    reserved_email=slot.reserved_email,
+                )
+            )
+    return configs
+
+
+@router.put(
+    "/games/{game_id}/slots",
+    tags=["games"],
+)
+async def reconfigure_slots(
+    game_id: str,
+    request: ReconfigureSlotsRequest,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> GameDetailResponse:
+    """Replace the lobby's slot configuration (Phase 4).
+
+    The creator (per-game key OR Auth.js JWT) sends the full target
+    slot array; the controller diffs it against the current
+    ``lobby_slots`` and applies the legal transitions:
+
+    * Human (empty) → Agent — mints a fresh key, appends the agent
+      name to ``Game.players``, plaintext is surfaced via the slot's
+      ``plaintext_key`` so the creator can copy it out.
+    * Agent → Human — invalidates the agent's key (its bearer stops
+      working), drops the agent from ``Game.players``, clears the
+      slot.
+    * Agent rename — re-binds the existing key to the new name (the
+      key plaintext is preserved; the agent doesn't need to refetch).
+    * Human (occupied) → Agent — rejected with 400; the player must
+      leave first.
+
+    Slot count is fixed at create-time; the request is rejected if
+    the array length or set of slot indices differs from the current
+    lobby. Returns the full game detail with the updated slot array.
+    """
+    del creator  # auth dependency — already enforced
+    try:
+        configs = _build_reconfigure_configs(request)
+        controller = get_persistent_game_controller(session)
+        await controller.reconfigure_slots(game_id, configs)
+        await session.commit()
+
+        game_info = await controller.get_game_info(game_id)
+        if not game_info:
+            raise HTTPException(status_code=500, detail="Failed to retrieve game")
+        # The creator always sees the per-slot plaintext keys after a
+        # reconfigure — they explicitly invoked the change and need to
+        # copy any freshly minted Agent key.
+        return _game_detail_response(game_info, viewer_is_creator=True)
+    except HTTPException:
+        raise
+    except AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post(
     "/games/{game_id}/slots/{slot_index}/regenerate-key",
     tags=["games"],

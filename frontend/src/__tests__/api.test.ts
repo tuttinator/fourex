@@ -363,6 +363,48 @@ describe("api.leaveGame", () => {
 	});
 });
 
+describe("api.reconfigureSlots", () => {
+	it("PUTs the BFF slots route with the full slot array", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				player_slots: 2,
+				players: ["alice", "bot"],
+				creator: "alice",
+				turn: 0,
+				max_turns: 100,
+				map_width: 20,
+				map_height: 20,
+				seed: 42,
+				status: "waiting",
+				winner: null,
+				victory_type: null,
+				created_at: "2026-04-26T00:00:00",
+				updated_at: "2026-04-26T00:00:00",
+				ended_at: null,
+				slots: [],
+			}),
+		});
+
+		await api.reconfigureSlots("g1", {
+			slots: [
+				{ type: "human", name: "alice" },
+				{ type: "agent", name: "bot" },
+			],
+		});
+
+		const [calledUrl, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		// Routed through the BFF so the Auth.js JWT is forwarded
+		// server-side (the upstream require_creator_auth needs it).
+		expect(calledUrl).toBe("/api/lobbies/g1/slots");
+		expect(init.method).toBe("PUT");
+		const body = JSON.parse(init.body as string);
+		expect(body.slots).toHaveLength(2);
+		expect(body.slots[1]).toMatchObject({ type: "agent", name: "bot" });
+	});
+});
+
 describe("api.startGame", () => {
 	it("sends POST to start endpoint", async () => {
 		mockFetch.mockResolvedValueOnce({
