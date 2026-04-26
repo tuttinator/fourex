@@ -23,6 +23,13 @@ from ..game.rules import (
     seed_research,
     update_discovery,
 )
+from .lobby_slots import (
+    clear_slot_by_name,
+    coerce_slots,
+    derive_slots_from_players,
+    fill_slot,
+    first_empty_slot_index,
+)
 from .turn_resolution import check_and_resolve_turn
 from .websocket import (
     broadcast_lobby_player_joined,
@@ -88,6 +95,12 @@ class PersistentGameController:
             status="waiting",
         )
 
+        # Seed lobby_slots with one empty Human slot per index. Phase 2
+        # always writes Human slots; Phase 3 introduces Agent slots and a
+        # dedicated configuration step.
+        empty_slots = derive_slots_from_players([], player_slots)
+        await self.repo.update_lobby_slots(game_id, empty_slots)
+
         # Update game state in database
         await self.repo.update_game_state(game_id, state)
 
@@ -138,6 +151,12 @@ class PersistentGameController:
         players.append(player_id)
         await self.repo.update_game_players(game_id, players)
 
+        # Mirror the roster change into ``lobby_slots`` so downstream
+        # readers stay consistent. ``player_api_key_id`` is wired up
+        # separately by ``link_slot_api_key`` once the REST/MCP caller
+        # has minted the key — this method runs before that.
+        await self._fill_next_open_slot(db_game, player_id, players)
+
         if db_game.status == "created":
             state = await self.get_game_state(game_id)
             if state is None:
@@ -183,6 +202,15 @@ class PersistentGameController:
 
         players.remove(player_id)
         await self.repo.update_game_players(game_id, players)
+
+        # Mirror the roster change into ``lobby_slots`` — clear name +
+        # api_key_id but preserve the slot index/type so the seat can
+        # be re-filled later in the same lobby.
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        cleared = clear_slot_by_name(slots, player_id)
+        await self.repo.update_lobby_slots(game_id, cleared)
 
         # Update cached state if present
         if game_id in self._game_cache:
@@ -245,6 +273,60 @@ class PersistentGameController:
         # Notify every subscribed client that the lobby has gone live.
         await broadcast_lobby_started(game_id)
 
+    async def _fill_next_open_slot(
+        self,
+        db_game: DBGame,
+        player_id: PlayerId,
+        players_after_join: list[str],
+    ) -> None:
+        """Seat ``player_id`` in the next open Human slot of ``lobby_slots``.
+
+        Phase 2 maintains the slot array in lock-step with ``players``
+        without altering join semantics — every slot is Human, so the
+        next-open helper is sufficient. ``player_api_key_id`` is left
+        null here; the REST/MCP caller invokes
+        ``link_slot_api_key(...)`` once the key row exists. Tolerates
+        legacy rows by deriving slots from the pre-join roster, which
+        excludes the new player so the next-open lookup still finds an
+        empty slot.
+        """
+        pre_join_players = [p for p in players_after_join if p != player_id]
+        slots = coerce_slots(
+            db_game.lobby_slots, pre_join_players, db_game.player_slots
+        )
+        idx = first_empty_slot_index(slots)
+        if idx is None:
+            return
+        updated = fill_slot(slots, idx, name=player_id, player_api_key_id=None)
+        await self.repo.update_lobby_slots(db_game.id, updated)
+
+    async def link_slot_api_key(self, game_id: str, player_id: PlayerId) -> None:
+        """Patch ``player_api_key_id`` onto the slot owned by ``player_id``.
+
+        Called by the REST/MCP layer after a key has been minted so
+        the slot record knows which ``PlayerApiKey`` row backs it.
+        Idempotent — a missing slot or missing key row is a silent
+        no-op rather than an error, which keeps the call site simple
+        even when invoked against a freshly-derived legacy row that
+        lacks a slot entry yet.
+        """
+        db_game = await self.repo.get_game(game_id)
+        if db_game is None:
+            return
+        api_key_row = await self.repo.get_player_api_key(game_id, player_id)
+        if api_key_row is None:
+            return
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        updated: list[dict[str, Any]] = []
+        for slot in slots:
+            if slot.get("name") == player_id:
+                updated.append({**slot, "player_api_key_id": api_key_row.id})
+            else:
+                updated.append(dict(slot))
+        await self.repo.update_lobby_slots(game_id, updated)
+
     @staticmethod
     def _place_starting_units(
         state: GameState, players: list[PlayerId], seed: int
@@ -297,6 +379,13 @@ class PersistentGameController:
             max_turns=100,
             player_slots=len(players),
         )
+
+        # Phase 2: keep ``lobby_slots`` in lock-step with ``players`` for
+        # the legacy create-and-go path. Keys are minted lazily in this
+        # branch (or not at all in tests), so each slot's
+        # ``player_api_key_id`` stays null until the API surface fills it.
+        initial_slots = derive_slots_from_players(players, len(players))
+        await self.repo.update_lobby_slots(game_id, initial_slots)
 
         # Update game state in database
         await self.repo.update_game_state(game_id, state)

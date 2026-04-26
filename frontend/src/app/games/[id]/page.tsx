@@ -402,30 +402,56 @@ export default function GameDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {Array.from({ length: game.player_slots }, (_, i) => {
-                const player = game.players[i]
-                return (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between p-3 rounded-lg border"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: player ? getPlayerColor(i) : '#6b7280' }}
-                      />
-                      {player ? (
-                        <span className="font-medium">{player}</span>
-                      ) : (
-                        <span className="text-muted-foreground italic">Empty slot</span>
-                      )}
+              {(() => {
+                // Prefer the Phase 2 ``slots`` array — it's the canonical
+                // shape and also lets us render type badges. When the
+                // response predates the column (legacy server, null
+                // column), synthesise an all-Human view from
+                // ``players`` so the UI degrades cleanly.
+                const slots: { slot_index: number; type: 'human' | 'agent'; name: string | null }[] =
+                  game.slots && game.slots.length > 0
+                    ? game.slots.map((s) => ({
+                        slot_index: s.slot_index,
+                        type: s.type,
+                        name: s.name,
+                      }))
+                    : Array.from({ length: game.player_slots }, (_, i) => ({
+                        slot_index: i,
+                        type: 'human' as const,
+                        name: game.players[i] ?? null,
+                      }))
+                return slots.map((slot) => {
+                  const i = slot.slot_index
+                  const player = slot.name
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between p-3 rounded-lg border"
+                      data-testid={`lobby-slot-${i}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: player ? getPlayerColor(i) : '#6b7280' }}
+                        />
+                        {player ? (
+                          <span className="font-medium">{player}</span>
+                        ) : (
+                          <span className="text-muted-foreground italic">Empty slot</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs capitalize">
+                          {slot.type}
+                        </Badge>
+                        {player && i === 0 && game.creator === player && (
+                          <Badge variant="outline" className="text-xs">Creator</Badge>
+                        )}
+                      </div>
                     </div>
-                    {player && i === 0 && game.creator === player && (
-                      <Badge variant="outline" className="text-xs">Creator</Badge>
-                    )}
-                  </div>
-                )
-              })}
+                  )
+                })
+              })()}
             </div>
           </CardContent>
         </Card>

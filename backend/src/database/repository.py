@@ -94,6 +94,21 @@ class GameRepository:
             .values(players=players, updated_at=self._utcnow())
         )
 
+    async def update_lobby_slots(
+        self, game_id: str, lobby_slots: list[dict[str, Any]]
+    ) -> None:
+        """Replace the ``lobby_slots`` JSON column on a game.
+
+        The column is JSON, so the new value must be JSON-serialisable
+        (lists of plain dicts only — no Pydantic models). Callers go
+        through ``api.lobby_slots`` helpers to keep the shape consistent.
+        """
+        await self.session.execute(
+            update(Game)
+            .where(Game.id == game_id)
+            .values(lobby_slots=lobby_slots, updated_at=self._utcnow())
+        )
+
     async def update_game_status(self, game_id: str, status: str) -> None:
         """Update the status of a game."""
         await self.session.execute(

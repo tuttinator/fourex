@@ -249,6 +249,20 @@ export interface LobbyKeyResponse {
 	api_key: string;
 }
 
+/** Phase 2 lobby redesign: per-slot configuration surfaced on the
+ * detail response. Every slot in Phase 2 is ``type: "human"`` with
+ * ``name`` carrying the seated player id (or null for empty slots);
+ * Agent slots and reserved Human slots land in Phase 3. ``slots``
+ * is always an ordered list of length ``player_slots`` so the UI can
+ * render the seat array directly without imputation. */
+export interface SlotSummary {
+	slot_index: number;
+	type: "human" | "agent";
+	name: string | null;
+	reserved_email: string | null;
+	player_api_key_id: number | null;
+}
+
 export interface GameDetailResponse {
 	game_id: string;
 	player_slots: number;
@@ -276,6 +290,13 @@ export interface GameDetailResponse {
 	 * other caller and absent the moment the game flips to ``active``.
 	 */
 	api_key?: string | null;
+	/**
+	 * Phase 2 lobby redesign: per-slot configuration. Defaults to an
+	 * empty array on responses that predate the field; the lobby page
+	 * falls back to the legacy ``players``-derived rendering in that
+	 * case. Always length ``player_slots`` once Phase 2 is deployed.
+	 */
+	slots?: SlotSummary[];
 }
 
 export interface GamesListResponse {

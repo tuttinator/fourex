@@ -51,6 +51,17 @@ class Game(Base):
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     players: Mapped[list[str]] = mapped_column(JSON, nullable=False)
 
+    # Lobby slot configuration. Each entry is a dict with at least
+    # ``slot_index`` (int), ``type`` ("human" | "agent"), ``name`` (str |
+    # None — the seated player's display name), ``reserved_email`` (str |
+    # None) and ``player_api_key_id`` (int | None) referencing the active
+    # ``PlayerApiKey`` row for that slot. Nullable for backwards
+    # compatibility — legacy rows are interpreted as all-Human slots
+    # derived from ``players`` (see ``derive_slots_from_players``).
+    lobby_slots: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
+
     # Status and metadata
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
     winner: Mapped[str | None] = mapped_column(String(255), nullable=True)

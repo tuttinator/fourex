@@ -57,6 +57,7 @@ from ..game.rules import (
 )
 from ..game.rules_reference import build_rules_reference
 from ..identity import UserIdentityContext, require_user_identity
+from .lobby_slots import coerce_slots
 from .persistent_game_controller import get_persistent_game_controller
 
 router = APIRouter()
@@ -767,6 +768,23 @@ class CreateLobbyRequest(BaseModel):
     seed: int = Field(default=42, description="Random seed for map generation")
 
 
+class SlotSummary(BaseModel):
+    """One entry in a game's ``lobby_slots`` array.
+
+    Phase 2 of the lobby + skill split surfaces the slot model on the
+    wire without changing user-visible behaviour: every slot is Human,
+    ``name`` is the seated player's id (null for empty slots), and
+    ``reserved_email`` is always null. Phase 3 introduces Agent slots
+    and reserved Human slots populating the remaining fields.
+    """
+
+    slot_index: int
+    type: Literal["human", "agent"]
+    name: str | None = None
+    reserved_email: str | None = None
+    player_api_key_id: int | None = None
+
+
 class GameDetailResponse(BaseModel):
     """Full game detail including lobby configuration.
 
@@ -797,6 +815,7 @@ class GameDetailResponse(BaseModel):
     updated_at: str
     ended_at: str | None
     api_key: str | None = None
+    slots: list[SlotSummary] = Field(default_factory=list)
 
 
 class JoinLeaveRequest(BaseModel):
@@ -856,6 +875,7 @@ async def create_lobby(
             request.player_id,
             user_identity_id=identity.user_identity_id,
         )
+        await controller.link_slot_api_key(game_id, request.player_id)
         await session.commit()
 
         game_info = await controller.get_game_info(game_id)
@@ -931,6 +951,7 @@ async def join_game(
             request.player_id,
             user_identity_id=identity.user_identity_id,
         )
+        await controller.link_slot_api_key(game_id, request.player_id)
         await session.commit()
 
         game_info = await controller.get_game_info(game_id)
@@ -1035,6 +1056,8 @@ async def get_game_info(
 
 def _game_detail_response(game: Any) -> GameDetailResponse:
     """Convert a DB game record to a GameDetailResponse."""
+    raw_slots = getattr(game, "lobby_slots", None)
+    slots = coerce_slots(raw_slots, list(game.players), game.player_slots)
     return GameDetailResponse(
         game_id=game.id,
         player_slots=game.player_slots,
@@ -1054,6 +1077,7 @@ def _game_detail_response(game: Any) -> GameDetailResponse:
         created_at=game.created_at.isoformat(),
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,
+        slots=[SlotSummary(**s) for s in slots],
     )
 
 

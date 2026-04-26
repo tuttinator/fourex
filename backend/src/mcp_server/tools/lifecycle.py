@@ -141,6 +141,17 @@ def register(mcp: FastMCP) -> None:
                 key = await create_player_key(session, game_id, player)
                 api_keys[player] = key
 
+            # Phase 2: persist a ``lobby_slots`` array reflecting the
+            # ``created``-status roster so /games/{id} surfaces a
+            # consistent slot view across MCP- and frontend-born games.
+            controller = PersistentGameController(session)
+            from ...api.lobby_slots import derive_slots_from_players
+
+            initial_slots = derive_slots_from_players(list(players), len(players))
+            await controller.repo.update_lobby_slots(game_id, initial_slots)
+            for player in players:
+                await controller.link_slot_api_key(game_id, player)
+
             await session.commit()
 
         return {
@@ -200,6 +211,7 @@ def register(mcp: FastMCP) -> None:
             # this key to, which is how MCP-origin keys are distinguished
             # from human-origin keys.
             key = await create_player_key(session, game_id, player_name)
+            await controller.link_slot_api_key(game_id, player_name)
             await session.commit()
 
         return {
