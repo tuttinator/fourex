@@ -171,6 +171,50 @@ async def test_get_game_info_not_found(db_session, mcp):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# whoami
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_whoami_returns_identity_for_creator_key(db_session, mcp):
+    game_data = await call(mcp, "create_game", {"players": ["alice", "bob"]})
+    game_id = game_data["game_id"]
+    alice_key = game_data["api_keys"]["alice"]
+
+    info = await call(mcp, "whoami", {"api_key": alice_key})
+    assert info["game_id"] == game_id
+    assert info["player_id"] == "alice"
+    assert info["slot_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_whoami_returns_slot_index_for_joined_player(db_session, mcp):
+    game_data = await call(mcp, "create_game", {"players": ["alice", "bob"]})
+    game_id = game_data["game_id"]
+
+    join_data = await call(
+        mcp, "join_game", {"game_id": game_id, "player_name": "charlie"}
+    )
+
+    info = await call(mcp, "whoami", {"api_key": join_data["api_key"]})
+    assert info["game_id"] == game_id
+    assert info["player_id"] == "charlie"
+    assert info["slot_index"] == 2
+
+
+@pytest.mark.asyncio
+async def test_whoami_invalid_key_errors(db_session, mcp):
+    info = await call(mcp, "whoami", {"api_key": "fx_not_a_real_key"})
+    assert "error" in info
+
+
+@pytest.mark.asyncio
+async def test_whoami_missing_key_errors(db_session, mcp):
+    info = await call(mcp, "whoami", {"api_key": ""})
+    assert "error" in info
+
+
 @pytest.mark.asyncio
 async def test_join_game_visible_in_info(db_session, mcp):
     game_data = await call(mcp, "create_game", {"players": ["alice", "bob"]})

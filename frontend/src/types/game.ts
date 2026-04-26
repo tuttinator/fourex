@@ -268,6 +268,14 @@ export interface GameDetailResponse {
 	created_at: string;
 	updated_at: string;
 	ended_at: string | null;
+	/**
+	 * Phase 1 lobby redesign: when the caller of GET /games/{id} is the
+	 * game's creator AND the game is still ``waiting``, the backend echoes
+	 * the bearer token back here so the lobby UI can render a copy-button
+	 * affordance for the human to hand to an MCP agent. Absent for any
+	 * other caller and absent the moment the game flips to ``active``.
+	 */
+	api_key?: string | null;
 }
 
 export interface GamesListResponse {

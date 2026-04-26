@@ -208,7 +208,11 @@ export const api = {
 	},
 
 	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
-		return fetchApi(`/games/${encodeURIComponent(gameId)}`);
+		// Pass ``gameId`` so the per-game bearer is attached when present.
+		// The backend uses this to echo the creator's plaintext key back
+		// in ``api_key`` while the game is in ``waiting`` status, so the
+		// lobby can render a copy-button affordance for an MCP agent.
+		return fetchApi(`/games/${encodeURIComponent(gameId)}`, { gameId });
 	},
 
 	async joinLobby(

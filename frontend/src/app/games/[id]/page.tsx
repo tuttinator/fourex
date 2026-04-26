@@ -26,8 +26,9 @@ import {
   Link as LinkIcon,
   Check,
   Bot,
-  ChevronDown,
-  ChevronRight,
+  KeyRound,
+  Copy,
+  AlertTriangle,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
@@ -61,9 +62,7 @@ export default function GameDetailPage() {
   const queryClient = useQueryClient()
   const [joinPlayerId, setJoinPlayerId] = useState('')
   const [copied, setCopied] = useState(false)
-  const [mcpInviteOpen, setMcpInviteOpen] = useState(false)
-  const [mcpAgentName, setMcpAgentName] = useState('')
-  const [mcpSnippetCopied, setMcpSnippetCopied] = useState(false)
+  const [apiKeyCopied, setApiKeyCopied] = useState(false)
 
   // Per-game player id is stored in localStorage when we create/join.
   // Re-read on every render so a fresh join reflects immediately.
@@ -126,25 +125,20 @@ export default function GameDetailPage() {
     },
   })
 
-  const mcpSnippet = (() => {
-    const name = mcpAgentName.trim() || 'agent'
-    return `join_game(game_id="${gameId}", player_name="${name}")`
-  })()
-
-  const copyMcpSnippet = async () => {
+  const copyApiKey = async (apiKey: string) => {
     if (typeof window === 'undefined') return
     try {
-      await navigator.clipboard.writeText(mcpSnippet)
-      setMcpSnippetCopied(true)
+      await navigator.clipboard.writeText(apiKey)
+      setApiKeyCopied(true)
       toast({
-        title: 'MCP snippet copied',
-        description: 'Paste it into your agent (e.g. Claude Code).',
+        title: 'API key copied',
+        description: 'Paste it into your MCP-enabled agent (e.g. Claude Code).',
       })
-      setTimeout(() => setMcpSnippetCopied(false), 1500)
+      setTimeout(() => setApiKeyCopied(false), 1500)
     } catch {
       toast({
         title: 'Copy failed',
-        description: 'Select the snippet manually and copy.',
+        description: 'Select the key manually and copy.',
         variant: 'destructive',
       })
     }
@@ -334,67 +328,69 @@ export default function GameDetailPage() {
               {copied ? 'Copied!' : 'Copy invite link'}
             </Button>
 
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => setMcpInviteOpen((v) => !v)}
-                className="flex w-full items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                aria-expanded={mcpInviteOpen}
-                data-testid="mcp-invite-toggle"
-              >
-                {mcpInviteOpen ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
+          </CardContent>
+        </Card>
+
+        {game.api_key && game.creator === currentPlayer && (
+          <Card data-testid="agent-api-key-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
                 <Bot className="h-4 w-4" />
-                <span>Invite an MCP agent</span>
-              </button>
-              {mcpInviteOpen && (
-                <div className="mt-3 space-y-3" data-testid="mcp-invite-panel">
-                  <p className="text-xs text-muted-foreground">
-                    Paste this into an MCP-enabled client (e.g. Claude Code with the
-                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">fourex-mcp</code>
-                    server configured) to seat an AI agent at this table.
-                  </p>
-                  <div>
-                    <Label htmlFor="mcpAgentName" className="text-xs">
-                      Agent display name
-                    </Label>
-                    <Input
-                      id="mcpAgentName"
-                      value={mcpAgentName}
-                      onChange={(e) => setMcpAgentName(e.target.value)}
-                      placeholder="agent"
-                      className="mt-1 h-8 text-sm"
-                      maxLength={64}
-                    />
-                  </div>
-                  <pre
-                    className="text-xs rounded border bg-muted px-3 py-2 overflow-x-auto font-mono"
-                    data-testid="mcp-invite-snippet"
-                  >
-                    {mcpSnippet}
-                  </pre>
+                Hand off to an MCP agent
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Point your agent at the live MCP endpoint (
+                <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">
+                  https://mcp.parley.quest/
+                </code>
+                , streamable-http) and paste this game URL plus the API key
+                below. In Claude Code, the
+                <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">
+                  /play-parley
+                </code>
+                skill walks through the handshake.
+              </p>
+              <div>
+                <Label htmlFor="agent-api-key" className="text-xs flex items-center gap-1">
+                  <KeyRound className="h-3 w-3" />
+                  Per-game API key
+                </Label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    id="agent-api-key"
+                    value={game.api_key}
+                    readOnly
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="font-mono text-xs"
+                    data-testid="agent-api-key-input"
+                  />
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={copyMcpSnippet}
-                    className="w-full"
-                    data-testid="mcp-invite-copy"
+                    onClick={() => game.api_key && copyApiKey(game.api_key)}
+                    data-testid="agent-api-key-copy"
                   >
-                    {mcpSnippetCopied ? (
-                      <Check className="h-4 w-4 mr-2" />
+                    {apiKeyCopied ? (
+                      <Check className="h-4 w-4" />
                     ) : (
-                      <LinkIcon className="h-4 w-4 mr-2" />
+                      <Copy className="h-4 w-4" />
                     )}
-                    {mcpSnippetCopied ? 'Copied!' : 'Copy MCP tool call'}
+                    <span className="ml-2">{apiKeyCopied ? 'Copied' : 'Copy'}</span>
                   </Button>
                 </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+              <p className="text-xs text-amber-600 dark:text-amber-500 flex items-start gap-1">
+                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>
+                  Copy the key now — once the game starts it disappears from this
+                  page. If you lose it, you can mint a fresh lobby instead.
+                </span>
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Player Slots */}
         <Card>

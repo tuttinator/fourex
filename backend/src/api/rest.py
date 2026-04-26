@@ -2,15 +2,18 @@
 REST API endpoints for game state and actions.
 """
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
     AuthContext,
     AuthError,
+    authenticate,
     create_player_key,
     require_api_key,
     require_api_key_optional,
@@ -82,6 +85,43 @@ def get_current_player_optional(
     flow respectively.
     """
     return auth.player_id if auth is not None else None
+
+
+@dataclass(frozen=True)
+class CallerCredentials:
+    """Resolved auth context plus the bearer plaintext.
+
+    The plaintext is preserved so ``GET /games/{id}`` can echo the
+    creator's API key back to the lobby UI while ``status == "waiting"``
+    — the bearer the browser sent IS the per-game key, so no extra
+    storage is needed.
+    """
+
+    auth: AuthContext
+    plaintext_key: str
+
+
+_lobby_bearer = HTTPBearer(auto_error=False)
+
+
+async def caller_credentials_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_lobby_bearer),
+    session: AsyncSession = Depends(get_database_session),
+) -> CallerCredentials | None:
+    """Optional dep: return both the resolved identity and the raw bearer.
+
+    Returns ``None`` for unauthenticated requests and for malformed /
+    expired keys, mirroring ``require_api_key_optional`` — endpoints
+    use the ``None`` branch to fall back to public/unauthenticated
+    behaviour rather than 401.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        auth = await authenticate(session, credentials.credentials)
+    except AuthError:
+        return None
+    return CallerCredentials(auth=auth, plaintext_key=credentials.credentials)
 
 
 @router.get("/rules", tags=["rules"])
@@ -728,7 +768,15 @@ class CreateLobbyRequest(BaseModel):
 
 
 class GameDetailResponse(BaseModel):
-    """Full game detail including lobby configuration."""
+    """Full game detail including lobby configuration.
+
+    ``api_key`` is populated only when (a) the caller is the game's
+    creator and (b) ``status == "waiting"`` — the lobby UI uses it to
+    render the copy-button affordance the creator hands to an MCP agent.
+    The field is absent for everyone else and disappears the instant the
+    game flips to ``active``, so the lobby endpoint cannot double as a
+    long-lived secret store.
+    """
 
     game_id: str
     player_slots: int
@@ -748,6 +796,7 @@ class GameDetailResponse(BaseModel):
     created_at: str
     updated_at: str
     ended_at: str | None
+    api_key: str | None = None
 
 
 class JoinLeaveRequest(BaseModel):
@@ -827,16 +876,32 @@ async def create_lobby(
 async def get_game_detail(
     game_id: str,
     session: AsyncSession = Depends(get_database_session),
+    caller: CallerCredentials | None = Depends(caller_credentials_optional),
 ) -> GameDetailResponse:
     """
     Get full game detail including lobby configuration, player slots, and status.
+
+    When the caller is the game's creator and the game is still
+    ``waiting``, the response also carries the creator's plaintext API
+    key so the lobby UI can render the copy-button affordance for an
+    MCP agent. Phase 1 of the lobby redesign exposes a single key
+    (the creator's own); the per-slot agent keys land in Phase 3.
     """
     try:
         controller = get_persistent_game_controller(session)
         game_info = await controller.get_game_info(game_id)
         if not game_info:
             raise HTTPException(status_code=404, detail="Game not found")
-        return _game_detail_response(game_info)
+        response = _game_detail_response(game_info)
+        if (
+            caller is not None
+            and caller.auth.game_id == game_id
+            and game_info.creator is not None
+            and caller.auth.player_id == game_info.creator
+            and game_info.status == "waiting"
+        ):
+            response = response.model_copy(update={"api_key": caller.plaintext_key})
+        return response
     except HTTPException:
         raise
     except Exception as e:
