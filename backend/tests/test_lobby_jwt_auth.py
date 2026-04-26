@@ -21,7 +21,15 @@ from sqlalchemy import delete
 from backend.src.auth import create_player_key
 from backend.src.config import settings
 from backend.src.database.connection import async_session_factory, init_db
-from backend.src.database.models import Game, PlayerApiKey, UserIdentity
+from backend.src.database.models import (
+    Game,
+    GameSnapshot,
+    GameTurn,
+    PlayerApiKey,
+    TurnAction,
+    TurnSnapshot,
+    UserIdentity,
+)
 from backend.src.database.repository import GameRepository
 from backend.src.main import app
 
@@ -33,32 +41,46 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+async def _purge_lobby_rows() -> None:
+    """Tear down every row a started lobby can leave behind.
+
+    Deletion order matters: ``games`` is FK-referenced by snapshots,
+    turns, and actions, so those have to go first. The order here also
+    covers tests that flip a lobby to ``active`` (via ``/start``) which
+    creates ``GameSnapshot`` / ``TurnSnapshot`` rows that the original
+    PlayerApiKey-only sweep didn't know about.
+    """
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(PlayerApiKey).where(PlayerApiKey.game_id.like("lobbyjwt_%"))
+        )
+        await session.execute(
+            delete(TurnSnapshot).where(TurnSnapshot.game_id.like("lobbyjwt_%"))
+        )
+        await session.execute(
+            delete(TurnAction).where(TurnAction.game_id.like("lobbyjwt_%"))
+        )
+        await session.execute(
+            delete(GameSnapshot).where(GameSnapshot.game_id.like("lobbyjwt_%"))
+        )
+        await session.execute(
+            delete(GameTurn).where(GameTurn.game_id.like("lobbyjwt_%"))
+        )
+        await session.execute(delete(Game).where(Game.id.like("lobbyjwt_%")))
+        await session.execute(
+            delete(UserIdentity).where(
+                UserIdentity.email.like("%@lobbyjwt.example.com")
+            )
+        )
+        await session.commit()
+
+
 @pytest_asyncio.fixture
 async def _clean_lobby_rows() -> None:
     await init_db()
-    async with async_session_factory() as session:
-        await session.execute(
-            delete(PlayerApiKey).where(PlayerApiKey.game_id.like("lobbyjwt_%"))
-        )
-        await session.execute(delete(Game).where(Game.id.like("lobbyjwt_%")))
-        await session.execute(
-            delete(UserIdentity).where(
-                UserIdentity.email.like("%@lobbyjwt.example.com")
-            )
-        )
-        await session.commit()
+    await _purge_lobby_rows()
     yield
-    async with async_session_factory() as session:
-        await session.execute(
-            delete(PlayerApiKey).where(PlayerApiKey.game_id.like("lobbyjwt_%"))
-        )
-        await session.execute(delete(Game).where(Game.id.like("lobbyjwt_%")))
-        await session.execute(
-            delete(UserIdentity).where(
-                UserIdentity.email.like("%@lobbyjwt.example.com")
-            )
-        )
-        await session.commit()
+    await _purge_lobby_rows()
 
 
 def _mint_jwt(user_identity_id: int, *, email: str | None = None) -> str:
@@ -313,6 +335,124 @@ class TestMcpParity:
             headers={"Authorization": f"Bearer {human_key}"},
         )
         assert resp.status_code == 200
+
+
+class TestGameDetailKeyVisibility:
+    """Phase 1: ``GET /games/{id}`` echoes the creator's bearer back as
+    ``api_key`` while ``waiting``, so the lobby UI can render a
+    copy-button affordance for an MCP agent. The field is gone for any
+    other caller and gone the moment the game flips to ``active``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_creator_sees_own_api_key_while_waiting(
+        self, client: TestClient, _clean_lobby_rows: None
+    ) -> None:
+        uid = await _seed_identity("keyvis-creator@lobbyjwt.example.com")
+        token = _mint_jwt(uid)
+        game_id = _game_id("keyvis_creator")
+
+        resp = client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={"player_id": "alice", "player_slots": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        api_key = resp.json()["api_key"]
+
+        resp = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["api_key"] == api_key
+
+    @pytest.mark.asyncio
+    async def test_anonymous_caller_does_not_see_key(
+        self, client: TestClient, _clean_lobby_rows: None
+    ) -> None:
+        uid = await _seed_identity("keyvis-anon@lobbyjwt.example.com")
+        token = _mint_jwt(uid)
+        game_id = _game_id("keyvis_anon")
+
+        client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={"player_id": "alice", "player_slots": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        resp = client.get(f"/api/v1/games/{game_id}")
+        assert resp.status_code == 200
+        assert resp.json().get("api_key") is None
+
+    @pytest.mark.asyncio
+    async def test_non_creator_seat_does_not_see_key(
+        self, client: TestClient, _clean_lobby_rows: None
+    ) -> None:
+        creator_uid = await _seed_identity("keyvis-c@lobbyjwt.example.com")
+        creator_token = _mint_jwt(creator_uid)
+        game_id = _game_id("keyvis_other")
+
+        client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={"player_id": "alice", "player_slots": 2},
+            headers={"Authorization": f"Bearer {creator_token}"},
+        )
+
+        bob_uid = await _seed_identity("keyvis-bob@lobbyjwt.example.com")
+        join_resp = client.post(
+            f"/api/v1/games/{game_id}/join",
+            json={"player_id": "bob"},
+            headers={"Authorization": f"Bearer {_mint_jwt(bob_uid)}"},
+        )
+        assert join_resp.status_code == 200
+        bob_key = join_resp.json()["api_key"]
+
+        resp = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {bob_key}"},
+        )
+        assert resp.status_code == 200
+        # Bob is a seated player but not the creator — no key for him.
+        assert resp.json().get("api_key") is None
+
+    @pytest.mark.asyncio
+    async def test_key_disappears_once_game_active(
+        self, client: TestClient, _clean_lobby_rows: None
+    ) -> None:
+        creator_uid = await _seed_identity("keyvis-start@lobbyjwt.example.com")
+        creator_token = _mint_jwt(creator_uid)
+        game_id = _game_id("keyvis_start")
+
+        create = client.post(
+            f"/api/v1/games?game_id={game_id}",
+            json={"player_id": "alice", "player_slots": 2},
+            headers={"Authorization": f"Bearer {creator_token}"},
+        )
+        api_key = create.json()["api_key"]
+
+        bob_uid = await _seed_identity("keyvis-bob2@lobbyjwt.example.com")
+        client.post(
+            f"/api/v1/games/{game_id}/join",
+            json={"player_id": "bob"},
+            headers={"Authorization": f"Bearer {_mint_jwt(bob_uid)}"},
+        )
+
+        # Creator starts the game (lobby flow uses the per-game key).
+        start_resp = client.post(
+            f"/api/v1/games/{game_id}/start",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert start_resp.status_code == 200
+
+        resp = client.get(
+            f"/api/v1/games/{game_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "active"
+        assert body.get("api_key") is None
 
 
 def test_no_player_prefix_references_in_rest_module() -> None:

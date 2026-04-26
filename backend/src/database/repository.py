@@ -18,6 +18,7 @@ from .models import (
     Game,
     GameSnapshot,
     GameTurn,
+    LobbyInvite,
     PlayerAction,
     PlayerApiKey,
     PromptLog,
@@ -48,6 +49,7 @@ class GameRepository:
         map_height: int = 20,
         player_slots: int = 2,
         creator: str | None = None,
+        creator_user_identity_id: int | None = None,
         status: str = "created",
     ) -> Game:
         """Create a new game record."""
@@ -79,6 +81,7 @@ class GameRepository:
             players=players,
             player_slots=player_slots,
             creator=creator,
+            creator_user_identity_id=creator_user_identity_id,
             status=status,
         )
 
@@ -92,6 +95,21 @@ class GameRepository:
             update(Game)
             .where(Game.id == game_id)
             .values(players=players, updated_at=self._utcnow())
+        )
+
+    async def update_lobby_slots(
+        self, game_id: str, lobby_slots: list[dict[str, Any]]
+    ) -> None:
+        """Replace the ``lobby_slots`` JSON column on a game.
+
+        The column is JSON, so the new value must be JSON-serialisable
+        (lists of plain dicts only — no Pydantic models). Callers go
+        through ``api.lobby_slots`` helpers to keep the shape consistent.
+        """
+        await self.session.execute(
+            update(Game)
+            .where(Game.id == game_id)
+            .values(lobby_slots=lobby_slots, updated_at=self._utcnow())
         )
 
     async def update_game_status(self, game_id: str, status: str) -> None:
@@ -747,6 +765,129 @@ class GameRepository:
 
         result = await self.session.execute(stmt.values(expires_at=expiry))
         return result.rowcount or 0
+
+    async def get_player_api_key_by_id(self, api_key_id: int) -> PlayerApiKey | None:
+        """Read a PlayerApiKey row by its primary key.
+
+        Used by the Phase 3 regenerate-key endpoint, which already has
+        the slot's ``player_api_key_id`` and wants to confirm the row
+        exists (and belongs to the right game) before rotating it.
+        """
+        result = await self.session.execute(
+            select(PlayerApiKey).where(PlayerApiKey.id == api_key_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_lobby_invite(
+        self,
+        game_id: str,
+        slot_index: int,
+        email: str,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> LobbyInvite:
+        """Create or refresh the lobby invite for a slot.
+
+        One live invite per (game, slot) — re-inviting the same address
+        rotates the token hash and resets the expiry on the existing row
+        so the redemption surface stays single-row. ``redeemed_at`` is
+        always cleared on rotate, since the new token is unredeemed by
+        definition.
+        """
+        normalised = email.strip().lower()
+        existing = await self.get_lobby_invite(game_id, slot_index)
+        if existing is not None:
+            existing.email = normalised
+            existing.token_hash = token_hash
+            existing.expires_at = expires_at
+            existing.redeemed_at = None
+            await self.session.flush()
+            return existing
+        invite = LobbyInvite(
+            game_id=game_id,
+            slot_index=slot_index,
+            email=normalised,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        self.session.add(invite)
+        await self.session.flush()
+        return invite
+
+    async def get_lobby_invite(
+        self, game_id: str, slot_index: int
+    ) -> LobbyInvite | None:
+        """Read the lobby invite for a (game, slot), or return None."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(
+                and_(
+                    LobbyInvite.game_id == game_id,
+                    LobbyInvite.slot_index == slot_index,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_lobby_invite_by_token_hash(
+        self, token_hash: str
+    ) -> LobbyInvite | None:
+        """Read the lobby invite with a given token hash, or None."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(LobbyInvite.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_lobby_invites_for_game(self, game_id: str) -> list[LobbyInvite]:
+        """Return every invite row for a game."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(LobbyInvite.game_id == game_id)
+        )
+        return list(result.scalars().all())
+
+    async def delete_lobby_invite(self, game_id: str, slot_index: int) -> None:
+        """Drop the invite row for a (game, slot) — used by ``invite/clear``."""
+        existing = await self.get_lobby_invite(game_id, slot_index)
+        if existing is None:
+            return
+        await self.session.delete(existing)
+        await self.session.flush()
+
+    async def mark_lobby_invite_redeemed(
+        self, invite: LobbyInvite, now: datetime | None = None
+    ) -> LobbyInvite:
+        """Stamp ``redeemed_at`` on an invite row.
+
+        Single-use is enforced by the caller (which must check
+        ``redeemed_at IS NULL`` before invoking this). Returns the same
+        row so callers don't have to re-fetch.
+        """
+        invite.redeemed_at = now or self._utcnow()
+        await self.session.flush()
+        return invite
+
+    async def rename_player_api_key(
+        self, game_id: str, old_player_id: str, new_player_id: str
+    ) -> bool:
+        """Re-bind a PlayerApiKey row to a new ``player_id`` in the same game.
+
+        Used by Phase 4 slot reconfiguration when an Agent slot is
+        renamed but its plaintext key is intentionally preserved — the
+        key hash and TTL stay put, so the agent's existing bearer keeps
+        working and ``authenticate`` resolves it to the new name. The
+        ``(game_id, player_id)`` index also stays valid because we move
+        the row rather than duplicate it.
+        """
+        result = await self.session.execute(
+            update(PlayerApiKey)
+            .where(
+                and_(
+                    PlayerApiKey.game_id == game_id,
+                    PlayerApiKey.player_id == old_player_id,
+                )
+            )
+            .values(player_id=new_player_id)
+        )
+        return (result.rowcount or 0) > 0
 
     async def save_enhanced_prompt_log(
         self,

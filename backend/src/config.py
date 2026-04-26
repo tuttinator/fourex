@@ -70,6 +70,22 @@ class Settings(BaseSettings):
     archive_sweep_interval_seconds: int = 86400
     archive_sweep_enabled: bool = True
 
+    # Phase 5 (lobby + skill split): Resend-delivered invite emails for
+    # human slot reservations. ``resend_api_key`` mirrors the Auth.js
+    # provider's ``AUTH_RESEND_KEY`` so both surfaces can be wired with a
+    # single secret in deploy. ``invite_email_from`` reuses the Auth.js
+    # verified sender by default. ``frontend_base_url`` is the public
+    # origin the invite email's redemption link points to (e.g.
+    # ``https://parley.quest``); the path / token are appended by the
+    # invite handler.
+    resend_api_key: str = ""
+    invite_email_from: str = "invites@parley.quest"
+    frontend_base_url: str = "http://localhost:3000"
+    # Cap how often a single slot can be re-invited. Phase 5 uses this
+    # as a cheap abuse guard so a creator hammering the resend button
+    # cannot spam an invitee.
+    invite_resend_max_per_hour: int = 5
+
     # Phase 6 (spectated-agents): per-provider context-window defaults
     # for the agent-side compaction trigger. Used by
     # ``backend.src.agents.telemetry.ContextWindowConfig`` and

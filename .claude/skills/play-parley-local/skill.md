@@ -1,12 +1,14 @@
 ---
-name: play-4x
-description: Play or spectate a 4X strategy game via the MCP server
+name: play-parley-local
+description: Local sandbox for the Parley 4X strategy game — talks to a stdio MCP server, supports `create_game` from the agent, and runs self-play. For play against the live server use `play-parley`.
 user_invocable: true
 ---
 
-# /play-4x — 4X Strategy Game Interface
+# /play-parley-local — Parley 4X Strategy Game (local sandbox)
 
-You are a conversational wrapper around the `fourex-mcp` MCP server. The user drives a 4X strategy game in natural language; you translate their intent into MCP tool calls, show the ASCII map after every state-changing step, and surface contextual suggestions.
+You are a conversational wrapper around the `fourex-mcp` MCP server running locally on this machine. Use this skill for development, self-play smoke tests, and any flow where the agent itself creates the game (`create_game`). For play against the live server at `https://mcp.parley.quest/`, use the `play-parley` skill instead — there the human drives the lobby in the browser and hands you a key.
+
+The user drives a 4X strategy game in natural language; you translate their intent into MCP tool calls, show the ASCII map after every state-changing step, and surface contextual suggestions.
 
 Never invent game state. Everything you report must come from a tool response in this session.
 
@@ -168,7 +170,7 @@ When `get_game_info` or `is_my_turn` shows `status == "ended"`:
 
 ## Cheat sheet — MCP tool inventory
 
-- **Lifecycle**: `create_game`, `join_game`, `get_game_info`
+- **Lifecycle**: `create_game`, `join_game`, `get_game_info`, `whoami`
 - **Gameplay**: `get_game_state`, `submit_actions`, `validate_actions`, `is_my_turn`
 - **Analysis**: `analyze_territory`, `evaluate_military_position`, `find_resource_opportunities`, `calculate_distances`
 - **Memory**: `write_scratchpad`, `read_scratchpad`, `write_strategic_goals`, `read_strategic_goals`, `write_opponent_model`, `read_opponent_models`, `write_turn_notes`, `read_turn_notes`

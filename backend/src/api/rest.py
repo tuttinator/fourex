@@ -2,19 +2,24 @@
 REST API endpoints for game state and actions.
 """
 
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
     AuthContext,
     AuthError,
+    authenticate,
     create_player_key,
     require_api_key,
     require_api_key_optional,
 )
+from ..config import settings
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
@@ -53,7 +58,27 @@ from ..game.rules import (
     redact_state,
 )
 from ..game.rules_reference import build_rules_reference
-from ..identity import UserIdentityContext, require_user_identity
+from ..identity import (
+    JwtAuthError,
+    UserIdentityContext,
+    require_user_identity,
+    verify_auth_jwt,
+)
+from .invites import (
+    INVITE_TTL_SECONDS,
+    InviteEmailError,
+    build_invite_url,
+    hash_invite_token,
+    mint_invite_token,
+    send_invite_email,
+)
+from .lobby_slots import (
+    coerce_slots,
+    find_slot_by_index,
+    make_agent_slot,
+    make_human_slot,
+    redact_plaintext_keys,
+)
 from .persistent_game_controller import get_persistent_game_controller
 
 router = APIRouter()
@@ -82,6 +107,124 @@ def get_current_player_optional(
     flow respectively.
     """
     return auth.player_id if auth is not None else None
+
+
+@dataclass(frozen=True)
+class CallerCredentials:
+    """Resolved auth context plus the bearer plaintext.
+
+    The plaintext is preserved so ``GET /games/{id}`` can echo the
+    creator's API key back to the lobby UI while ``status == "waiting"``
+    — the bearer the browser sent IS the per-game key, so no extra
+    storage is needed.
+    """
+
+    auth: AuthContext
+    plaintext_key: str
+
+
+_lobby_bearer = HTTPBearer(auto_error=False)
+
+
+async def caller_credentials_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_lobby_bearer),
+    session: AsyncSession = Depends(get_database_session),
+) -> CallerCredentials | None:
+    """Optional dep: return both the resolved identity and the raw bearer.
+
+    Returns ``None`` for unauthenticated requests and for malformed /
+    expired keys, mirroring ``require_api_key_optional`` — endpoints
+    use the ``None`` branch to fall back to public/unauthenticated
+    behaviour rather than 401.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        auth = await authenticate(session, credentials.credentials)
+    except AuthError:
+        return None
+    return CallerCredentials(auth=auth, plaintext_key=credentials.credentials)
+
+
+@dataclass(frozen=True)
+class CreatorAuth:
+    """Resolved creator identity for slot-config / Start endpoints.
+
+    Phase 3 introduces all-Agent games where the creator isn't seated
+    in any player slot — they have no per-game API key, only an
+    Auth.js JWT. To keep one auth contract for "the creator", this
+    dependency accepts either the seated creator's per-game key
+    (legacy path, still works for the common case) OR a JWT whose
+    ``UserIdentity.id`` matches the lobby's
+    ``creator_user_identity_id``.
+    """
+
+    creator_player_id: str | None
+    creator_user_identity_id: int | None
+
+
+async def require_creator_auth(
+    game_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_lobby_bearer),
+    session: AsyncSession = Depends(get_database_session),
+) -> CreatorAuth:
+    """FastAPI dep: authorise the caller as the creator of ``game_id``.
+
+    Tries the per-game API key path first (matches the existing
+    ``leave_game`` / ``start_game`` contract), then the Auth.js JWT
+    path so all-Agent creators can still authorise without a per-game
+    key. Returns the resolved creator identity in whichever form
+    succeeded — endpoints can pass that down to the controller, which
+    accepts both shapes.
+
+    Raises 401 on no credentials, 403 on credentials that don't
+    resolve to the creator of this specific lobby.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    repo = GameRepository(session)
+    game = await repo.get_game(game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    # API-key path. The creator's seated player_id matches game.creator.
+    try:
+        auth = await authenticate(session, credentials.credentials)
+        if auth.game_id == game_id and game.creator and auth.player_id == game.creator:
+            return CreatorAuth(
+                creator_player_id=auth.player_id,
+                creator_user_identity_id=None,
+            )
+    except AuthError:
+        pass
+
+    # JWT path. Useful for all-Agent games where the creator never
+    # minted a per-game key.
+    try:
+        identity = verify_auth_jwt(credentials.credentials)
+    except JwtAuthError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorised to act as the creator: {exc}",
+        ) from exc
+
+    if (
+        game.creator_user_identity_id is None
+        or identity.user_identity_id != game.creator_user_identity_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Caller is not the creator of this game",
+        )
+    return CreatorAuth(
+        creator_player_id=None,
+        creator_user_identity_id=identity.user_identity_id,
+    )
 
 
 @router.get("/rules", tags=["rules"])
@@ -707,6 +850,31 @@ async def list_games(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SlotConfigRequest(BaseModel):
+    """One entry in the optional ``slots`` array on ``POST /games``.
+
+    Phase 3 introduces per-slot type / name configuration at create
+    time. ``type`` selects Human vs Agent; ``name`` is the in-game
+    display name (required for Agent slots, used for the seated
+    creator on Human slots, ignored for unfilled Human slots).
+    ``reserved_email`` is accepted for forward compatibility with
+    Phase 5 invite reservations and persisted on the slot, but no
+    invite is sent yet.
+    """
+
+    type: Literal["human", "agent"]
+    name: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Agent display name, or the seated creator's name for a Human slot.",
+    )
+    reserved_email: str | None = Field(
+        default=None,
+        max_length=320,
+        description="Reserved invite email (Phase 5).",
+    )
+
+
 class CreateLobbyRequest(BaseModel):
     """Request to create a game lobby.
 
@@ -714,6 +882,16 @@ class CreateLobbyRequest(BaseModel):
     ``player_id`` is the in-game display name they want for their seat in
     this specific lobby. One identity may run multiple games under
     different display names.
+
+    Phase 3 adds two optional fields:
+
+    * ``creator_seated`` (default ``True``) — when ``False`` the creator
+      becomes a pure owner / spectator and ``player_id`` is treated as
+      a placeholder (only used to populate ``Game.creator`` for the
+      legacy column; the creator's authority comes from their JWT).
+    * ``slots`` — explicit per-slot configuration. When omitted, the
+      legacy behaviour (creator in slot 0, all-Human, count =
+      ``player_slots``) applies.
     """
 
     player_id: str = Field(
@@ -725,10 +903,52 @@ class CreateLobbyRequest(BaseModel):
     map_width: int = Field(default=20, ge=10, le=100, description="Map width")
     map_height: int = Field(default=20, ge=10, le=100, description="Map height")
     seed: int = Field(default=42, description="Random seed for map generation")
+    creator_seated: bool = Field(
+        default=True,
+        description=(
+            "Whether the creator takes one of the slots. Set to false "
+            "for owner-only / all-Agent games."
+        ),
+    )
+    slots: list[SlotConfigRequest] | None = Field(
+        default=None,
+        description=(
+            "Per-slot configuration. Length must equal player_slots when "
+            "provided. Omit for the legacy all-Human, creator-in-slot-0 "
+            "behaviour."
+        ),
+    )
+
+
+class SlotSummary(BaseModel):
+    """One entry in a game's ``lobby_slots`` array.
+
+    Phase 3 of the lobby + skill split adds Agent slots and the
+    transient ``plaintext_key`` field — populated for Agent slots
+    while the game is in ``waiting`` and visible only to the creator
+    so the lobby UI can render the copy / regenerate affordances. The
+    server strips it from the response for non-creators and for any
+    non-``waiting`` status.
+    """
+
+    slot_index: int
+    type: Literal["human", "agent"]
+    name: str | None = None
+    reserved_email: str | None = None
+    player_api_key_id: int | None = None
+    plaintext_key: str | None = None
 
 
 class GameDetailResponse(BaseModel):
-    """Full game detail including lobby configuration."""
+    """Full game detail including lobby configuration.
+
+    ``api_key`` is populated only when (a) the caller is the game's
+    creator and (b) ``status == "waiting"`` — the lobby UI uses it to
+    render the copy-button affordance the creator hands to an MCP agent.
+    The field is absent for everyone else and disappears the instant the
+    game flips to ``active``, so the lobby endpoint cannot double as a
+    long-lived secret store.
+    """
 
     game_id: str
     player_slots: int
@@ -748,15 +968,31 @@ class GameDetailResponse(BaseModel):
     created_at: str
     updated_at: str
     ended_at: str | None
+    api_key: str | None = None
+    slots: list[SlotSummary] = Field(default_factory=list)
 
 
 class JoinLeaveRequest(BaseModel):
-    """Request to join or leave a game."""
+    """Request to join or leave a game.
+
+    Phase 5 introduces the optional ``invite_token`` field. When
+    present the join is validated against the matching ``LobbyInvite``
+    row (token hash + email + expiry + unredeemed) and seats the
+    caller in the reserved slot. Open joins (no token) take the next
+    free unreserved slot, as before.
+    """
 
     player_id: str = Field(
         min_length=1,
         max_length=64,
         description="In-game display name for the joining seat",
+    )
+    invite_token: str | None = Field(
+        default=None,
+        description=(
+            "Single-use invite token for redeeming a reserved slot. "
+            "Required when joining a slot that has a ``reserved_email``."
+        ),
     )
 
 
@@ -769,10 +1005,119 @@ class LobbyKeyResponse(BaseModel):
     calls for this game. The key is bound to
     ``(game_id, player_id, user_identity_id)`` and expires after 24h; the
     JWT-gated renewal endpoint rotates it in-place.
+
+    Phase 3 makes ``api_key`` optional: an all-Agent game (the creator
+    unticks "I'll take a slot") has no per-game key for the creator —
+    they authorise creator-only actions via their Auth.js JWT instead,
+    and the per-Agent-slot keys are surfaced through the slot array.
     """
 
     game: GameDetailResponse
-    api_key: str
+    api_key: str | None = None
+
+
+def _build_slot_configs(
+    request: CreateLobbyRequest,
+) -> list[dict[str, Any]]:
+    """Validate and normalise the create-lobby slot configuration.
+
+    Returns a list of slot dicts in the wire format consumed by
+    ``coerce_slots`` / ``update_lobby_slots``. Raises
+    ``HTTPException(400)`` on any user-correctable problem (count
+    mismatch, missing Agent name, duplicate Agent name, creator not
+    represented in the slot array).
+    """
+    if request.slots is None:
+        # Legacy behaviour: creator in slot 0, all-Human, no
+        # reservations. The remaining helpers don't need to know about
+        # this branch — they see a fully-populated slot array either
+        # way.
+        configs: list[dict[str, Any]] = [
+            make_human_slot(
+                0, name=request.player_id if request.creator_seated else None
+            )
+        ]
+        for i in range(1, request.player_slots):
+            configs.append(make_human_slot(i))
+        return configs
+
+    if len(request.slots) != request.player_slots:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"slots length ({len(request.slots)}) must equal "
+                f"player_slots ({request.player_slots})"
+            ),
+        )
+
+    agent_names: list[str] = []
+    creator_seen = False
+    configs = []
+    for i, slot in enumerate(request.slots):
+        if slot.type == "agent":
+            name = (slot.name or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agent slot {i} requires a name",
+                )
+            if name in agent_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agent name '{name}' is duplicated across slots",
+                )
+            agent_names.append(name)
+            configs.append(make_agent_slot(i, name=name))
+        else:
+            human_name = (slot.name or "").strip() or None
+            if (
+                request.creator_seated
+                and human_name == request.player_id
+                and not creator_seen
+            ):
+                creator_seen = True
+                configs.append(
+                    make_human_slot(
+                        i,
+                        name=request.player_id,
+                        reserved_email=slot.reserved_email,
+                    )
+                )
+            else:
+                # Open or invite-reserved Human slot. Phase 5 wires the
+                # invite flow; for Phase 3 we just persist the
+                # reservation so the slot model captures it without
+                # acting on it.
+                configs.append(
+                    make_human_slot(
+                        i,
+                        name=None,
+                        reserved_email=slot.reserved_email,
+                    )
+                )
+
+    if request.creator_seated and not creator_seen:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"creator_seated=true but no Human slot is named "
+                f"'{request.player_id}'"
+            ),
+        )
+
+    # Cross-check: the creator's player_id must not collide with an
+    # Agent name (otherwise the engine would see two players with the
+    # same id once we seat them).
+    if request.creator_seated and request.player_id in agent_names:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Creator name '{request.player_id}' collides with an "
+                f"Agent slot of the same name"
+            ),
+        )
+
+    return configs
 
 
 @router.post("/games", tags=["games"], response_model=LobbyKeyResponse)
@@ -784,12 +1129,17 @@ async def create_lobby(
 ) -> LobbyKeyResponse:
     """Create a new game lobby in waiting status.
 
-    Requires a valid Auth.js JWT (via ``require_user_identity``). Seats
-    the caller in slot 0 under ``request.player_id``, mints a PlayerApiKey
-    attributed to their ``UserIdentity``, and returns the key so the
-    browser can authenticate subsequent gameplay/diplomacy requests.
+    Requires a valid Auth.js JWT (via ``require_user_identity``).
+
+    Phase 3: when ``slots`` is provided, the lobby is seeded with the
+    given mix of Human / Agent slots. The creator may opt out of
+    taking a slot (``creator_seated=false``) — in that case no
+    creator-specific PlayerApiKey is minted and the response's
+    ``api_key`` is null; the creator authorises subsequent
+    creator-only actions via their JWT.
     """
     try:
+        slot_configs = _build_slot_configs(request)
         controller = get_persistent_game_controller(session)
         await controller.create_lobby(
             game_id=game_id,
@@ -797,16 +1147,44 @@ async def create_lobby(
             map_width=request.map_width,
             map_height=request.map_height,
             seed=request.seed,
-            creator=request.player_id,
+            creator=request.player_id if request.creator_seated else None,
+            creator_user_identity_id=identity.user_identity_id,
+            slot_configs=slot_configs,
         )
-        # Seat the creator immediately so the lobby isn't empty.
-        await controller.join_game(game_id, request.player_id)
-        api_key = await create_player_key(
-            session,
-            game_id,
-            request.player_id,
-            user_identity_id=identity.user_identity_id,
-        )
+
+        # Seat the creator immediately so the lobby isn't empty (when
+        # they're taking a slot — all-Agent games skip this).
+        creator_api_key: str | None = None
+        if request.creator_seated:
+            await controller.join_game(game_id, request.player_id)
+            creator_api_key = await create_player_key(
+                session,
+                game_id,
+                request.player_id,
+                user_identity_id=identity.user_identity_id,
+            )
+            await controller.link_slot_api_key(game_id, request.player_id)
+
+        # Mint per-Agent-slot keys and stash plaintext on each slot so
+        # the creator can copy them out. ``user_identity_id`` is left
+        # null — Agent keys are MCP-style headless credentials, not
+        # tied to an Auth.js identity (matches the existing MCP-minted
+        # key invariant).
+        for slot in slot_configs:
+            if slot.get("type") != "agent":
+                continue
+            agent_name = slot["name"]
+            slot_index = slot["slot_index"]
+            await controller.seat_agent(game_id, slot_index, agent_name)
+            agent_key = await create_player_key(
+                session,
+                game_id,
+                agent_name,
+                user_identity_id=None,
+            )
+            await controller.link_slot_api_key(game_id, agent_name)
+            await controller.store_slot_plaintext(game_id, slot_index, agent_key)
+
         await session.commit()
 
         game_info = await controller.get_game_info(game_id)
@@ -814,7 +1192,10 @@ async def create_lobby(
             raise HTTPException(
                 status_code=500, detail="Failed to retrieve created game"
             )
-        return LobbyKeyResponse(game=_game_detail_response(game_info), api_key=api_key)
+        return LobbyKeyResponse(
+            game=_game_detail_response(game_info, viewer_is_creator=True),
+            api_key=creator_api_key,
+        )
     except HTTPException:
         raise
     except AuthError as e:
@@ -827,16 +1208,57 @@ async def create_lobby(
 async def get_game_detail(
     game_id: str,
     session: AsyncSession = Depends(get_database_session),
+    caller: CallerCredentials | None = Depends(caller_credentials_optional),
+    jwt_bearer: HTTPAuthorizationCredentials | None = Depends(_lobby_bearer),
 ) -> GameDetailResponse:
     """
     Get full game detail including lobby configuration, player slots, and status.
+
+    When the caller is the game's creator and the game is still
+    ``waiting``, the response also carries the creator's plaintext API
+    key (Phase 1, seated creator only) and per-Agent-slot plaintext
+    keys (Phase 3) so the lobby UI can render copy / regenerate
+    affordances. Both fields disappear the instant the game flips to
+    ``active``.
+
+    Creator identification accepts two auth shapes:
+
+    * Per-game API key (the seated creator's bearer) — kept for
+      backwards compat with existing clients.
+    * Auth.js JWT — needed for all-Agent owners who never minted a
+      per-game key. Verified against ``creator_user_identity_id``.
     """
     try:
         controller = get_persistent_game_controller(session)
         game_info = await controller.get_game_info(game_id)
         if not game_info:
             raise HTTPException(status_code=404, detail="Game not found")
-        return _game_detail_response(game_info)
+        viewer_is_creator = (
+            caller is not None
+            and caller.auth.game_id == game_id
+            and game_info.creator is not None
+            and caller.auth.player_id == game_info.creator
+        )
+        # JWT path — for all-Agent owners. Skip if the per-game key
+        # path already classified the caller as creator (avoids
+        # double-decoding the same bearer).
+        if (
+            not viewer_is_creator
+            and jwt_bearer is not None
+            and jwt_bearer.credentials
+            and game_info.creator_user_identity_id is not None
+        ):
+            try:
+                identity = verify_auth_jwt(jwt_bearer.credentials)
+                if identity.user_identity_id == game_info.creator_user_identity_id:
+                    viewer_is_creator = True
+            except JwtAuthError:
+                pass
+
+        response = _game_detail_response(game_info, viewer_is_creator=viewer_is_creator)
+        if viewer_is_creator and game_info.status == "waiting" and caller is not None:
+            response = response.model_copy(update={"api_key": caller.plaintext_key})
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -856,16 +1278,53 @@ async def join_game(
     ``player_id`` to the game, mints a PlayerApiKey attributed to their
     ``UserIdentity``, and returns it so the browser can authenticate
     subsequent gameplay/diplomacy requests.
+
+    Phase 5: when ``invite_token`` is supplied the join is treated as
+    an invite redemption — the token is matched against a live
+    ``LobbyInvite`` row, the JWT email must match the slot's
+    ``reserved_email``, and the user is seated specifically in the
+    reserved slot. Open joins (no token) skip reserved slots so a
+    third party can't grab a slot the creator earmarked for someone.
     """
     try:
         controller = get_persistent_game_controller(session)
-        await controller.join_game(game_id, request.player_id)
+        repo = controller.repo
+        slot_index_to_seat: int | None = None
+        invite_to_redeem = None
+
+        if request.invite_token:
+            invite_to_redeem = await repo.get_lobby_invite_by_token_hash(
+                hash_invite_token(request.invite_token)
+            )
+            if invite_to_redeem is None or invite_to_redeem.game_id != game_id:
+                raise HTTPException(status_code=400, detail="Invalid invite token")
+            if invite_to_redeem.redeemed_at is not None:
+                raise HTTPException(
+                    status_code=400, detail="Invite has already been redeemed"
+                )
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if invite_to_redeem.expires_at <= now:
+                raise HTTPException(status_code=400, detail="Invite has expired")
+            caller_email = (identity.email or "").strip().lower()
+            if not caller_email or caller_email != invite_to_redeem.email:
+                raise HTTPException(
+                    status_code=400,
+                    detail=("Signed-in email does not match the invited email"),
+                )
+            slot_index_to_seat = invite_to_redeem.slot_index
+
+        await controller.join_game(
+            game_id, request.player_id, slot_index=slot_index_to_seat
+        )
         api_key = await create_player_key(
             session,
             game_id,
             request.player_id,
             user_identity_id=identity.user_identity_id,
         )
+        await controller.link_slot_api_key(game_id, request.player_id)
+        if invite_to_redeem is not None:
+            await repo.mark_lobby_invite_redeemed(invite_to_redeem)
         await session.commit()
 
         game_info = await controller.get_game_info(game_id)
@@ -909,17 +1368,20 @@ async def start_game(
 ) -> dict[str, str]:
     """
     Start a game. Supports two flows:
-    - Lobby flow: authenticated creator starts a waiting game (no request body needed)
-    - Legacy flow: provides players and seed in request body to create+start
+    - Lobby flow: authenticated seated creator starts a waiting game
+      (no body). Owners running an all-Agent game (no per-game key)
+      use ``POST /games/{id}/start-as-owner`` instead.
+    - Legacy flow: provides players and seed in request body to
+      create+start in one shot.
     """
     try:
         controller = get_persistent_game_controller(session)
 
-        # Lobby flow: start a waiting game
+        # Lobby flow with a per-game key (seated creator).
         if current_player:
             db_game = await controller.get_game_info(game_id)
             if db_game and db_game.status == "waiting":
-                await controller.start_game(game_id, current_player)
+                await controller.start_game(game_id, creator=current_player)
                 return {"status": "game_started", "game_id": game_id}
 
         # Legacy flow: create + start in one step
@@ -934,6 +1396,377 @@ async def start_game(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/games/{game_id}/start-as-owner", tags=["games"])
+async def start_game_as_owner(
+    game_id: str,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> dict[str, str]:
+    """Start an all-Agent lobby as its (unseated) creator.
+
+    Phase 3: an owner who unticked "I'll take a slot" has no per-game
+    API key, so the legacy ``/start`` endpoint (which authorises by
+    seated player_id) can't be used. This sibling endpoint accepts
+    either the seated creator's API key OR an Auth.js JWT that
+    matches ``creator_user_identity_id``, and runs the same lobby
+    transition. The slot-fullness check on the controller covers the
+    "all Agent slots have keys" criterion.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        await controller.start_game(
+            game_id,
+            creator=creator.creator_player_id,
+            creator_user_identity_id=creator.creator_user_identity_id,
+        )
+        await session.commit()
+        return {"status": "game_started", "game_id": game_id}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ReconfigureSlotsRequest(BaseModel):
+    """Request body for ``PUT /games/{game_id}/slots`` (Phase 4).
+
+    The full slot array is sent every call — the controller diffs it
+    against the current ``lobby_slots`` and applies one transition per
+    changed index. Sending the array in full keeps the wire shape
+    identical to the create-lobby ``slots`` field, so the same
+    ``SlotConfigRequest`` validator chain is reusable on both paths.
+    """
+
+    slots: list[SlotConfigRequest]
+
+
+def _build_reconfigure_configs(
+    request: ReconfigureSlotsRequest,
+) -> list[dict[str, Any]]:
+    """Normalise the PUT request into the slot-dict shape the controller wants.
+
+    Cross-slot validation (collision with seated humans, occupied-slot
+    flips) is done by the controller because it needs to read the
+    current ``lobby_slots`` first; this helper just shapes the request
+    and rejects per-slot problems early. The slot index is taken from
+    the request's array position.
+    """
+    configs: list[dict[str, Any]] = []
+    for i, slot in enumerate(request.slots):
+        if slot.type == "agent":
+            name = (slot.name or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agent slot {i} requires a name",
+                )
+            configs.append(make_agent_slot(i, name=name))
+        else:
+            configs.append(
+                make_human_slot(
+                    i,
+                    name=(slot.name or "").strip() or None,
+                    reserved_email=slot.reserved_email,
+                )
+            )
+    return configs
+
+
+@router.put(
+    "/games/{game_id}/slots",
+    tags=["games"],
+)
+async def reconfigure_slots(
+    game_id: str,
+    request: ReconfigureSlotsRequest,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> GameDetailResponse:
+    """Replace the lobby's slot configuration (Phase 4).
+
+    The creator (per-game key OR Auth.js JWT) sends the full target
+    slot array; the controller diffs it against the current
+    ``lobby_slots`` and applies the legal transitions:
+
+    * Human (empty) → Agent — mints a fresh key, appends the agent
+      name to ``Game.players``, plaintext is surfaced via the slot's
+      ``plaintext_key`` so the creator can copy it out.
+    * Agent → Human — invalidates the agent's key (its bearer stops
+      working), drops the agent from ``Game.players``, clears the
+      slot.
+    * Agent rename — re-binds the existing key to the new name (the
+      key plaintext is preserved; the agent doesn't need to refetch).
+    * Human (occupied) → Agent — rejected with 400; the player must
+      leave first.
+
+    Slot count is fixed at create-time; the request is rejected if
+    the array length or set of slot indices differs from the current
+    lobby. Returns the full game detail with the updated slot array.
+    """
+    del creator  # auth dependency — already enforced
+    try:
+        configs = _build_reconfigure_configs(request)
+        controller = get_persistent_game_controller(session)
+        await controller.reconfigure_slots(game_id, configs)
+        await session.commit()
+
+        game_info = await controller.get_game_info(game_id)
+        if not game_info:
+            raise HTTPException(status_code=500, detail="Failed to retrieve game")
+        # The creator always sees the per-slot plaintext keys after a
+        # reconfigure — they explicitly invoked the change and need to
+        # copy any freshly minted Agent key.
+        return _game_detail_response(game_info, viewer_is_creator=True)
+    except HTTPException:
+        raise
+    except AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/games/{game_id}/slots/{slot_index}/regenerate-key",
+    tags=["games"],
+)
+async def regenerate_slot_key(
+    game_id: str,
+    slot_index: int,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> dict[str, Any]:
+    """Mint a fresh API key for an Agent slot, invalidating the previous.
+
+    Restricted to the game's creator (per-game API key OR Auth.js
+    JWT), to ``waiting`` status, and to Agent slots only — every
+    other situation produces 400/403. Returns
+    ``{slot_index, plaintext_key}`` so the caller can present the
+    fresh key to the user; the same plaintext is stashed on the slot
+    so a subsequent ``GET /games/{id}`` (creator + waiting) shows it.
+    """
+    del creator  # auth dependency — already enforced
+    try:
+        controller = get_persistent_game_controller(session)
+        plaintext = await controller.regenerate_agent_key(game_id, slot_index)
+        await session.commit()
+        return {"slot_index": slot_index, "plaintext_key": plaintext}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class InviteSlotRequest(BaseModel):
+    """Request body for ``POST /games/{id}/slots/{i}/invite``.
+
+    The creator types the invitee's email; the server validates the
+    slot is a Human, unoccupied slot in a ``waiting`` lobby, mints
+    (or rotates) the token row, and triggers a Resend send. Pydantic
+    handles the email shape; downstream code re-normalises so we
+    don't trust the original casing.
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+
+
+class InviteSlotResponse(BaseModel):
+    """Response for the invite (re)send endpoint.
+
+    ``email`` echoes back the normalised invitee address.
+    ``expires_at`` lets the lobby UI render a countdown if it wants
+    to. The plaintext token is never returned — only Resend sees it.
+    """
+
+    slot_index: int
+    email: str
+    expires_at: str
+
+
+@router.post(
+    "/games/{game_id}/slots/{slot_index}/invite",
+    tags=["games"],
+    response_model=InviteSlotResponse,
+)
+async def invite_slot(
+    game_id: str,
+    slot_index: int,
+    request: InviteSlotRequest,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> InviteSlotResponse:
+    """(Re)send a Resend invite for a Human slot reservation.
+
+    Idempotent on (game, slot): the row carries a single live token
+    at any time; resending rotates the hash + expiry so a stale link
+    can't pile up alongside a fresh one. Restricted to ``waiting``
+    lobbies and Human slots — Agent slots have their own
+    regenerate-key affordance and need no email handshake. The
+    abuse guard (``invite_resend_max_per_hour``) caps how often the
+    same slot can be re-invited; exceeding it returns 429.
+    """
+    controller = get_persistent_game_controller(session)
+    repo = controller.repo
+
+    db_game = await repo.get_game(game_id)
+    if db_game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if db_game.status != "waiting":
+        raise HTTPException(
+            status_code=400, detail="Invites can only be sent while waiting"
+        )
+
+    slots = coerce_slots(
+        db_game.lobby_slots, list(db_game.players), db_game.player_slots
+    )
+    target = find_slot_by_index(slots, slot_index)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Slot {slot_index} not found")
+    if target.get("type") != "human":
+        raise HTTPException(
+            status_code=400,
+            detail="Only Human slots can be reserved with an invite",
+        )
+    if target.get("name"):
+        raise HTTPException(
+            status_code=400, detail="Slot is already occupied — cannot reserve"
+        )
+
+    # Cheap rate-limit guard. ``created_at`` advances on row creation
+    # only — re-invites mutate ``expires_at`` on the existing row, so
+    # we don't have a per-resend counter. Use the existing row's
+    # ``expires_at`` to detect "too many resends recently": each
+    # resend pushes ``expires_at`` 24h forward; a creator hammering
+    # the button N times an hour is implicit in the ratio between
+    # "minutes since created_at" and TTL. We use a simple
+    # last-modified style guard: reject if the row was rotated less
+    # than (TTL / max_per_hour) ago. With defaults that means at most
+    # 5 resends per hour spaced by ~12 min.
+    existing = await repo.get_lobby_invite(game_id, slot_index)
+    cap = max(settings.invite_resend_max_per_hour, 1)
+    min_gap = timedelta(seconds=INVITE_TTL_SECONDS // (cap * 24))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if existing is not None and existing.email == request.email.strip().lower():
+        # ``expires_at`` was last set to ``now + TTL`` on the previous
+        # send. The "age" of the latest send is therefore TTL minus
+        # the remaining lifetime; if that's smaller than ``min_gap``
+        # the creator is hitting the button too fast.
+        age = timedelta(seconds=INVITE_TTL_SECONDS) - (existing.expires_at - now)
+        if age < min_gap:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Too many invite resends — wait at least "
+                    f"{int(min_gap.total_seconds())}s between sends"
+                ),
+            )
+
+    minted = mint_invite_token(now=now)
+    await repo.upsert_lobby_invite(
+        game_id=game_id,
+        slot_index=slot_index,
+        email=request.email,
+        token_hash=minted.token_hash,
+        expires_at=minted.expires_at,
+    )
+
+    # Persist the reservation on the slot itself so the GET response
+    # surfaces "Reserved for X" without an extra query.
+    new_email = request.email.strip().lower()
+    new_slots = [
+        {**s, "reserved_email": new_email} if s["slot_index"] == slot_index else s
+        for s in slots
+    ]
+    await repo.update_lobby_slots(game_id, new_slots)
+
+    invite_url = build_invite_url(game_id, minted.plaintext)
+    inviter_email: str | None = None
+    if creator.creator_user_identity_id is not None:
+        inviter_identity = await repo.get_user_identity_by_id(
+            creator.creator_user_identity_id
+        )
+        if inviter_identity is not None:
+            inviter_email = inviter_identity.email
+    elif db_game.creator_user_identity_id is not None:
+        inviter_identity = await repo.get_user_identity_by_id(
+            db_game.creator_user_identity_id
+        )
+        if inviter_identity is not None:
+            inviter_email = inviter_identity.email
+    try:
+        await send_invite_email(
+            to_email=new_email,
+            inviter_email=inviter_email,
+            game_id=game_id,
+            invite_url=invite_url,
+        )
+    except InviteEmailError as exc:
+        # Roll back — we don't want a half-sent invite leaving a live
+        # token in the DB that can never reach the recipient.
+        await session.rollback()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await session.commit()
+    return InviteSlotResponse(
+        slot_index=slot_index,
+        email=new_email,
+        expires_at=minted.expires_at.isoformat(),
+    )
+
+
+@router.post(
+    "/games/{game_id}/slots/{slot_index}/invite/clear",
+    tags=["games"],
+)
+async def clear_slot_invite(
+    game_id: str,
+    slot_index: int,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> GameDetailResponse:
+    """Drop a slot reservation, invalidating any outstanding invite.
+
+    Idempotent — clearing an already-cleared slot is a no-op.
+    Outstanding tokens are dropped because the row itself is deleted;
+    the redemption path always looks the row up by hash, so a stale
+    link returns "Invalid invite token" thereafter.
+    """
+    del creator
+    controller = get_persistent_game_controller(session)
+    repo = controller.repo
+
+    db_game = await repo.get_game(game_id)
+    if db_game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if db_game.status != "waiting":
+        raise HTTPException(
+            status_code=400, detail="Reservations can only be cleared while waiting"
+        )
+
+    slots = coerce_slots(
+        db_game.lobby_slots, list(db_game.players), db_game.player_slots
+    )
+    target = find_slot_by_index(slots, slot_index)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Slot {slot_index} not found")
+    if target.get("type") != "human":
+        raise HTTPException(
+            status_code=400, detail="Only Human slots can hold a reservation"
+        )
+
+    await repo.delete_lobby_invite(game_id, slot_index)
+
+    new_slots = [
+        {**s, "reserved_email": None} if s["slot_index"] == slot_index else s
+        for s in slots
+    ]
+    await repo.update_lobby_slots(game_id, new_slots)
+
+    await session.commit()
+    refreshed = await repo.get_game(game_id)
+    assert refreshed is not None
+    return _game_detail_response(refreshed, viewer_is_creator=True)
 
 
 @router.get("/games/{game_id}/info", tags=["games"])
@@ -968,8 +1801,21 @@ async def get_game_info(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _game_detail_response(game: Any) -> GameDetailResponse:
-    """Convert a DB game record to a GameDetailResponse."""
+def _game_detail_response(
+    game: Any, *, viewer_is_creator: bool = False
+) -> GameDetailResponse:
+    """Convert a DB game record to a GameDetailResponse.
+
+    ``viewer_is_creator`` controls whether the per-slot
+    ``plaintext_key`` field is exposed: only the creator sees the
+    plaintext, and only while the game is in ``waiting``. Every other
+    caller gets the field redacted to ``None`` so the lobby endpoint
+    can't leak Agent keys to spectators or non-creator joiners.
+    """
+    raw_slots = getattr(game, "lobby_slots", None)
+    slots = coerce_slots(raw_slots, list(game.players), game.player_slots)
+    if not viewer_is_creator or game.status != "waiting":
+        slots = redact_plaintext_keys(slots)
     return GameDetailResponse(
         game_id=game.id,
         player_slots=game.player_slots,
@@ -989,6 +1835,7 @@ def _game_detail_response(game: Any) -> GameDetailResponse:
         created_at=game.created_at.isoformat(),
         updated_at=game.updated_at.isoformat(),
         ended_at=game.ended_at.isoformat() if game.ended_at else None,
+        slots=[SlotSummary(**s) for s in slots],
     )
 
 

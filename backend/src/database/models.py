@@ -46,10 +46,30 @@ class Game(Base):
     # Lobby configuration
     player_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     creator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Phase 3 (lobby + skill split): the ``UserIdentity`` who created the
+    # lobby. Populated alongside ``creator`` for human-frontend lobbies; null
+    # on MCP-created and legacy rows. Lets the creator authorise Start /
+    # regenerate-key via the Auth.js JWT path even when they aren't seated
+    # in a player slot (all-Agent games). Falls back to the per-game key
+    # check when null so the old auth contract still works.
+    creator_user_identity_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_identities.id"), nullable=True
+    )
 
     # Game state
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     players: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+
+    # Lobby slot configuration. Each entry is a dict with at least
+    # ``slot_index`` (int), ``type`` ("human" | "agent"), ``name`` (str |
+    # None — the seated player's display name), ``reserved_email`` (str |
+    # None) and ``player_api_key_id`` (int | None) referencing the active
+    # ``PlayerApiKey`` row for that slot. Nullable for backwards
+    # compatibility — legacy rows are interpreted as all-Human slots
+    # derived from ``players`` (see ``derive_slots_from_players``).
+    lobby_slots: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
 
     # Status and metadata
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
@@ -116,6 +136,7 @@ class Game(Base):
         Index("idx_game_created", "created_at"),
         Index("idx_game_updated", "updated_at"),
         Index("idx_game_archived_at", "archived_at"),
+        Index("idx_games_creator_user_identity", "creator_user_identity_id"),
     )
 
 
@@ -402,6 +423,42 @@ class AuthVerificationToken(Base):
     )
 
     __table_args__ = (Index("idx_auth_verification_tokens_expiry", "expires_at"),)
+
+
+class LobbyInvite(Base):
+    """Single-use invite token reserving a Human slot for an email.
+
+    Phase 5 of the lobby + skill split: the lobby creator types an
+    invitee's email per Human slot; an invite row is minted with a
+    32-byte random token (only the SHA-256 hash is persisted) and
+    Resend sends the lobby URL with ``?invite=<token>`` to the
+    address. ``join_game`` redeems the token by matching the hash,
+    confirming the JWT email matches ``email``, and stamping
+    ``redeemed_at`` so the same link cannot be used twice. Resending
+    refreshes ``expires_at`` on the existing row rather than minting
+    a fresh token, so a single recipient sees a stable link.
+    """
+
+    __tablename__ = "lobby_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    slot_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_lobby_invites_game_slot", "game_id", "slot_index"),
+        Index("idx_lobby_invites_token_hash", "token_hash", unique=True),
+        Index("idx_lobby_invites_email", "email"),
+    )
 
 
 class GameSnapshot(Base):

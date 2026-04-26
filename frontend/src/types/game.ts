@@ -232,21 +232,79 @@ export interface CreateGameRequest {
 	seed?: number;
 }
 
+/** Phase 3: per-slot configuration sent on POST /games. ``type``
+ * selects Human / Agent. ``name`` is required for Agent slots and
+ * matches the seated creator for the creator's Human slot; left null
+ * for open Human slots. ``reserved_email`` is forward-compat with
+ * Phase 5 invites and persisted but not yet acted on. */
+export interface SlotConfigRequest {
+	type: "human" | "agent";
+	name?: string | null;
+	reserved_email?: string | null;
+}
+
 export interface CreateLobbyRequest {
 	player_id: string;
 	player_slots: number;
 	map_width?: number;
 	map_height?: number;
 	seed?: number;
+	/** Phase 3: false → owner-only / all-Agent game; the creator is
+	 * not seated in any slot and has no per-game API key. */
+	creator_seated?: boolean;
+	/** Phase 3: explicit per-slot type/name. Length must equal
+	 * ``player_slots``. Omit for the legacy all-Human, creator-in-slot-0
+	 * behaviour. */
+	slots?: SlotConfigRequest[];
 }
 
 export interface JoinLobbyRequest {
 	player_id: string;
+	/** Phase 5: invite token redemption. When supplied, the backend
+	 * resolves the token to a reserved slot and seats the caller
+	 * there (rejecting on email mismatch / expiry / replay). Omit for
+	 * the legacy "next free unreserved Human slot" behaviour. */
+	invite_token?: string;
+}
+
+/** Phase 5: response for `POST /games/{id}/slots/{i}/invite`. */
+export interface InviteSlotResponse {
+	slot_index: number;
+	email: string;
+	expires_at: string;
+}
+
+/** Phase 4: body for ``PUT /games/{id}/slots`` — the creator sends the
+ * full target slot array. The backend diffs against the current
+ * lobby_slots and applies the legal transitions atomically. */
+export interface ReconfigureSlotsRequest {
+	slots: SlotConfigRequest[];
 }
 
 export interface LobbyKeyResponse {
 	game: GameDetailResponse;
-	api_key: string;
+	/** Phase 3: null when the creator opted out of taking a slot
+	 * (all-Agent games). The owner authorises subsequent Start /
+	 * regenerate-key actions via their Auth.js JWT in that case. */
+	api_key: string | null;
+}
+
+/** Phase 2 lobby redesign: per-slot configuration surfaced on the
+ * detail response. Every slot in Phase 2 is ``type: "human"`` with
+ * ``name`` carrying the seated player id (or null for empty slots);
+ * Agent slots and reserved Human slots land in Phase 3. ``slots``
+ * is always an ordered list of length ``player_slots`` so the UI can
+ * render the seat array directly without imputation. */
+export interface SlotSummary {
+	slot_index: number;
+	type: "human" | "agent";
+	name: string | null;
+	reserved_email: string | null;
+	player_api_key_id: number | null;
+	/** Phase 3: plaintext API key for an Agent slot, surfaced only
+	 * to the creator while ``status === "waiting"``. Cleared when the
+	 * game starts; absent (null) for non-creators and Human slots. */
+	plaintext_key?: string | null;
 }
 
 export interface GameDetailResponse {
@@ -268,6 +326,21 @@ export interface GameDetailResponse {
 	created_at: string;
 	updated_at: string;
 	ended_at: string | null;
+	/**
+	 * Phase 1 lobby redesign: when the caller of GET /games/{id} is the
+	 * game's creator AND the game is still ``waiting``, the backend echoes
+	 * the bearer token back here so the lobby UI can render a copy-button
+	 * affordance for the human to hand to an MCP agent. Absent for any
+	 * other caller and absent the moment the game flips to ``active``.
+	 */
+	api_key?: string | null;
+	/**
+	 * Phase 2 lobby redesign: per-slot configuration. Defaults to an
+	 * empty array on responses that predate the field; the lobby page
+	 * falls back to the legacy ``players``-derived rendering in that
+	 * case. Always length ``player_slots`` once Phase 2 is deployed.
+	 */
+	slots?: SlotSummary[];
 }
 
 export interface GamesListResponse {

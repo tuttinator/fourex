@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ...api.persistent_game_controller import PersistentGameController
-from ...auth import create_player_key
+from ...auth import AuthError, authenticate, create_player_key
 from ...database.connection import async_session_factory
 from ...database.repository import GameRepository
 from ...game.models import GameState
@@ -141,6 +141,17 @@ def register(mcp: FastMCP) -> None:
                 key = await create_player_key(session, game_id, player)
                 api_keys[player] = key
 
+            # Phase 2: persist a ``lobby_slots`` array reflecting the
+            # ``created``-status roster so /games/{id} surfaces a
+            # consistent slot view across MCP- and frontend-born games.
+            controller = PersistentGameController(session)
+            from ...api.lobby_slots import derive_slots_from_players
+
+            initial_slots = derive_slots_from_players(list(players), len(players))
+            await controller.repo.update_lobby_slots(game_id, initial_slots)
+            for player in players:
+                await controller.link_slot_api_key(game_id, player)
+
             await session.commit()
 
         return {
@@ -200,6 +211,7 @@ def register(mcp: FastMCP) -> None:
             # this key to, which is how MCP-origin keys are distinguished
             # from human-origin keys.
             key = await create_player_key(session, game_id, player_name)
+            await controller.link_slot_api_key(game_id, player_name)
             await session.commit()
 
         return {
@@ -261,3 +273,52 @@ def register(mcp: FastMCP) -> None:
                 pass
 
         return info
+
+    @mcp.tool(
+        name="whoami",
+        description=(
+            "Resolve which game and player slot a given API key controls. "
+            "An agent handed only a key + game URL can call this to discover "
+            "its own player_id without being told out-of-band."
+        ),
+        annotations=ToolAnnotations(
+            title="Who Am I",
+            readOnlyHint=True,
+            openWorldHint=False,
+        ),
+        meta={"tags": ["lifecycle", "query"]},
+    )
+    async def whoami(api_key: str) -> dict[str, Any]:
+        """Identify the player + game that ``api_key`` belongs to.
+
+        Args:
+            api_key: A per-game API key issued by ``create_game`` /
+                ``join_game`` / the lobby UI.
+
+        Returns:
+            ``{game_id, player_id, slot_index}`` where ``slot_index`` is
+            the player's position in the game's roster (matches the
+            frontend's index-driven colour assignment). Returns
+            ``{error: ...}`` if the key is missing, invalid, or expired.
+        """
+        async with async_session_factory() as session:
+            try:
+                auth = await authenticate(session, api_key)
+            except AuthError as exc:
+                return {"error": str(exc)}
+
+            repo = GameRepository(session)
+            game = await repo.get_game(auth.game_id)
+            if game is None:
+                return {"error": f"Game {auth.game_id} not found."}
+
+            try:
+                slot_index = game.players.index(auth.player_id)
+            except ValueError:
+                slot_index = None
+
+        return {
+            "game_id": auth.game_id,
+            "player_id": auth.player_id,
+            "slot_index": slot_index,
+        }

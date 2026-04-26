@@ -10,8 +10,10 @@ import type {
 	GamesListParams,
 	GamesListResponse,
 	GameState,
+	InviteSlotResponse,
 	JoinLobbyRequest,
 	LobbyKeyResponse,
+	ReconfigureSlotsRequest,
 	MessageListResponse,
 	MySubmissionResponse,
 	QueueableTilesResponse,
@@ -208,7 +210,17 @@ export const api = {
 	},
 
 	async getGameDetail(gameId: string): Promise<GameDetailResponse> {
-		return fetchApi(`/games/${encodeURIComponent(gameId)}`);
+		// Routed through the BFF so the Auth.js JWT (HttpOnly cookie) is
+		// forwarded server-side. The backend uses either the per-game
+		// bearer (seated creator, attached automatically by fetchApi for
+		// gameplay calls) OR the JWT (all-Agent owner) to recognise the
+		// caller as the lobby's creator and surface the per-slot
+		// plaintext keys + ``api_key`` echo. Spectators (no JWT) get a
+		// public response.
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}`,
+			{ method: "GET" },
+		);
 	},
 
 	async joinLobby(
@@ -235,6 +247,75 @@ export const api = {
 			method: "POST",
 			gameId,
 		});
+	},
+
+	/** Phase 3: Start an all-Agent lobby as its (unseated) owner. The
+	 * owner has no per-game key in this case so the request is routed
+	 * through the BFF, which forwards the Auth.js JWT server-side. */
+	async startGameAsOwner(
+		gameId: string,
+	): Promise<{ status: string; game_id: string }> {
+		return fetchBff<{ status: string; game_id: string }>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/start-as-owner`,
+			{ method: "POST" },
+		);
+	},
+
+	/** Phase 3: Mint a fresh API key for an Agent slot. Routed through
+	 * the BFF so either auth path (per-game key OR JWT) is forwarded —
+	 * the BFF always sends the JWT, and the backend's
+	 * ``require_creator_auth`` accepts that for the all-Agent case. */
+	async regenerateSlotKey(
+		gameId: string,
+		slotIndex: number,
+	): Promise<{ slot_index: number; plaintext_key: string }> {
+		return fetchBff<{ slot_index: number; plaintext_key: string }>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/regenerate-key`,
+			{ method: "POST" },
+		);
+	},
+
+	/** Phase 4: replace the lobby's slot configuration. Routed through
+	 * the BFF so the Auth.js JWT (HttpOnly cookie) reaches the
+	 * backend's ``require_creator_auth`` for both seated-creator and
+	 * all-Agent-owner cases. The backend diffs the supplied slot array
+	 * against the current ``lobby_slots`` and applies the legal
+	 * transitions (Human→Agent for empty slots, Agent→Human invalidates
+	 * the agent's key, Agent rename re-binds the existing key). */
+	async reconfigureSlots(
+		gameId: string,
+		request: ReconfigureSlotsRequest,
+	): Promise<GameDetailResponse> {
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots`,
+			{ method: "PUT", body: JSON.stringify(request) },
+		);
+	},
+
+	/** Phase 5: (re)send a Resend-delivered invite for a Human slot
+	 * reservation. Routed through the BFF so the JWT (HttpOnly cookie)
+	 * reaches the backend's creator-auth dependency. */
+	async inviteSlot(
+		gameId: string,
+		slotIndex: number,
+		email: string,
+	): Promise<InviteSlotResponse> {
+		return fetchBff<InviteSlotResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/invite`,
+			{ method: "POST", body: JSON.stringify({ email }) },
+		);
+	},
+
+	/** Phase 5: drop the reservation on a slot, invalidating any
+	 * outstanding invite token. Returns the refreshed game detail. */
+	async clearSlotInvite(
+		gameId: string,
+		slotIndex: number,
+	): Promise<GameDetailResponse> {
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/invite/clear`,
+			{ method: "POST" },
+		);
 	},
 
 	async getGameState(gameId: string): Promise<GameState> {

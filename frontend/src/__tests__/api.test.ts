@@ -278,7 +278,11 @@ describe("api.getGameDetail", () => {
 		expect(result.game_id).toBe("test-game");
 		expect(result.player_slots).toBe(2);
 		const calledUrl = mockFetch.mock.calls[0][0] as string;
-		expect(calledUrl).toContain("/games/test-game");
+		// Phase 3: ``getGameDetail`` is routed through the Next.js BFF so
+		// the Auth.js JWT can be forwarded server-side and the backend can
+		// recognise the caller as the lobby's creator (needed to surface
+		// the per-slot Agent plaintext keys in the response).
+		expect(calledUrl).toBe("/api/lobbies/test-game");
 	});
 
 	it("returns 404 for missing game", async () => {
@@ -356,6 +360,48 @@ describe("api.leaveGame", () => {
 		const calledUrl = mockFetch.mock.calls[0][0] as string;
 		expect(calledUrl).toContain("/games/g1/leave");
 		expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+	});
+});
+
+describe("api.reconfigureSlots", () => {
+	it("PUTs the BFF slots route with the full slot array", async () => {
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				game_id: "g1",
+				player_slots: 2,
+				players: ["alice", "bot"],
+				creator: "alice",
+				turn: 0,
+				max_turns: 100,
+				map_width: 20,
+				map_height: 20,
+				seed: 42,
+				status: "waiting",
+				winner: null,
+				victory_type: null,
+				created_at: "2026-04-26T00:00:00",
+				updated_at: "2026-04-26T00:00:00",
+				ended_at: null,
+				slots: [],
+			}),
+		});
+
+		await api.reconfigureSlots("g1", {
+			slots: [
+				{ type: "human", name: "alice" },
+				{ type: "agent", name: "bot" },
+			],
+		});
+
+		const [calledUrl, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		// Routed through the BFF so the Auth.js JWT is forwarded
+		// server-side (the upstream require_creator_auth needs it).
+		expect(calledUrl).toBe("/api/lobbies/g1/slots");
+		expect(init.method).toBe("PUT");
+		const body = JSON.parse(init.body as string);
+		expect(body.slots).toHaveLength(2);
+		expect(body.slots[1]).toMatchObject({ type: "agent", name: "bot" });
 	});
 });
 
