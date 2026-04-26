@@ -1,8 +1,8 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
 import { ObservationView } from '@/components/observation-view'
@@ -31,6 +31,9 @@ import {
   AlertTriangle,
   Pencil,
   X,
+  Mail,
+  Send,
+  Trash2,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
@@ -73,6 +76,10 @@ export default function GameDetailPage() {
   const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(null)
   const [editType, setEditType] = useState<'human' | 'agent'>('human')
   const [editName, setEditName] = useState('')
+  // Phase 5: which slot is currently in invite-edit mode (``email`` form),
+  // and the in-progress email field. ``null`` means no invite UI open.
+  const [invitingSlotIndex, setInvitingSlotIndex] = useState<number | null>(null)
+  const [inviteEmail, setInviteEmail] = useState('')
 
   // Per-game player id is stored in localStorage when we create/join.
   // Re-read on every render so a fresh join reflects immediately.
@@ -171,6 +178,99 @@ export default function GameDetailPage() {
       toast({ title: 'Regenerate failed', description: err.message, variant: 'destructive' })
     },
   })
+
+  const inviteMutation = useMutation({
+    mutationFn: ({ slotIndex, email }: { slotIndex: number; email: string }) =>
+      api.inviteSlot(gameId, slotIndex, email),
+    onSuccess: (data) => {
+      setInvitingSlotIndex(null)
+      setInviteEmail('')
+      queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
+      toast({
+        title: 'Invite sent',
+        description: `Sent to ${data.email}. They have 24h to claim the slot.`,
+      })
+    },
+    onError: (err) => {
+      toast({ title: 'Invite failed', description: err.message, variant: 'destructive' })
+    },
+  })
+
+  const clearInviteMutation = useMutation({
+    mutationFn: (slotIndex: number) => api.clearSlotInvite(gameId, slotIndex),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
+      toast({ title: 'Reservation cleared', description: 'Slot is now open.' })
+    },
+    onError: (err) => {
+      toast({ title: 'Clear failed', description: err.message, variant: 'destructive' })
+    },
+  })
+
+  // Phase 5 redemption: if the lobby URL carries ``?invite=<token>``,
+  // attempt to redeem it as soon as the user is signed in. The
+  // sign-in round-trip preserves the query string (Auth.js callbackUrl)
+  // so this fires on return from the email link too.
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const inviteToken = searchParams?.get('invite') ?? null
+  const redeemAttemptedRef = useRef(false)
+  const [redeemNeedsSignIn, setRedeemNeedsSignIn] = useState(false)
+  const redeemMutation = useMutation({
+    mutationFn: ({ token, playerId }: { token: string; playerId: string }) =>
+      api.joinLobby(gameId, { player_id: playerId, invite_token: token }),
+    onSuccess: ({ game: redeemedGame, api_key }, variables) => {
+      setGameCredentials(redeemedGame.game_id, {
+        apiKey: api_key ?? '',
+        playerId: variables.playerId,
+      })
+      // Strip ``?invite=`` from the URL so a refresh doesn't replay
+      // the (now-redeemed) token.
+      router.replace(`/games/${gameId}`)
+      queryClient.invalidateQueries({ queryKey: queryKeys.gameDetail(gameId) })
+      toast({ title: 'Slot claimed', description: 'You are now seated in the reserved slot.' })
+    },
+    onError: (err) => {
+      // The BFF returns 401 with "Sign in" in the body when the visitor
+      // isn't signed in. Surface a CTA in that case rather than burying
+      // the failure in a toast — it's the expected first-time path for
+      // a recipient clicking the email link.
+      const msg = err.message || ''
+      if (msg.toLowerCase().includes('sign in')) {
+        setRedeemNeedsSignIn(true)
+        return
+      }
+      toast({ title: 'Redemption failed', description: msg, variant: 'destructive' })
+    },
+  })
+
+  useEffect(() => {
+    if (!inviteToken) return
+    if (redeemAttemptedRef.current) return
+    if (!game) return
+    if (game.status !== 'waiting') return
+    // Already seated? No need to redeem.
+    if (currentPlayer && game.players.includes(currentPlayer)) {
+      redeemAttemptedRef.current = true
+      return
+    }
+    // Pick a default player_id from the reserved slot's email local
+    // part (e.g. alice@x.com → "alice"), trimmed to 64 chars and
+    // de-duplicated against existing names. The user can rename
+    // afterwards by leaving and rejoining.
+    const reservedSlot = game.slots?.find(
+      (s) => s.reserved_email && !s.name && s.type === 'human',
+    )
+    const seedName = reservedSlot?.reserved_email?.split('@')[0] ?? 'guest'
+    let candidate = seedName.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || 'guest'
+    let suffix = 1
+    while (game.players.includes(candidate)) {
+      candidate = `${seedName}${suffix}`.slice(0, 64)
+      suffix += 1
+    }
+    redeemAttemptedRef.current = true
+    redeemMutation.mutate({ token: inviteToken, playerId: candidate })
+  }, [inviteToken, game, currentPlayer, redeemMutation, gameId])
 
   const copySlotKey = async (slotIndex: number, plaintext: string) => {
     if (typeof window === 'undefined') return
@@ -364,6 +464,29 @@ export default function GameDetailPage() {
       </div>
 
       <div className="space-y-6">
+        {redeemNeedsSignIn && inviteToken && (
+          <Card data-testid="invite-signin-cta" className="border-amber-300">
+            <CardContent className="pt-6 space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                You&apos;ve been invited to this lobby
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Sign in with the same email the invite was sent to and your
+                seat will be claimed automatically.
+              </p>
+              <Button asChild size="sm">
+                <Link
+                  href={`/signin?callbackUrl=${encodeURIComponent(`/games/${gameId}?invite=${inviteToken}`)}`}
+                >
+                  <LogIn className="h-4 w-4 mr-2" />
+                  Sign in to claim your slot
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Game Header */}
         <Card>
           <CardHeader>
@@ -740,6 +863,85 @@ export default function GameDetailPage() {
                     )
                   }
 
+                  const reservedEmail = slot.reserved_email
+                  const isReservedHuman =
+                    slot.type === 'human' && !player && !!reservedEmail
+                  const isOpenHuman =
+                    slot.type === 'human' && !player && !reservedEmail
+
+                  if (invitingSlotIndex === i) {
+                    return (
+                      <div
+                        key={i}
+                        className="p-3 rounded-lg border space-y-3"
+                        data-testid={`lobby-slot-${i}-invite`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: '#6b7280' }}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            Slot {i} · Invite a human
+                          </span>
+                        </div>
+                        <div>
+                          <Label htmlFor={`slot-${i}-email`} className="text-xs">
+                            Invitee email
+                          </Label>
+                          <Input
+                            id={`slot-${i}-email`}
+                            value={inviteEmail}
+                            onChange={(e) => setInviteEmail(e.target.value)}
+                            placeholder="alice@example.com"
+                            type="email"
+                            maxLength={320}
+                            className="mt-1"
+                            data-testid={`lobby-slot-${i}-invite-email`}
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setInvitingSlotIndex(null)
+                              setInviteEmail('')
+                            }}
+                            disabled={inviteMutation.isPending}
+                          >
+                            <X className="h-4 w-4 mr-1" /> Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              const trimmed = inviteEmail.trim()
+                              if (!trimmed) {
+                                toast({
+                                  title: 'Email required',
+                                  description: 'Type the invitee email.',
+                                  variant: 'destructive',
+                                })
+                                return
+                              }
+                              inviteMutation.mutate({
+                                slotIndex: i,
+                                email: trimmed,
+                              })
+                            }}
+                            disabled={inviteMutation.isPending}
+                            data-testid={`lobby-slot-${i}-invite-send`}
+                          >
+                            <Send className="h-4 w-4 mr-1" />
+                            {inviteMutation.isPending ? 'Sending...' : 'Send invite'}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   return (
                     <div
                       key={i}
@@ -753,6 +955,16 @@ export default function GameDetailPage() {
                         />
                         {player ? (
                           <span className="font-medium">{player}</span>
+                        ) : isReservedHuman ? (
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm">
+                              Reserved
+                            </span>
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Mail className="h-3 w-3" />
+                              {reservedEmail}
+                            </span>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground italic">Empty slot</span>
                         )}
@@ -763,6 +975,46 @@ export default function GameDetailPage() {
                         </Badge>
                         {player && i === 0 && game.creator === player && (
                           <Badge variant="outline" className="text-xs">Creator</Badge>
+                        )}
+                        {canEdit && isOpenHuman && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setInvitingSlotIndex(i)
+                              setInviteEmail('')
+                            }}
+                            data-testid={`lobby-slot-${i}-invite-button`}
+                          >
+                            <Mail className="h-3 w-3 mr-1" /> Invite
+                          </Button>
+                        )}
+                        {canEdit && isReservedHuman && (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setInvitingSlotIndex(i)
+                                setInviteEmail(reservedEmail ?? '')
+                              }}
+                              data-testid={`lobby-slot-${i}-resend-button`}
+                            >
+                              <Send className="h-3 w-3 mr-1" /> Resend
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => clearInviteMutation.mutate(i)}
+                              disabled={clearInviteMutation.isPending}
+                              data-testid={`lobby-slot-${i}-clear-invite-button`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </>
                         )}
                         {canEdit && (
                           <Button

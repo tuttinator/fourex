@@ -260,6 +260,18 @@ export interface CreateLobbyRequest {
 
 export interface JoinLobbyRequest {
 	player_id: string;
+	/** Phase 5: invite token redemption. When supplied, the backend
+	 * resolves the token to a reserved slot and seats the caller
+	 * there (rejecting on email mismatch / expiry / replay). Omit for
+	 * the legacy "next free unreserved Human slot" behaviour. */
+	invite_token?: string;
+}
+
+/** Phase 5: response for `POST /games/{id}/slots/{i}/invite`. */
+export interface InviteSlotResponse {
+	slot_index: number;
+	email: string;
+	expires_at: string;
 }
 
 /** Phase 4: body for ``PUT /games/{id}/slots`` — the creator sends the

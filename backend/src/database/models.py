@@ -425,6 +425,42 @@ class AuthVerificationToken(Base):
     __table_args__ = (Index("idx_auth_verification_tokens_expiry", "expires_at"),)
 
 
+class LobbyInvite(Base):
+    """Single-use invite token reserving a Human slot for an email.
+
+    Phase 5 of the lobby + skill split: the lobby creator types an
+    invitee's email per Human slot; an invite row is minted with a
+    32-byte random token (only the SHA-256 hash is persisted) and
+    Resend sends the lobby URL with ``?invite=<token>`` to the
+    address. ``join_game`` redeems the token by matching the hash,
+    confirming the JWT email matches ``email``, and stamping
+    ``redeemed_at`` so the same link cannot be used twice. Resending
+    refreshes ``expires_at`` on the existing row rather than minting
+    a fresh token, so a single recipient sees a stable link.
+    """
+
+    __tablename__ = "lobby_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("games.id"), nullable=False
+    )
+    slot_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_lobby_invites_game_slot", "game_id", "slot_index"),
+        Index("idx_lobby_invites_token_hash", "token_hash", unique=True),
+        Index("idx_lobby_invites_email", "email"),
+    )
+
+
 class GameSnapshot(Base):
     """Periodic snapshots of complete game state for recovery."""
 

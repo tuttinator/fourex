@@ -10,6 +10,7 @@ import type {
 	GamesListParams,
 	GamesListResponse,
 	GameState,
+	InviteSlotResponse,
 	JoinLobbyRequest,
 	LobbyKeyResponse,
 	ReconfigureSlotsRequest,
@@ -288,6 +289,32 @@ export const api = {
 		return fetchBff<GameDetailResponse>(
 			`/api/lobbies/${encodeURIComponent(gameId)}/slots`,
 			{ method: "PUT", body: JSON.stringify(request) },
+		);
+	},
+
+	/** Phase 5: (re)send a Resend-delivered invite for a Human slot
+	 * reservation. Routed through the BFF so the JWT (HttpOnly cookie)
+	 * reaches the backend's creator-auth dependency. */
+	async inviteSlot(
+		gameId: string,
+		slotIndex: number,
+		email: string,
+	): Promise<InviteSlotResponse> {
+		return fetchBff<InviteSlotResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/invite`,
+			{ method: "POST", body: JSON.stringify({ email }) },
+		);
+	},
+
+	/** Phase 5: drop the reservation on a slot, invalidating any
+	 * outstanding invite token. Returns the refreshed game detail. */
+	async clearSlotInvite(
+		gameId: string,
+		slotIndex: number,
+	): Promise<GameDetailResponse> {
+		return fetchBff<GameDetailResponse>(
+			`/api/lobbies/${encodeURIComponent(gameId)}/slots/${slotIndex}/invite/clear`,
+			{ method: "POST" },
 		);
 	},
 

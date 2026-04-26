@@ -3,6 +3,7 @@ REST API endpoints for game state and actions.
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,7 @@ from ..auth import (
     require_api_key,
     require_api_key_optional,
 )
+from ..config import settings
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
@@ -62,8 +64,17 @@ from ..identity import (
     require_user_identity,
     verify_auth_jwt,
 )
+from .invites import (
+    INVITE_TTL_SECONDS,
+    InviteEmailError,
+    build_invite_url,
+    hash_invite_token,
+    mint_invite_token,
+    send_invite_email,
+)
 from .lobby_slots import (
     coerce_slots,
+    find_slot_by_index,
     make_agent_slot,
     make_human_slot,
     redact_plaintext_keys,
@@ -962,12 +973,26 @@ class GameDetailResponse(BaseModel):
 
 
 class JoinLeaveRequest(BaseModel):
-    """Request to join or leave a game."""
+    """Request to join or leave a game.
+
+    Phase 5 introduces the optional ``invite_token`` field. When
+    present the join is validated against the matching ``LobbyInvite``
+    row (token hash + email + expiry + unredeemed) and seats the
+    caller in the reserved slot. Open joins (no token) take the next
+    free unreserved slot, as before.
+    """
 
     player_id: str = Field(
         min_length=1,
         max_length=64,
         description="In-game display name for the joining seat",
+    )
+    invite_token: str | None = Field(
+        default=None,
+        description=(
+            "Single-use invite token for redeeming a reserved slot. "
+            "Required when joining a slot that has a ``reserved_email``."
+        ),
     )
 
 
@@ -1253,10 +1278,44 @@ async def join_game(
     ``player_id`` to the game, mints a PlayerApiKey attributed to their
     ``UserIdentity``, and returns it so the browser can authenticate
     subsequent gameplay/diplomacy requests.
+
+    Phase 5: when ``invite_token`` is supplied the join is treated as
+    an invite redemption — the token is matched against a live
+    ``LobbyInvite`` row, the JWT email must match the slot's
+    ``reserved_email``, and the user is seated specifically in the
+    reserved slot. Open joins (no token) skip reserved slots so a
+    third party can't grab a slot the creator earmarked for someone.
     """
     try:
         controller = get_persistent_game_controller(session)
-        await controller.join_game(game_id, request.player_id)
+        repo = controller.repo
+        slot_index_to_seat: int | None = None
+        invite_to_redeem = None
+
+        if request.invite_token:
+            invite_to_redeem = await repo.get_lobby_invite_by_token_hash(
+                hash_invite_token(request.invite_token)
+            )
+            if invite_to_redeem is None or invite_to_redeem.game_id != game_id:
+                raise HTTPException(status_code=400, detail="Invalid invite token")
+            if invite_to_redeem.redeemed_at is not None:
+                raise HTTPException(
+                    status_code=400, detail="Invite has already been redeemed"
+                )
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if invite_to_redeem.expires_at <= now:
+                raise HTTPException(status_code=400, detail="Invite has expired")
+            caller_email = (identity.email or "").strip().lower()
+            if not caller_email or caller_email != invite_to_redeem.email:
+                raise HTTPException(
+                    status_code=400,
+                    detail=("Signed-in email does not match the invited email"),
+                )
+            slot_index_to_seat = invite_to_redeem.slot_index
+
+        await controller.join_game(
+            game_id, request.player_id, slot_index=slot_index_to_seat
+        )
         api_key = await create_player_key(
             session,
             game_id,
@@ -1264,6 +1323,8 @@ async def join_game(
             user_identity_id=identity.user_identity_id,
         )
         await controller.link_slot_api_key(game_id, request.player_id)
+        if invite_to_redeem is not None:
+            await repo.mark_lobby_invite_redeemed(invite_to_redeem)
         await session.commit()
 
         game_info = await controller.get_game_info(game_id)
@@ -1495,6 +1556,217 @@ async def regenerate_slot_key(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class InviteSlotRequest(BaseModel):
+    """Request body for ``POST /games/{id}/slots/{i}/invite``.
+
+    The creator types the invitee's email; the server validates the
+    slot is a Human, unoccupied slot in a ``waiting`` lobby, mints
+    (or rotates) the token row, and triggers a Resend send. Pydantic
+    handles the email shape; downstream code re-normalises so we
+    don't trust the original casing.
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+
+
+class InviteSlotResponse(BaseModel):
+    """Response for the invite (re)send endpoint.
+
+    ``email`` echoes back the normalised invitee address.
+    ``expires_at`` lets the lobby UI render a countdown if it wants
+    to. The plaintext token is never returned — only Resend sees it.
+    """
+
+    slot_index: int
+    email: str
+    expires_at: str
+
+
+@router.post(
+    "/games/{game_id}/slots/{slot_index}/invite",
+    tags=["games"],
+    response_model=InviteSlotResponse,
+)
+async def invite_slot(
+    game_id: str,
+    slot_index: int,
+    request: InviteSlotRequest,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> InviteSlotResponse:
+    """(Re)send a Resend invite for a Human slot reservation.
+
+    Idempotent on (game, slot): the row carries a single live token
+    at any time; resending rotates the hash + expiry so a stale link
+    can't pile up alongside a fresh one. Restricted to ``waiting``
+    lobbies and Human slots — Agent slots have their own
+    regenerate-key affordance and need no email handshake. The
+    abuse guard (``invite_resend_max_per_hour``) caps how often the
+    same slot can be re-invited; exceeding it returns 429.
+    """
+    controller = get_persistent_game_controller(session)
+    repo = controller.repo
+
+    db_game = await repo.get_game(game_id)
+    if db_game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if db_game.status != "waiting":
+        raise HTTPException(
+            status_code=400, detail="Invites can only be sent while waiting"
+        )
+
+    slots = coerce_slots(
+        db_game.lobby_slots, list(db_game.players), db_game.player_slots
+    )
+    target = find_slot_by_index(slots, slot_index)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Slot {slot_index} not found")
+    if target.get("type") != "human":
+        raise HTTPException(
+            status_code=400,
+            detail="Only Human slots can be reserved with an invite",
+        )
+    if target.get("name"):
+        raise HTTPException(
+            status_code=400, detail="Slot is already occupied — cannot reserve"
+        )
+
+    # Cheap rate-limit guard. ``created_at`` advances on row creation
+    # only — re-invites mutate ``expires_at`` on the existing row, so
+    # we don't have a per-resend counter. Use the existing row's
+    # ``expires_at`` to detect "too many resends recently": each
+    # resend pushes ``expires_at`` 24h forward; a creator hammering
+    # the button N times an hour is implicit in the ratio between
+    # "minutes since created_at" and TTL. We use a simple
+    # last-modified style guard: reject if the row was rotated less
+    # than (TTL / max_per_hour) ago. With defaults that means at most
+    # 5 resends per hour spaced by ~12 min.
+    existing = await repo.get_lobby_invite(game_id, slot_index)
+    cap = max(settings.invite_resend_max_per_hour, 1)
+    min_gap = timedelta(seconds=INVITE_TTL_SECONDS // (cap * 24))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if existing is not None and existing.email == request.email.strip().lower():
+        # ``expires_at`` was last set to ``now + TTL`` on the previous
+        # send. The "age" of the latest send is therefore TTL minus
+        # the remaining lifetime; if that's smaller than ``min_gap``
+        # the creator is hitting the button too fast.
+        age = timedelta(seconds=INVITE_TTL_SECONDS) - (existing.expires_at - now)
+        if age < min_gap:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Too many invite resends — wait at least "
+                    f"{int(min_gap.total_seconds())}s between sends"
+                ),
+            )
+
+    minted = mint_invite_token(now=now)
+    await repo.upsert_lobby_invite(
+        game_id=game_id,
+        slot_index=slot_index,
+        email=request.email,
+        token_hash=minted.token_hash,
+        expires_at=minted.expires_at,
+    )
+
+    # Persist the reservation on the slot itself so the GET response
+    # surfaces "Reserved for X" without an extra query.
+    new_email = request.email.strip().lower()
+    new_slots = [
+        {**s, "reserved_email": new_email} if s["slot_index"] == slot_index else s
+        for s in slots
+    ]
+    await repo.update_lobby_slots(game_id, new_slots)
+
+    invite_url = build_invite_url(game_id, minted.plaintext)
+    inviter_email: str | None = None
+    if creator.creator_user_identity_id is not None:
+        inviter_identity = await repo.get_user_identity_by_id(
+            creator.creator_user_identity_id
+        )
+        if inviter_identity is not None:
+            inviter_email = inviter_identity.email
+    elif db_game.creator_user_identity_id is not None:
+        inviter_identity = await repo.get_user_identity_by_id(
+            db_game.creator_user_identity_id
+        )
+        if inviter_identity is not None:
+            inviter_email = inviter_identity.email
+    try:
+        await send_invite_email(
+            to_email=new_email,
+            inviter_email=inviter_email,
+            game_id=game_id,
+            invite_url=invite_url,
+        )
+    except InviteEmailError as exc:
+        # Roll back — we don't want a half-sent invite leaving a live
+        # token in the DB that can never reach the recipient.
+        await session.rollback()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await session.commit()
+    return InviteSlotResponse(
+        slot_index=slot_index,
+        email=new_email,
+        expires_at=minted.expires_at.isoformat(),
+    )
+
+
+@router.post(
+    "/games/{game_id}/slots/{slot_index}/invite/clear",
+    tags=["games"],
+)
+async def clear_slot_invite(
+    game_id: str,
+    slot_index: int,
+    session: AsyncSession = Depends(get_database_session),
+    creator: CreatorAuth = Depends(require_creator_auth),
+) -> GameDetailResponse:
+    """Drop a slot reservation, invalidating any outstanding invite.
+
+    Idempotent — clearing an already-cleared slot is a no-op.
+    Outstanding tokens are dropped because the row itself is deleted;
+    the redemption path always looks the row up by hash, so a stale
+    link returns "Invalid invite token" thereafter.
+    """
+    del creator
+    controller = get_persistent_game_controller(session)
+    repo = controller.repo
+
+    db_game = await repo.get_game(game_id)
+    if db_game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if db_game.status != "waiting":
+        raise HTTPException(
+            status_code=400, detail="Reservations can only be cleared while waiting"
+        )
+
+    slots = coerce_slots(
+        db_game.lobby_slots, list(db_game.players), db_game.player_slots
+    )
+    target = find_slot_by_index(slots, slot_index)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Slot {slot_index} not found")
+    if target.get("type") != "human":
+        raise HTTPException(
+            status_code=400, detail="Only Human slots can hold a reservation"
+        )
+
+    await repo.delete_lobby_invite(game_id, slot_index)
+
+    new_slots = [
+        {**s, "reserved_email": None} if s["slot_index"] == slot_index else s
+        for s in slots
+    ]
+    await repo.update_lobby_slots(game_id, new_slots)
+
+    await session.commit()
+    refreshed = await repo.get_game(game_id)
+    assert refreshed is not None
+    return _game_detail_response(refreshed, viewer_is_creator=True)
 
 
 @router.get("/games/{game_id}/info", tags=["games"])

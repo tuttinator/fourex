@@ -30,6 +30,7 @@ from .lobby_slots import (
     coerce_slots,
     derive_slots_from_players,
     fill_slot,
+    find_slot_by_index,
     first_empty_slot_index,
     make_agent_slot,
     make_human_slot,
@@ -384,7 +385,13 @@ class PersistentGameController:
         if game_id in self._game_cache:
             self._game_cache[game_id].players = players
 
-    async def join_game(self, game_id: str, player_id: str) -> None:
+    async def join_game(
+        self,
+        game_id: str,
+        player_id: str,
+        *,
+        slot_index: int | None = None,
+    ) -> None:
         """A player joins a joinable game.
 
         Accepts both ``waiting`` lobbies (created via the frontend's
@@ -425,6 +432,46 @@ class PersistentGameController:
         if len(players) >= max_slots:
             raise ValueError(f"Game {game_id} is full ({max_slots} slots)")
 
+        # Phase 5: when ``slot_index`` is supplied (the invite-redemption
+        # path) we seat the caller into that specific slot rather than
+        # falling into the next open one. The slot must be a Human slot
+        # with no current occupant; reserved-email slots are explicitly
+        # allowed here because that's the whole point of redemption.
+        if slot_index is not None:
+            current_slots = coerce_slots(
+                db_game.lobby_slots, list(db_game.players), db_game.player_slots
+            )
+            target = find_slot_by_index(current_slots, slot_index)
+            if target is None:
+                raise ValueError(f"Slot {slot_index} not found in game {game_id}")
+            if target.get("type") != "human":
+                raise ValueError(f"Slot {slot_index} is not a Human slot")
+            if target.get("name"):
+                raise ValueError(f"Slot {slot_index} is already occupied")
+        elif db_game.status == "waiting":
+            # Open-join path: reject when every Human slot is either
+            # filled or reserved for an invitee. Without this guard the
+            # slot array would stay unchanged but ``Game.players`` would
+            # gain a name that has no seat — a silent inconsistency.
+            # Skipped when ``player_id`` already names a slot (the
+            # create-lobby flow pre-seats the creator into slot 0 then
+            # invokes join_game to wire up the API key — the slot is
+            # already reserved by name, so no open seat is needed).
+            current_slots = coerce_slots(
+                db_game.lobby_slots, list(db_game.players), db_game.player_slots
+            )
+            already_seated_by_name = any(
+                s.get("name") == player_id for s in current_slots
+            )
+            if (
+                not already_seated_by_name
+                and first_empty_slot_index(current_slots) is None
+            ):
+                raise ValueError(
+                    f"Game {game_id} has no open Human slots — every "
+                    f"unfilled slot is reserved for an invited human"
+                )
+
         players.append(player_id)
         await self.repo.update_game_players(game_id, players)
 
@@ -432,7 +479,10 @@ class PersistentGameController:
         # readers stay consistent. ``player_api_key_id`` is wired up
         # separately by ``link_slot_api_key`` once the REST/MCP caller
         # has minted the key — this method runs before that.
-        await self._fill_next_open_slot(db_game, player_id, players)
+        if slot_index is not None:
+            await self._fill_specific_slot(db_game, player_id, slot_index)
+        else:
+            await self._fill_next_open_slot(db_game, player_id, players)
 
         if db_game.status == "created":
             state = await self.get_game_state(game_id)
@@ -623,6 +673,28 @@ class PersistentGameController:
         if idx is None:
             return
         updated = fill_slot(slots, idx, name=player_id, player_api_key_id=None)
+        await self.repo.update_lobby_slots(db_game.id, updated)
+
+    async def _fill_specific_slot(
+        self,
+        db_game: DBGame,
+        player_id: PlayerId,
+        slot_index: int,
+    ) -> None:
+        """Seat ``player_id`` in a specific slot (Phase 5 invite redemption).
+
+        Mirrors ``_fill_next_open_slot`` but lets the caller name the
+        slot — needed so an invitee lands in the slot reserved for
+        their email rather than the first open one in index order. The
+        slot's ``reserved_email`` is preserved so the lobby UI can keep
+        showing "claimed by alice@..." after redemption (the
+        invite row is what actually changes state — see
+        ``mark_lobby_invite_redeemed``).
+        """
+        slots = coerce_slots(
+            db_game.lobby_slots, list(db_game.players), db_game.player_slots
+        )
+        updated = fill_slot(slots, slot_index, name=player_id, player_api_key_id=None)
         await self.repo.update_lobby_slots(db_game.id, updated)
 
     async def link_slot_api_key(self, game_id: str, player_id: PlayerId) -> None:

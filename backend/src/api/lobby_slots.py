@@ -195,14 +195,26 @@ def clear_slot_by_name(slots: list[SlotDict], name: str) -> list[SlotDict]:
 
 
 def first_empty_slot_index(slots: list[SlotDict]) -> int | None:
-    """Return the index of the first unfilled Human slot, or ``None``.
+    """Return the index of the first unfilled, unreserved Human slot.
 
-    Used by ``join_game`` to pick a slot when the caller doesn't
-    specify one. Phase 3 introduces explicit slot selection (e.g. via
-    invite tokens); until then, joins fall into the next free slot
-    in index order.
+    Phase 5 changes the contract: a slot with ``reserved_email`` set is
+    locked to the invitee (and only joinable through the token-redemption
+    path), so an open join must skip it. Open Human slots — no name and
+    no reservation — remain first-come-first-served.
     """
     for slot in slots:
-        if slot.get("type") == "human" and slot.get("name") is None:
+        if (
+            slot.get("type") == "human"
+            and slot.get("name") is None
+            and not slot.get("reserved_email")
+        ):
             return slot["slot_index"]
+    return None
+
+
+def find_slot_by_index(slots: list[SlotDict], slot_index: int) -> SlotDict | None:
+    """Return the slot record at ``slot_index``, or ``None`` if missing."""
+    for slot in slots:
+        if slot.get("slot_index") == slot_index:
+            return slot
     return None

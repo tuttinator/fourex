@@ -18,6 +18,7 @@ from .models import (
     Game,
     GameSnapshot,
     GameTurn,
+    LobbyInvite,
     PlayerAction,
     PlayerApiKey,
     PromptLog,
@@ -776,6 +777,93 @@ class GameRepository:
             select(PlayerApiKey).where(PlayerApiKey.id == api_key_id)
         )
         return result.scalar_one_or_none()
+
+    async def upsert_lobby_invite(
+        self,
+        game_id: str,
+        slot_index: int,
+        email: str,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> LobbyInvite:
+        """Create or refresh the lobby invite for a slot.
+
+        One live invite per (game, slot) — re-inviting the same address
+        rotates the token hash and resets the expiry on the existing row
+        so the redemption surface stays single-row. ``redeemed_at`` is
+        always cleared on rotate, since the new token is unredeemed by
+        definition.
+        """
+        normalised = email.strip().lower()
+        existing = await self.get_lobby_invite(game_id, slot_index)
+        if existing is not None:
+            existing.email = normalised
+            existing.token_hash = token_hash
+            existing.expires_at = expires_at
+            existing.redeemed_at = None
+            await self.session.flush()
+            return existing
+        invite = LobbyInvite(
+            game_id=game_id,
+            slot_index=slot_index,
+            email=normalised,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        self.session.add(invite)
+        await self.session.flush()
+        return invite
+
+    async def get_lobby_invite(
+        self, game_id: str, slot_index: int
+    ) -> LobbyInvite | None:
+        """Read the lobby invite for a (game, slot), or return None."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(
+                and_(
+                    LobbyInvite.game_id == game_id,
+                    LobbyInvite.slot_index == slot_index,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_lobby_invite_by_token_hash(
+        self, token_hash: str
+    ) -> LobbyInvite | None:
+        """Read the lobby invite with a given token hash, or None."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(LobbyInvite.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_lobby_invites_for_game(self, game_id: str) -> list[LobbyInvite]:
+        """Return every invite row for a game."""
+        result = await self.session.execute(
+            select(LobbyInvite).where(LobbyInvite.game_id == game_id)
+        )
+        return list(result.scalars().all())
+
+    async def delete_lobby_invite(self, game_id: str, slot_index: int) -> None:
+        """Drop the invite row for a (game, slot) — used by ``invite/clear``."""
+        existing = await self.get_lobby_invite(game_id, slot_index)
+        if existing is None:
+            return
+        await self.session.delete(existing)
+        await self.session.flush()
+
+    async def mark_lobby_invite_redeemed(
+        self, invite: LobbyInvite, now: datetime | None = None
+    ) -> LobbyInvite:
+        """Stamp ``redeemed_at`` on an invite row.
+
+        Single-use is enforced by the caller (which must check
+        ``redeemed_at IS NULL`` before invoking this). Returns the same
+        row so callers don't have to re-fetch.
+        """
+        invite.redeemed_at = now or self._utcnow()
+        await self.session.flush()
+        return invite
 
     async def rename_player_api_key(
         self, game_id: str, old_player_id: str, new_player_id: str
