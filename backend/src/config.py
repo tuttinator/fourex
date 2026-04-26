@@ -2,7 +2,11 @@
 Configuration settings for the 4X game backend.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
+from typing import Annotated
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -12,7 +16,24 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8010
     secret_key: str = "dev-secret-key"
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
+    # ``NoDecode`` opts out of pydantic-settings' default JSON-only env
+    # decoding so the validator below can also accept comma-separated
+    # values — a common Railway/Docker deployment footgun.
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if stripped.startswith("["):
+            return json.loads(stripped)
+        return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+
     max_players_per_game: int = 8
     max_concurrent_games: int = 20
     turn_timeout_seconds: int = 60
