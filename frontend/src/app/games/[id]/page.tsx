@@ -34,6 +34,7 @@ import {
   Mail,
   Send,
   Trash2,
+  Wrench,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useLobbyEvents } from '@/hooks/use-lobby-events'
@@ -69,6 +70,7 @@ export default function GameDetailPage() {
   const [joinPlayerId, setJoinPlayerId] = useState('')
   const [copied, setCopied] = useState(false)
   const [apiKeyCopied, setApiKeyCopied] = useState(false)
+  const [mcpConfigCopied, setMcpConfigCopied] = useState(false)
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null)
   const [confirmRegenSlot, setConfirmRegenSlot] = useState<number | null>(null)
   // Phase 4: which slot is currently being edited (type toggle / rename),
@@ -310,6 +312,25 @@ export default function GameDetailPage() {
     }
   }
 
+  const copyMcpConfig = async (snippet: string) => {
+    if (typeof window === 'undefined') return
+    try {
+      await navigator.clipboard.writeText(snippet)
+      setMcpConfigCopied(true)
+      toast({
+        title: 'MCP config copied',
+        description: 'Paste it into your MCP client config (e.g. ~/.claude.json) and restart.',
+      })
+      setTimeout(() => setMcpConfigCopied(false), 1500)
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Select the snippet manually and copy.',
+        variant: 'destructive',
+      })
+    }
+  }
+
   const copyInviteLink = async () => {
     if (typeof window === 'undefined') return
     const url = `${window.location.origin}/games/${gameId}`
@@ -451,6 +472,29 @@ export default function GameDetailPage() {
   const agentSlotsWithKeys = slotsArr.filter(
     (s) => s.type === 'agent' && s.plaintext_key,
   )
+  // The "Configure your MCP client" hint accompanies any agent hand-off
+  // affordance — either per-slot agent keys, or the seated creator's
+  // own per-game key. It's a one-time setup step the human needs to
+  // complete before any agent can connect.
+  const seatedCreatorHasKey =
+    currentPlayer !== null &&
+    game.creator === currentPlayer &&
+    Boolean(
+      game.api_key ||
+        (typeof window !== 'undefined' ? getGameApiKey(gameId) : null),
+    )
+  const showMcpConfigHint =
+    isCreator &&
+    game.status === 'waiting' &&
+    (agentSlotsWithKeys.length > 0 || seatedCreatorHasKey)
+  const mcpConfigSnippet = `{
+  "mcpServers": {
+    "fourex-mcp": {
+      "type": "http",
+      "url": "https://mcp.parley.quest/"
+    }
+  }
+}`
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
@@ -619,6 +663,63 @@ export default function GameDetailPage() {
                   </div>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {showMcpConfigHint && (
+          <Card data-testid="mcp-config-hint-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Wrench className="h-4 w-4" />
+                Configure your MCP client
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Before an agent can use the keys above, its MCP client needs
+                to know about{' '}
+                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                  https://mcp.parley.quest/
+                </code>
+                . For Claude Code, drop this into{' '}
+                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                  ~/.claude.json
+                </code>{' '}
+                (or a project{' '}
+                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                  .mcp.json
+                </code>
+                ) and restart the client. The{' '}
+                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                  /play-parley
+                </code>{' '}
+                skill walks through the rest of the handshake.
+              </p>
+              <div className="relative">
+                <pre
+                  className="rounded-md border bg-muted/50 p-3 text-xs font-mono overflow-x-auto"
+                  data-testid="mcp-config-hint-snippet"
+                >
+                  {mcpConfigSnippet}
+                </pre>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="absolute top-2 right-2"
+                  onClick={() => copyMcpConfig(mcpConfigSnippet)}
+                  data-testid="mcp-config-hint-copy"
+                >
+                  {mcpConfigCopied ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  <span className="ml-2">
+                    {mcpConfigCopied ? 'Copied' : 'Copy'}
+                  </span>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}

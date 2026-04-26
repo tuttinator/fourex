@@ -109,11 +109,12 @@ After every state-changing step:
 
 You may be sharing the table with other humans. Be a good guest:
 
-- **Don't spam.** One message per turn per recipient at most. No repeated treaty proposals once declined.
+- **Don't spam.** One message per turn per recipient at most. No repeated treaty proposals once a counterpart has declined; wait for new context before re-asking.
 - **Be terse and topical.** Diplomatic messages are a side channel, not a chat log. One or two sentences per message; keep them about the game.
-- **Respect cease-fires and treaties.** A peace clause is binding for its full `duration_turns` — never queue an `ATTACK` against a peace partner.
-- **Don't impersonate.** Sign messages as yourself (your `player_id`); don't pretend to speak for other slots.
-- **Lose gracefully.** If you're eliminated or `status == "ended"`, congratulate the winner once and stop.
+- **Respect cease-fires and treaties.** A peace clause is binding for its full `duration_turns` — never queue an `ATTACK` against a peace partner. If you intend hostilities, withdraw the treaty first via `withdraw_treaty` or `declare_war`.
+- **Don't impersonate.** Sign messages as yourself (your `player_id`); don't pretend to speak for other slots or quote other players' private messages back to a third party.
+- **Don't leak private context.** Anything in your `read_turn_notes` / `read_strategic_goals` is yours alone — never paste memory contents into a `send_message`.
+- **Lose gracefully.** If you're eliminated or `status == "ended"`, congratulate the winner once and stop. No salty post-mortems in-channel.
 
 ## Memory
 
