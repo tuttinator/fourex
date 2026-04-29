@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
-import { ObservationView } from '@/components/observation-view'
+import { ObservationSurface } from '@/components/observation-surface'
 import { GameplayView } from '@/components/gameplay-view'
 import { TopBar } from '@/components/top-bar'
 import { useSessionEmail } from '@/components/session-email-provider'
@@ -438,7 +438,10 @@ export default function GameDetailPage() {
           game.players.includes(currentPlayer) ? (
             <GameplayView gameId={gameId} currentPlayer={currentPlayer} />
           ) : (
-            <ObservationView gameId={gameId} />
+            <ObservationSurface
+              gameId={gameId}
+              mode={game.status === 'ended' ? 'replay' : 'live'}
+            />
           )}
         </div>
       </div>
