@@ -27,6 +27,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
+import { Tag } from "@/components/ui/tag";
 import { api, queryKeys } from "@/lib/api";
 import type { GameSummary, GamesListParams, SeatSummary } from "@/types/game";
 
@@ -116,75 +118,6 @@ function StatusTag({ game }: { game: GameSummary }) {
   }
   if (game.status === "ended") return <Tag tone="neutral">Final</Tag>;
   return <Tag tone="neutral">{game.status}</Tag>;
-}
-
-type Tone = "neutral" | "accent" | "success" | "warning" | "live";
-
-function Tag({
-  tone,
-  children,
-  mono = false,
-}: {
-  tone: Tone;
-  children: React.ReactNode;
-  mono?: boolean;
-}) {
-  const tones: Record<Tone, { bg: string; fg: string; bd: string }> = {
-    neutral: {
-      bg: "var(--surface-alt)",
-      fg: "var(--ink-soft)",
-      bd: "var(--border)",
-    },
-    accent: {
-      bg: "var(--accent-soft)",
-      fg: "var(--accent)",
-      bd: "var(--accent-soft)",
-    },
-    success: {
-      bg: "oklch(from var(--success) l c h / 0.12)",
-      fg: "var(--success)",
-      bd: "oklch(from var(--success) l c h / 0.20)",
-    },
-    warning: {
-      bg: "oklch(from var(--warning) l c h / 0.14)",
-      fg: "oklch(from var(--warning) calc(l - 0.10) c h)",
-      bd: "oklch(from var(--warning) l c h / 0.30)",
-    },
-    live: {
-      bg: "var(--accent-soft)",
-      fg: "var(--accent)",
-      bd: "transparent",
-    },
-  };
-  const t = tones[tone];
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5"
-      style={{
-        background: t.bg,
-        color: t.fg,
-        boxShadow: `inset 0 0 0 1px ${t.bd}`,
-        fontFamily: mono ? "var(--font-mono)" : "var(--font-ui)",
-        fontSize: 11,
-        fontWeight: 500,
-        letterSpacing: mono ? "0.02em" : "0.005em",
-        lineHeight: 1.5,
-      }}
-    >
-      {tone === "live" && (
-        <span
-          className="inline-block animate-parley-pulse"
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: "var(--accent)",
-          }}
-        />
-      )}
-      {children}
-    </span>
-  );
 }
 
 function SeatPips({ filled, total }: { filled: number; total: number }) {
@@ -745,19 +678,3 @@ export function GamesListClient({
   );
 }
 
-function Panel({
-  children,
-  padded = true,
-}: {
-  children: React.ReactNode;
-  padded?: boolean;
-}) {
-  return (
-    <section
-      className="flex flex-col overflow-hidden rounded-[10px] border border-border bg-surface"
-      style={{ boxShadow: "0 1px 0 rgba(0,0,0,0.02)" }}
-    >
-      <div className={padded ? "p-3.5" : ""}>{children}</div>
-    </section>
-  );
-}

@@ -8,7 +8,9 @@ import { EventLog } from "@/components/event-log";
 import { PerspectiveSwitcher } from "@/components/perspective-switcher";
 import { PixiMap } from "@/components/pixi-map";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tag } from "@/components/ui/tag";
 import { ApiError, api, queryKeys } from "@/lib/api";
 import { PLAYER_COLORS, type PlayerId } from "@/types/game";
 
@@ -94,8 +96,8 @@ export function ObservationView({ gameId }: ObservationViewProps) {
           >
             turn {gameState.turn} / {gameState.max_turns}
           </span>
-          {isActive && <Tag tone="live">live</Tag>}
-          {isEnded && <Tag tone="neutral">ended</Tag>}
+          {isActive && <Tag tone="live" mono>live</Tag>}
+          {isEnded && <Tag tone="neutral" mono>ended</Tag>}
         </div>
         <PerspectiveSwitcher
           players={allPlayers}
@@ -158,7 +160,7 @@ export function ObservationView({ gameId }: ObservationViewProps) {
                             showLabel
                             label={`seat ${index + 1}`}
                           />
-                          {viewing && <Tag tone="accent">viewing</Tag>}
+                          {viewing && <Tag tone="accent" mono>viewing</Tag>}
                         </div>
                         <div
                           className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-ink-soft"
@@ -298,89 +300,3 @@ function Row({
   );
 }
 
-function Panel({
-  title,
-  children,
-  padded = true,
-  className = "",
-}: {
-  title?: string;
-  children: React.ReactNode;
-  padded?: boolean;
-  className?: string;
-}) {
-  return (
-    <section
-      className={`flex flex-col overflow-hidden rounded-[10px] border border-border bg-surface ${className}`}
-      style={{ boxShadow: "0 1px 0 rgba(0,0,0,0.02)" }}
-    >
-      {title && (
-        <header className="flex items-center justify-between border-b border-border bg-bg-subtle px-3.5 py-2.5">
-          <h3
-            className="m-0 font-ui font-semibold uppercase text-ink-muted"
-            style={{ fontSize: 11.5, letterSpacing: "0.06em" }}
-          >
-            {title}
-          </h3>
-        </header>
-      )}
-      <div className={padded ? "p-3.5 flex-1 min-h-0" : "flex-1 min-h-0"}>
-        {children}
-      </div>
-    </section>
-  );
-}
-
-type TagTone = "neutral" | "accent" | "live";
-
-function Tag({
-  tone,
-  children,
-}: {
-  tone: TagTone;
-  children: React.ReactNode;
-}) {
-  const tones: Record<TagTone, { bg: string; fg: string; bd: string }> = {
-    neutral: {
-      bg: "var(--surface-alt)",
-      fg: "var(--ink-soft)",
-      bd: "var(--border)",
-    },
-    accent: {
-      bg: "var(--accent-soft)",
-      fg: "var(--accent)",
-      bd: "var(--accent-soft)",
-    },
-    live: {
-      bg: "var(--accent-soft)",
-      fg: "var(--accent)",
-      bd: "transparent",
-    },
-  };
-  const t = tones[tone];
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono"
-      style={{
-        background: t.bg,
-        color: t.fg,
-        boxShadow: `inset 0 0 0 1px ${t.bd}`,
-        fontSize: 11,
-        letterSpacing: "0.02em",
-      }}
-    >
-      {tone === "live" && (
-        <span
-          className="inline-block animate-parley-pulse"
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: "var(--accent)",
-          }}
-        />
-      )}
-      {children}
-    </span>
-  );
-}

@@ -5,6 +5,7 @@ import { PLAYER_PALETTE } from "@/components/brand/palette";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 
 export default async function HomePage() {
   const session = await auth();
@@ -223,24 +224,6 @@ function Dot() {
         background: "var(--accent)",
       }}
     />
-  );
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="inline-flex items-center justify-center rounded bg-surface text-ink-muted"
-      style={{
-        minWidth: 18,
-        height: 18,
-        padding: "0 5px",
-        boxShadow: "inset 0 0 0 1px var(--border), 0 1px 0 var(--border)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 10.5,
-      }}
-    >
-      {children}
-    </span>
   );
 }
 
