@@ -2673,11 +2673,6 @@ function CityPanel({
   )
 }
 
-/** Phase 6 — tech tree panel. One card with every tech grouped by state
- * (researched / in-progress / available / locked). Clicking an entry in
- * the available group queues ``SET_ACTIVE_RESEARCH``; the queued pick
- * is shown as the active selection pre-submit so the interaction feels
- * immediate. Parallels the diplomacy panel in layout and styling. */
 interface TechTreePanelProps {
   techTree: Record<TechId, Tech> | null
   research: ResearchState | null
@@ -2741,138 +2736,187 @@ function TechTreePanel({
     return g
   }, [techs, completed, effectiveActive])
 
+  const activeTech = groups.in_progress[0] ?? null
+  const activeRemaining = activeTech
+    ? Math.max(0, activeTech.cost_science - progress)
+    : 0
+  const activeEta =
+    activeTech && sciencePerTurn > 0
+      ? Math.max(1, Math.ceil(activeRemaining / sciencePerTurn))
+      : null
+  const activePct = activeTech
+    ? Math.min(
+        100,
+        Math.round((progress / activeTech.cost_science) * 100),
+      )
+    : 0
+
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span className="flex items-center gap-1">
-            <span aria-hidden="true">🔬</span>
-            Tech tree
-          </span>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            +{sciencePerTurn}/turn
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-3 text-xs">
+    <Panel
+      title="Research"
+      kicker="research"
+      action={
+        <Tag tone="neutral" mono>
+          +{sciencePerTurn}/turn
+        </Tag>
+      }
+      className="rounded-none border-x-0 border-t-0"
+    >
+      <div className="space-y-3">
         {!techTree || !research ? (
-          <p className="text-muted-foreground">Loading…</p>
+          <p className="text-xs text-ink-muted">Loading…</p>
         ) : (
           <>
-            {groups.in_progress.length > 0 && (
-              <TechGroup
-                title="Researching"
-                techs={groups.in_progress}
-                renderRow={(tech) => {
-                  const remaining = Math.max(0, tech.cost_science - progress)
-                  const eta =
-                    sciencePerTurn > 0
-                      ? Math.max(1, Math.ceil(remaining / sciencePerTurn))
-                      : null
-                  return (
-                    <div
-                      key={tech.id}
-                      className="rounded-md border bg-primary/10 px-2 py-1.5"
+            {activeTech && (
+              <div
+                data-testid="tech-active-progress"
+                className="rounded-md border border-border bg-bg-subtle px-2.5 py-2"
+                style={{ fontSize: 12 }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex flex-col gap-0.5">
+                    <span
+                      className="font-mono uppercase text-accent"
+                      style={{ fontSize: 10.5, letterSpacing: '0.10em' }}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{tech.name}</span>
-                        <span className="text-muted-foreground tabular-nums">
-                          {progress}/{tech.cost_science}
-                          {eta != null && ` · ${eta}t`}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1 rounded bg-background">
-                        <div
-                          className="h-1 rounded bg-primary"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round(
-                                (progress / tech.cost_science) * 100,
-                              ),
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )
-                }}
-              />
+                      Researching
+                    </span>
+                    <span
+                      className="font-display text-ink leading-none"
+                      style={{ fontSize: 16, letterSpacing: '-0.01em' }}
+                    >
+                      {activeTech.name}
+                    </span>
+                  </span>
+                  <Tag tone="accent" mono>
+                    {activeEta != null ? `${activeEta}t` : '—'}
+                  </Tag>
+                </div>
+                <div className="mt-2 h-1 w-full rounded bg-surface-alt">
+                  <div
+                    className="h-1 rounded"
+                    style={{
+                      width: `${activePct}%`,
+                      background: 'var(--accent)',
+                    }}
+                  />
+                </div>
+                <div
+                  className="mt-1 flex items-center justify-between font-mono text-ink-muted tabular-nums"
+                  style={{ fontSize: 11 }}
+                >
+                  <span>
+                    {progress}/{activeTech.cost_science}
+                  </span>
+                  <span>{sciencePerTurn}/turn</span>
+                </div>
+              </div>
             )}
 
             {groups.available.length > 0 && (
-              <TechGroup
-                title="Available"
-                techs={groups.available}
-                renderRow={(tech) => {
+              <TechGroup kicker="available" count={groups.available.length}>
+                {groups.available.map((tech) => {
                   const eta =
                     sciencePerTurn > 0
-                      ? Math.max(1, Math.ceil(tech.cost_science / sciencePerTurn))
+                      ? Math.max(
+                          1,
+                          Math.ceil(tech.cost_science / sciencePerTurn),
+                        )
                       : null
                   return (
-                    <Button
+                    <button
                       key={tech.id}
-                      variant="outline"
-                      size="sm"
-                      className="w-full justify-between text-xs"
+                      type="button"
                       onClick={() => onSelectActive(tech.id)}
                       title={describeTechUnlocks(tech)}
+                      className="group flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:bg-bg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
-                      <span>{tech.name}</span>
-                      <span className="text-muted-foreground tabular-nums">
-                        {tech.cost_science}🔬
-                        {eta != null && ` · ${eta}t`}
+                      <span className="flex flex-col gap-0">
+                        <span
+                          className="font-mono uppercase text-ink-muted"
+                          style={{
+                            fontSize: 10,
+                            letterSpacing: '0.08em',
+                          }}
+                        >
+                          {tech.cost_science}🔬
+                          {eta != null ? ` · ${eta}t` : ''}
+                        </span>
+                        <span
+                          className="font-display text-ink leading-none"
+                          style={{ fontSize: 14, letterSpacing: '-0.01em' }}
+                        >
+                          {tech.name}
+                        </span>
                       </span>
-                    </Button>
+                      <Tag tone="accent" mono>
+                        available
+                      </Tag>
+                    </button>
                   )
-                }}
-              />
+                })}
+              </TechGroup>
             )}
 
             {groups.locked.length > 0 && (
-              <TechGroup
-                title="Locked"
-                techs={groups.locked}
-                renderRow={(tech) => (
+              <TechGroup kicker="locked" count={groups.locked.length}>
+                {groups.locked.map((tech) => (
                   <div
                     key={tech.id}
-                    className="flex items-center justify-between rounded-md border bg-muted/20 px-2 py-1 text-muted-foreground"
+                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-bg-subtle px-2.5 py-1.5"
                     title={`Requires: ${tech.requires.join(', ')}`}
                   >
-                    <span className="flex items-center gap-1">
-                      <Lock className="h-3 w-3" />
-                      {tech.name}
+                    <span className="flex flex-col gap-0">
+                      <span
+                        className="font-mono uppercase text-ink-muted"
+                        style={{ fontSize: 10, letterSpacing: '0.08em' }}
+                      >
+                        {tech.cost_science}🔬
+                      </span>
+                      <span
+                        className="flex items-center gap-1.5 font-display text-ink-muted leading-none"
+                        style={{ fontSize: 14, letterSpacing: '-0.01em' }}
+                      >
+                        <Lock className="h-3 w-3 text-ink-muted" />
+                        {tech.name}
+                      </span>
                     </span>
-                    <span className="tabular-nums">
-                      {tech.cost_science}🔬
-                    </span>
+                    <Tag tone="neutral" mono>
+                      locked
+                    </Tag>
                   </div>
-                )}
-              />
+                ))}
+              </TechGroup>
             )}
 
             {groups.researched.length > 0 && (
-              <TechGroup
-                title="Researched"
-                techs={groups.researched}
-                renderRow={(tech) => (
+              <TechGroup kicker="researched" count={groups.researched.length}>
+                {groups.researched.map((tech) => (
                   <div
                     key={tech.id}
-                    className="flex items-center justify-between rounded-md border bg-muted/40 px-2 py-1"
+                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5"
                     title={describeTechUnlocks(tech)}
                   >
-                    <span className="flex items-center gap-1">
-                      <Check className="h-3 w-3" />
-                      {tech.name}
+                    <span className="flex items-center gap-1.5">
+                      <Check className="h-3 w-3 text-success" />
+                      <span
+                        className="font-display text-ink leading-none"
+                        style={{ fontSize: 14, letterSpacing: '-0.01em' }}
+                      >
+                        {tech.name}
+                      </span>
                     </span>
+                    <Tag tone="success" mono>
+                      done
+                    </Tag>
                   </div>
-                )}
-              />
+                ))}
+              </TechGroup>
             )}
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   )
 }
 
@@ -2887,20 +2931,23 @@ function describeTechUnlocks(tech: Tech): string {
   return parts.length > 0 ? parts.join('\n') : 'No direct unlocks'
 }
 
+/** Phase 5 rebuild: each tech group is a sub-Panel with the group name as
+ * an accent kicker. A single child Panel gets the kicker treatment without
+ * a heavy title bar so the four group headers don't overpower the outer
+ * Research panel. */
 function TechGroup({
-  title,
-  techs,
-  renderRow,
+  kicker,
+  count,
+  children,
 }: {
-  title: string
-  techs: Tech[]
-  renderRow: (tech: Tech) => React.ReactNode
+  kicker: string
+  count: number
+  children: React.ReactNode
 }) {
   return (
-    <div className="space-y-1">
-      <div className="text-muted-foreground font-medium">{title}</div>
-      {techs.map(renderRow)}
-    </div>
+    <Panel kicker={`${kicker} · ${count}`} padded={false}>
+      <div className="space-y-1 p-2">{children}</div>
+    </Panel>
   )
 }
 
