@@ -45,15 +45,6 @@ import {
   setGameCredentials,
 } from '@/lib/game-auth'
 
-function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case 'active': return 'default'
-    case 'waiting': return 'secondary'
-    case 'ended': return 'outline'
-    default: return 'secondary'
-  }
-}
-
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     month: 'short',
@@ -398,36 +389,54 @@ export default function GameDetailPage() {
   // Active or ended: show observation view with header
   if (game.status === 'active' || game.status === 'ended') {
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col bg-bg text-ink font-ui">
         {/* Header */}
-        <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-4">
+        <div className="border-b border-border bg-surface">
+          <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
               <Button asChild variant="ghost" size="sm">
                 <Link href="/games">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  <ArrowLeft className="h-4 w-4 mr-1.5" />
                   Back
                 </Link>
               </Button>
-              <h1 className="text-xl font-semibold">{game.game_id}</h1>
-              <Badge variant={statusVariant(game.status)}>{game.status}</Badge>
+              <span className="h-[22px] w-px bg-border" aria-hidden />
+              <h1 className="font-mono text-[13px] text-ink truncate">{game.game_id}</h1>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono ${
+                  game.status === 'active'
+                    ? 'bg-accent-soft text-accent'
+                    : 'bg-surface-alt text-ink-soft'
+                }`}
+                style={{ fontSize: 11, letterSpacing: "0.02em" }}
+              >
+                {game.status === 'active' && (
+                  <span
+                    className="inline-block animate-parley-pulse"
+                    style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)" }}
+                  />
+                )}
+                {game.status}
+              </span>
               {game.winner && (
-                <span className="text-sm text-muted-foreground">
-                  Winner: {game.winner}
-                  {game.victory_type && ` (${game.victory_type})`}
+                <span className="font-mono text-ink-muted" style={{ fontSize: 12 }}>
+                  winner · <span className="text-ink">{game.winner}</span>
+                  {game.victory_type && (
+                    <span className="text-ink-muted"> ({game.victory_type})</span>
+                  )}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <Button asChild variant="outline" size="sm">
                 <Link href={`/games/${game.game_id}/diplomacy`}>
-                  <Users className="h-4 w-4 mr-2" />
+                  <Users className="h-4 w-4 mr-1.5" />
                   Diplomacy
                 </Link>
               </Button>
-              <Button asChild variant="outline" size="sm">
+              <Button asChild variant="ghost" size="sm">
                 <Link href={`/games/${game.game_id}/replay`}>
-                  <Play className="h-4 w-4 mr-2" />
+                  <Play className="h-4 w-4 mr-1.5" />
                   Replay
                 </Link>
               </Button>

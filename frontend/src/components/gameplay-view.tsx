@@ -353,7 +353,7 @@ function ResearchIndicator({
 
 function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
   return (
-    <div className="flex items-center gap-3 text-sm">
+    <div className="flex items-center gap-4 text-[13px]">
       {RESOURCE_META.map(({ key, emoji, label }) => {
         const amount = stockpile[key] ?? 0
         const delta = yieldBreakdown.total[key] ?? 0
@@ -371,13 +371,16 @@ function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
           <span
             key={key}
             title={tooltip}
-            className="flex items-center gap-1 tabular-nums"
+            className="inline-flex items-center gap-1.5 text-ink"
           >
-            <span aria-hidden="true">{emoji}</span>
-            <span className="font-medium">{amount}</span>
+            <span aria-hidden="true" className="text-base leading-none">{emoji}</span>
+            <span className="font-semibold tabular-nums">{amount}</span>
             {delta > 0 && (
-              <span className="text-xs text-muted-foreground">
-                (+{delta})
+              <span
+                className="font-mono text-success tabular-nums"
+                style={{ fontSize: 11 }}
+              >
+                +{delta}
               </span>
             )}
           </span>
@@ -1645,16 +1648,22 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-bg text-ink font-ui">
       {/* Status bar */}
-      <div className="border-b px-4 py-2 flex items-center justify-between bg-muted/30">
-        <div className="flex items-center gap-3 text-sm">
-          <span className="font-medium">
-            Turn {gameState.turn} / {gameState.max_turns}
+      <div className="border-b border-border bg-bg-subtle px-5 py-2.5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2.5 text-sm">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-0.5 font-mono text-accent"
+            style={{ fontSize: 11, letterSpacing: "0.02em" }}
+          >
+            your turn
           </span>
-          <Badge variant="secondary" className="text-xs">
-            Playing as {currentPlayer}
-          </Badge>
+          <span
+            className="font-mono text-ink-muted"
+            style={{ fontSize: 12 }}
+          >
+            playing as {currentPlayer} · turn {gameState.turn} / {gameState.max_turns}
+          </span>
           {(() => {
             const outstanding = gameState.players.filter(
               (p) => !submittedPlayers.has(p),
@@ -1665,11 +1674,20 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             // opponents before the user's even queued their own turn.
             if (!waiting) return null
             return (
-              <Badge variant="outline" className="text-xs">
-                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                Waiting for {outstanding.length} player
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono"
+                style={{
+                  background: "oklch(from var(--warning) l c h / 0.14)",
+                  color: "oklch(from var(--warning) calc(l - 0.10) c h)",
+                  boxShadow: "inset 0 0 0 1px oklch(from var(--warning) l c h / 0.30)",
+                  fontSize: 11,
+                  letterSpacing: "0.02em",
+                }}
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                waiting for {outstanding.length} player
                 {outstanding.length === 1 ? '' : 's'}
-              </Badge>
+              </span>
             )
           })()}
         </div>
@@ -1737,10 +1755,12 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               <span className="text-[10px] text-muted-foreground">B</span>
             </Button>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {Object.keys(gameState.units).length} units &middot;{' '}
-            {Object.keys(gameState.cities).length} cities
-          </div>
+          <span
+            className="font-mono text-ink-muted"
+            style={{ fontSize: 11 }}
+          >
+            {Object.keys(gameState.units).length} units · {Object.keys(gameState.cities).length} cities
+          </span>
         </div>
       </div>
 
@@ -1774,7 +1794,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
         </div>
 
         {/* Sidebar */}
-        <div className="w-96 border-l bg-background/95 backdrop-blur flex flex-col h-full min-h-0">
+        <div className="w-96 border-l border-border bg-bg-subtle flex flex-col h-full min-h-0">
           <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
           {selectedCity ? (
             <CityPanel

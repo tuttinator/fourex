@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>parley.quest — sprite atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@500;700&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #1A1714;
+    --panel: #221E1A;
+    --panel-2: #2A2521;
+    --line: rgba(255, 240, 210, 0.08);
+    --line-2: rgba(255, 240, 210, 0.14);
+    --ink: #F4ECDC;
+    --ink-mute: #B8AC95;
+    --ink-dim: #8A8070;
+    --accent: #C04A2D;
+    --magenta: #FF00FF;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter Tight', system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .frame {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 56px 32px 96px;
+  }
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: 'Roboto Slab', serif;
+    font-weight: 700;
+    font-size: 44px;
+    letter-spacing: -0.02em;
+    margin: 0;
+    line-height: 1;
+  }
+  h1 .quest { color: var(--accent); }
+  .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-mute);
+    text-align: right;
+    line-height: 1.7;
+  }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  /* zoom toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 28px;
+    padding: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    width: fit-content;
+  }
+  .toolbar button {
+    appearance: none;
+    background: transparent;
+    color: var(--ink-mute);
+    border: 1px solid transparent;
+    font: inherit;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    letter-spacing: 0.06em;
+  }
+  .toolbar button:hover { color: var(--ink); }
+  .toolbar button.active {
+    background: var(--panel-2);
+    border-color: var(--line-2);
+    color: var(--ink);
+  }
+  .toolbar .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--line);
+    margin: 0 4px;
+  }
+  .toolbar label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding-left: 8px;
+  }
+  .toolbar select {
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    font: inherit;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
+  section.group {
+    margin-bottom: 56px;
+  }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .group-head h2 {
+    font-family: 'Roboto Slab', serif;
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .group-head .count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-dim);
+    letter-spacing: 0.12em;
+  }
+  .group-head .desc {
+    font-size: 13px;
+    color: var(--ink-mute);
+    margin-left: auto;
+    max-width: 500px;
+    text-align: right;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .card .stage {
+    aspect-ratio: 1 / 1;
+    display: grid;
+    place-items: center;
+    background:
+      linear-gradient(45deg, #1A1714 25%, transparent 25%),
+      linear-gradient(-45deg, #1A1714 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #1A1714 75%),
+      linear-gradient(-45deg, transparent 75%, #1A1714 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    background-color: #211E1A;
+    border-bottom: 1px solid var(--line);
+    padding: 24px;
+  }
+  /* When inspecting tinted/terrain/full, show solid background */
+  .card .stage[data-bg="solid"] {
+    background: #211E1A;
+  }
+  .card .stage[data-bg="grass"] {
+    background-image: var(--grass-tile);
+    background-size: 64px 64px;
+    background-color: #7BAE5B;
+    image-rendering: pixelated;
+  }
+  .card img {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    width: var(--zoom, 128px);
+    height: var(--zoom, 128px);
+    display: block;
+  }
+  .card .label {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink);
+    letter-spacing: 0.02em;
+  }
+  .meta-row {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .meta-row .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-dim); }
+
+  /* tint legend */
+  .legend {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 40px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .legend p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-mute);
+    line-height: 1.55;
+    flex: 1 1 320px;
+  }
+  .legend code {
+    background: var(--panel-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--ink);
+  }
+  .swatches {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .sw {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--line-2);
+  }
+
+  /* tinted preview row */
+  .tinted-row {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .tinted {
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+  }
+  .tinted canvas {
+    image-rendering: pixelated;
+    width: 100%;
+    height: 100%;
+  }
+  .tinted .pn {
+    position: absolute;
+    bottom: 4px;
+    left: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+    letter-spacing: 0.06em;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-dim);
+    letter-spacing: 0.04em;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <header>
+      <div>
+        <p class="eyebrow">parley.quest · sprite atlas v0.1</p>
+        <h1>Pixel<span class="quest"> sprites</span></h1>
+      </div>
+      <div class="meta">
+        <div><b>16</b> sprites · <b>32×32</b> · indexed PNG</div>
+        <div>player tint mask: <b style="color:#FF00FF">#FF00FF</b></div>
+        <div>shipped to <b>/sprites/</b></div>
+      </div>
+    </header>
+
+    <div class="legend">
+      <p>
+        Player-colored regions are painted with magenta <code>#FF00FF</code> as a mask.
+        At runtime, Pixi replaces those pixels with the player's banner color from the
+        heraldic palette below — no shader needed, just a per-frame palette swap or
+        a baked tinted variant. Terrain tiles have no mask; they tile seamlessly.
+      </p>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <div class="toolbar">
+      <label>Zoom</label>
+      <button data-zoom="64">1×</button>
+      <button data-zoom="128" class="active">4×</button>
+      <button data-zoom="192">6×</button>
+      <button data-zoom="256">8×</button>
+      <span class="sep"></span>
+      <label>Background</label>
+      <select id="bg">
+        <option value="checker">Checkerboard</option>
+        <option value="solid">Solid panel</option>
+        <option value="grass">Grass tile</option>
+      </select>
+    </div>
+
+    <section class="group">
+      <div class="group-head">
+        <h2>Terrain</h2>
+        <span class="count">/ 7 tiles</span>
+        <span class="desc">Edge-tileable. Each is procedurally speckled from a fixed seed so refresh
+          and reload give the same map. No tint mask.</span>
+      </div>
+      <div class="grid" id="grid-terrain"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <h2>Units</h2>
+        <span class="count">/ 4 sprites</span>
+        <span class="desc">Banner stripe at the bottom holds the player's color.
+          Most also have a tinted secondary surface (cape, tabard, shield).</span>
+      </div>
+      <div class="grid" id="grid-units"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <h2>Cities</h2>
+        <span class="count">/ 1 + tier dots</span>
+        <span class="desc">Single sprite; tier shown as 1–4 white pixels in the upper-left.
+          Banner + flag carry the player tint.</span>
+      </div>
+      <div class="grid" id="grid-cities"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <h2>Resources</h2>
+        <span class="count">/ 4 nodes</span>
+        <span class="desc">Sit on top of any terrain tile. Untinted.</span>
+      </div>
+      <div class="grid" id="grid-resources"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <h2>Soldier under all 8 banners</h2>
+        <span class="count">tint preview</span>
+        <span class="desc">The same PNG, recolored per player. This is what the Pixi
+          renderer will produce at runtime.</span>
+      </div>
+      <div class="tinted-row" id="tinted-row"></div>
+    </section>
+
+    <footer>
+      <span>32×32 · transparent PNG · indexed magenta tint mask</span>
+      <span>parley.quest · pixel sprites v0.1</span>
+    </footer>
+  </div>
+
+<script>
+  const PLAYERS = [
+    { name: 'Vermillion', hex: '#B5302E' },
+    { name: 'Indigo',     hex: '#3D3F8F' },
+    { name: 'Ochre',      hex: '#C49A2C' },
+    { name: 'Forest',     hex: '#3F6B3A' },
+    { name: 'Plum',       hex: '#7E2D52' },
+    { name: 'Slate',      hex: '#516675' },
+    { name: 'Sand',       hex: '#A88560' },
+    { name: 'Teal',       hex: '#2F7C7A' },
+  ];
+
+  const SPRITES = {
+    terrain: [
+      { name: 'tile-grass',    desc: 'rolling base' },
+      { name: 'tile-forest',   desc: 'trees + canopy' },
+      { name: 'tile-water',    desc: 'shallows · waves' },
+      { name: 'tile-hills',    desc: 'rolling dunes' },
+      { name: 'tile-mountain', desc: 'snow-capped peak' },
+      { name: 'tile-desert',   desc: 'arid · rippled' },
+      { name: 'tile-swamp',    desc: 'pools + reeds' },
+    ],
+    units: [
+      { name: 'unit-soldier', desc: 'melee · plumed helm' },
+      { name: 'unit-worker',  desc: 'civilian · hammer' },
+      { name: 'unit-scout',   desc: 'cloaked · bow' },
+      { name: 'unit-archer',  desc: 'ranged · longbow' },
+    ],
+    cities: [
+      { name: 'city',         desc: 'walled · towered' },
+    ],
+    resources: [
+      { name: 'res-food',     desc: 'wheat sheaf' },
+      { name: 'res-wood',     desc: 'log pile' },
+      { name: 'res-ore',      desc: 'rocks · veins' },
+      { name: 'res-crystal',  desc: 'shards' },
+    ],
+  };
+
+  // swatches
+  const swatchesEl = document.getElementById('swatches');
+  PLAYERS.forEach(p => {
+    const s = document.createElement('div');
+    s.className = 'sw';
+    s.style.background = p.hex;
+    s.title = `${p.name} — ${p.hex}`;
+    swatchesEl.appendChild(s);
+  });
+
+  // build cards
+  function card(s, group) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = `
+      <div class="stage" data-bg="checker">
+        <img src="sprites/${s.name}.png" alt="${s.name}" />
+      </div>
+      <div class="label">
+        <span class="name">${s.name}.png</span>
+        <span class="meta-row">32×32 <span class="dot"></span> ${s.desc}</span>
+      </div>
+    `;
+    return c;
+  }
+  for (const [group, list] of Object.entries(SPRITES)) {
+    const root = document.getElementById('grid-' + group);
+    list.forEach(s => root.appendChild(card(s, group)));
+  }
+
+  // zoom
+  document.querySelectorAll('.toolbar button[data-zoom]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.toolbar button[data-zoom]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.documentElement.style.setProperty('--zoom', btn.dataset.zoom + 'px');
+    });
+  });
+
+  // bg switcher
+  document.getElementById('bg').addEventListener('change', e => {
+    document.querySelectorAll('.card .stage').forEach(s => {
+      s.dataset.bg = e.target.value;
+    });
+  });
+
+  // ── tinted preview: load soldier, recolor magenta, draw 8x ──
+  const tintRow = document.getElementById('tinted-row');
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = 'sprites/unit-soldier.png';
+  img.onload = () => {
+    const off = document.createElement('canvas');
+    off.width = 32; off.height = 32;
+    const ox = off.getContext('2d');
+    ox.imageSmoothingEnabled = false;
+    ox.drawImage(img, 0, 0);
+    const src = ox.getImageData(0, 0, 32, 32);
+    PLAYERS.forEach(p => {
+      const tile = document.createElement('div');
+      tile.className = 'tinted';
+      const cv = document.createElement('canvas');
+      cv.width = 32; cv.height = 32;
+      const cx = cv.getContext('2d');
+      cx.imageSmoothingEnabled = false;
+      const buf = new ImageData(new Uint8ClampedArray(src.data), 32, 32);
+      // parse hex
+      const r = parseInt(p.hex.slice(1, 3), 16);
+      const g = parseInt(p.hex.slice(3, 5), 16);
+      const b = parseInt(p.hex.slice(5, 7), 16);
+      for (let i = 0; i < buf.data.length; i += 4) {
+        if (buf.data[i] === 255 && buf.data[i+1] === 0 && buf.data[i+2] === 255) {
+          buf.data[i] = r; buf.data[i+1] = g; buf.data[i+2] = b;
+        }
+      }
+      cx.putImageData(buf, 0, 0);
+      tile.appendChild(cv);
+      const pn = document.createElement('span');
+      pn.className = 'pn';
+      pn.textContent = p.name;
+      tile.appendChild(pn);
+      tintRow.appendChild(tile);
+    });
+  };
+</script>
+</body>
+</html>

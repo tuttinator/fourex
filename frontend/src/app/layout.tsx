@@ -4,6 +4,7 @@ import './globals.css'
 import { QueryProvider } from '@/components/providers/query-provider'
 import { ThemeProvider } from '@/components/providers/theme-provider'
 import { SessionBar } from '@/components/session-bar'
+import { SessionBarShell } from '@/components/session-bar-shell'
 import { Toaster } from '@/components/ui/toaster'
 
 const display = Roboto_Slab({
@@ -62,12 +63,14 @@ export default function RootLayout({
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
-          enableSystem={false}
+          enableSystem
           disableTransitionOnChange
         >
           <QueryProvider>
             <div className="h-dvh flex flex-col bg-bg">
-              <SessionBar />
+              <SessionBarShell>
+                <SessionBar />
+              </SessionBarShell>
               <main className="flex-1 min-h-0 overflow-y-auto">
                 {children}
               </main>

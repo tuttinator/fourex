@@ -1,39 +1,35 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
-import { api, queryKeys, ApiError } from '@/lib/api'
-import { EventLog } from '@/components/event-log'
-import { PixiMap } from '@/components/pixi-map'
-import { PerspectiveSwitcher } from '@/components/perspective-switcher'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { PlayerId } from '@/types/game'
+import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Identity } from "@/components/brand/identity";
+import { EventLog } from "@/components/event-log";
+import { PerspectiveSwitcher } from "@/components/perspective-switcher";
+import { PixiMap } from "@/components/pixi-map";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApiError, api, queryKeys } from "@/lib/api";
+import { PLAYER_COLORS, type PlayerId } from "@/types/game";
 
-const ACTIVE_POLL_INTERVAL = 3000
-const DETAIL_POLL_INTERVAL = 5000
+const ACTIVE_POLL_INTERVAL = 3000;
+const DETAIL_POLL_INTERVAL = 5000;
 
 interface ObservationViewProps {
-  gameId: string
+  gameId: string;
 }
 
 export function ObservationView({ gameId }: ObservationViewProps) {
-  // null = god-mode, string = player perspective
-  const [perspective, setPerspective] = useState<PlayerId | null>(null)
+  const [perspective, setPerspective] = useState<PlayerId | null>(null);
 
-  const {
-    data: gameDetail,
-  } = useQuery({
+  const { data: gameDetail } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),
     queryFn: () => api.getGameDetail(gameId),
     refetchInterval: DETAIL_POLL_INTERVAL,
-  })
+  });
 
-  const isActive = gameDetail?.status === 'active'
-  const isEnded = gameDetail?.status === 'ended'
+  const isActive = gameDetail?.status === "active";
+  const isEnded = gameDetail?.status === "ended";
 
   const {
     data: gameState,
@@ -48,211 +44,343 @@ export function ObservationView({ gameId }: ObservationViewProps) {
         : api.getGameState(gameId),
     refetchInterval: isActive ? ACTIVE_POLL_INTERVAL : false,
     enabled: isActive || isEnded,
-  })
+  });
 
-  const isFogOfWar = perspective !== null
+  const isFogOfWar = perspective !== null;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading game state...</p>
-        </div>
-      </div>
-    )
+    return <CenterMsg icon={<Loader2 className="h-8 w-8 animate-spin" />}>Loading game state…</CenterMsg>;
   }
 
   if (error) {
-    const is404 = error instanceof ApiError && error.status === 404
+    const is404 = error instanceof ApiError && error.status === 404;
     return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
+      <div className="flex h-full min-h-[400px] items-center justify-center">
         <div className="text-center">
-          <AlertCircle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-          <p className="text-destructive mb-2">
-            {is404 ? 'Game not found' : 'Failed to load game state'}
+          <AlertCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
+          <p className="mb-2 text-destructive">
+            {is404 ? "Game not found" : "Failed to load game state"}
           </p>
-          <p className="text-sm text-muted-foreground mb-4">
-            {is404
-              ? `No game exists with ID "${gameId}".`
-              : error.message}
+          <p className="mb-4 text-sm text-ink-muted">
+            {is404 ? `No game exists with ID "${gameId}".` : error.message}
           </p>
           {!is404 && (
             <Button variant="outline" onClick={() => refetch()}>
-              <RefreshCw className="h-4 w-4 mr-2" />
+              <RefreshCw className="mr-2 h-4 w-4" />
               Retry
             </Button>
           )}
         </div>
       </div>
-    )
+    );
   }
 
   if (!gameState) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <div className="text-center">
-          <p className="text-muted-foreground">No game state available</p>
-        </div>
-      </div>
-    )
+    return <CenterMsg>No game state available</CenterMsg>;
   }
 
-  // Use the detail's player list for the perspective selector
-  // (god-mode state always has the full player list; fog-of-war state might not)
-  const allPlayers = gameDetail?.players ?? gameState.players
+  const allPlayers = gameDetail?.players ?? gameState.players;
+  const totalUnits = Object.keys(gameState.units).length;
+  const totalCities = Object.keys(gameState.cities).length;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Status bar */}
-      <div className="border-b px-4 py-2 flex items-center justify-between gap-4 bg-muted/30 flex-wrap">
-        <div className="flex items-center gap-3 text-sm">
-          <span className="font-medium">Turn {gameState.turn} / {gameState.max_turns}</span>
-          {isActive && (
-            <Badge variant="default" className="text-xs">
-              <span className="relative flex h-2 w-2 mr-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-current" />
-              </span>
-              Live
-            </Badge>
-          )}
-          {isEnded && (
-            <Badge variant="outline" className="text-xs">Ended</Badge>
-          )}
+    <div className="flex h-full flex-col bg-bg text-ink font-ui">
+      {/* Status / context bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border bg-bg-subtle px-5 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="font-mono text-ink"
+            style={{ fontSize: 12, letterSpacing: "0.02em" }}
+          >
+            turn {gameState.turn} / {gameState.max_turns}
+          </span>
+          {isActive && <Tag tone="live">live</Tag>}
+          {isEnded && <Tag tone="neutral">ended</Tag>}
         </div>
-        {/* Perspective pills — the primary way a spectator switches between
-            players' views. Promoted out of the sidebar so the control is
-            visible without opening a tab. */}
         <PerspectiveSwitcher
           players={allPlayers}
           perspective={perspective}
           onPerspectiveChange={setPerspective}
         />
-        <div className="text-xs text-muted-foreground">
-          {allPlayers.length} players &middot; {Object.keys(gameState.units).length} units &middot; {Object.keys(gameState.cities).length} cities
-        </div>
+        <span
+          className="font-mono text-ink-muted"
+          style={{ fontSize: 11 }}
+        >
+          {allPlayers.length} players · {totalUnits} units · {totalCities} cities
+        </span>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Map area */}
-        <div className="flex-1 relative">
-          <PixiMap
-            gameState={gameState}
-            selectedPlayer={perspective ?? undefined}
-            fogOfWarEnabled={isFogOfWar}
-          />
-        </div>
+      {/* Two-column main: map | sidebar */}
+      <div className="flex flex-1 overflow-hidden p-3 gap-3">
+        <Panel className="flex-1 min-w-0" padded={false}>
+          <div className="relative h-full">
+            <PixiMap
+              gameState={gameState}
+              selectedPlayer={perspective ?? undefined}
+              fogOfWarEnabled={isFogOfWar}
+            />
+          </div>
+        </Panel>
 
-        {/* Sidebar */}
-        <div className="w-80 border-l bg-background/95 backdrop-blur">
-          <Tabs defaultValue="players" className="h-full flex flex-col">
+        <aside className="w-[340px] shrink-0">
+          <Tabs defaultValue="players" className="flex h-full flex-col gap-3">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="players">Players</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="stats">Stats</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="players" className="flex-1 overflow-auto p-4 space-y-3">
-              {/* The header bar owns the perspective switcher now; this tab
-                  just lists per-player stats so spectators can compare
-                  rosters without losing map focus. */}
-              {allPlayers.map((player) => {
-                const units = Object.values(gameState.units).filter((u) => u.owner === player)
-                const cities = Object.values(gameState.cities).filter((c) => c.owner === player)
-                const resources = gameState.stockpiles[player]
-                return (
-                  <Card key={player}>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center justify-between">
-                        <span>{player}</span>
-                        {perspective === player && (
-                          <Badge variant="secondary" className="text-xs">viewing</Badge>
-                        )}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-2 gap-1 text-xs">
-                        <span>Units: {units.length}</span>
-                        <span>Cities: {cities.length}</span>
-                        {resources && (
-                          <>
-                            <span>Food: {resources.food}</span>
-                            <span>Wood: {resources.wood}</span>
-                            <span>Ore: {resources.ore}</span>
-                            <span>Crystal: {resources.crystal}</span>
-                          </>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })}
+            <TabsContent value="players" className="flex-1 overflow-auto">
+              <Panel padded={false} title="Roster">
+                <ul className="m-0 list-none p-0">
+                  {allPlayers.map((player, index) => {
+                    const units = Object.values(gameState.units).filter(
+                      (u) => u.owner === player,
+                    );
+                    const cities = Object.values(gameState.cities).filter(
+                      (c) => c.owner === player,
+                    );
+                    const resources = gameState.stockpiles[player];
+                    const color = PLAYER_COLORS[index % 8] ?? "#888";
+                    const viewing = perspective === player;
+                    return (
+                      <li
+                        key={player}
+                        className="flex flex-col gap-2 px-3.5 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-border"
+                      >
+                        <div className="flex items-center justify-between">
+                          <Identity
+                            kind="human"
+                            name={player}
+                            id={player}
+                            color={color}
+                            size={24}
+                            showLabel
+                            label={`seat ${index + 1}`}
+                          />
+                          {viewing && <Tag tone="accent">viewing</Tag>}
+                        </div>
+                        <div
+                          className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-ink-soft"
+                          style={{ fontSize: 11.5 }}
+                        >
+                          <span>units · {units.length}</span>
+                          <span>cities · {cities.length}</span>
+                          {resources && (
+                            <>
+                              <span>food · {resources.food}</span>
+                              <span>wood · {resources.wood}</span>
+                              <span>ore · {resources.ore}</span>
+                              <span>crystal · {resources.crystal}</span>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
             </TabsContent>
 
             <TabsContent value="events" className="flex-1 overflow-auto">
               <EventLog gameState={gameState} />
             </TabsContent>
 
-            <TabsContent value="stats" className="flex-1 overflow-auto p-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Game Statistics</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Total Units:</span>
-                      <span>{Object.keys(gameState.units).length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Total Cities:</span>
-                      <span>{Object.keys(gameState.cities).length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Map Size:</span>
-                      <span>{gameState.map_width}x{gameState.map_height}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Players:</span>
-                      <span>{allPlayers.length}</span>
-                    </div>
-                    {isFogOfWar && (
-                      <div className="flex justify-between text-yellow-600 dark:text-yellow-400">
-                        <span>Visible Tiles:</span>
-                        <span>{gameState.tiles.length} / {gameState.map_width * gameState.map_height}</span>
-                      </div>
-                    )}
-                    {allPlayers.map((player) => {
-                      const units = Object.values(gameState.units).filter(u => u.owner === player)
-                      const cities = Object.values(gameState.cities).filter(c => c.owner === player)
-                      const resources = gameState.stockpiles[player]
-                      return (
-                        <div key={player} className="border-t pt-2 mt-2">
-                          <div className="font-medium mb-1">{player}</div>
-                          <div className="grid grid-cols-2 gap-1 text-xs">
-                            <span>Units: {units.length}</span>
-                            <span>Cities: {cities.length}</span>
-                            {resources && (
-                              <>
-                                <span>Food: {resources.food}</span>
-                                <span>Wood: {resources.wood}</span>
-                                <span>Ore: {resources.ore}</span>
-                                <span>Crystal: {resources.crystal}</span>
-                              </>
-                            )}
-                          </div>
+            <TabsContent value="stats" className="flex-1 overflow-auto">
+              <Panel title="Game statistics">
+                <dl className="m-0 flex flex-col gap-2 text-[13px]">
+                  <Row k="Total units" v={totalUnits} />
+                  <Row k="Total cities" v={totalCities} />
+                  <Row k="Map size" v={`${gameState.map_width}×${gameState.map_height}`} />
+                  <Row k="Players" v={allPlayers.length} />
+                  {isFogOfWar && (
+                    <Row
+                      k="Visible tiles"
+                      v={`${gameState.tiles.length} / ${gameState.map_width * gameState.map_height}`}
+                      accent="warning"
+                    />
+                  )}
+                </dl>
+                <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
+                  {allPlayers.map((player, index) => {
+                    const units = Object.values(gameState.units).filter(
+                      (u) => u.owner === player,
+                    );
+                    const cities = Object.values(gameState.cities).filter(
+                      (c) => c.owner === player,
+                    );
+                    const resources = gameState.stockpiles[player];
+                    const color = PLAYER_COLORS[index % 8] ?? "#888";
+                    return (
+                      <div key={player} className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="inline-block rounded-sm"
+                            style={{
+                              width: 10,
+                              height: 10,
+                              background: color,
+                              boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.3)",
+                            }}
+                          />
+                          <span className="font-medium text-ink">{player}</span>
                         </div>
-                      )
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
+                        <div
+                          className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-ink-soft"
+                          style={{ fontSize: 11 }}
+                        >
+                          <span>units · {units.length}</span>
+                          <span>cities · {cities.length}</span>
+                          {resources && (
+                            <>
+                              <span>food · {resources.food}</span>
+                              <span>wood · {resources.wood}</span>
+                              <span>ore · {resources.ore}</span>
+                              <span>crystal · {resources.crystal}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Panel>
             </TabsContent>
           </Tabs>
-        </div>
+        </aside>
       </div>
     </div>
-  )
+  );
+}
+
+// ──────────────── tiny shared bits ────────────────
+
+function CenterMsg({
+  children,
+  icon,
+}: {
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="flex h-full min-h-[400px] items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-center">
+        {icon}
+        <p className="text-ink-muted">{children}</p>
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  k,
+  v,
+  accent,
+}: {
+  k: string;
+  v: React.ReactNode;
+  accent?: "warning";
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span
+        className={accent === "warning" ? "text-warning" : "text-ink-muted"}
+      >
+        {k}
+      </span>
+      <span
+        className={`font-mono ${accent === "warning" ? "text-warning" : "text-ink"}`}
+        style={{ fontSize: 12.5 }}
+      >
+        {v}
+      </span>
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  children,
+  padded = true,
+  className = "",
+}: {
+  title?: string;
+  children: React.ReactNode;
+  padded?: boolean;
+  className?: string;
+}) {
+  return (
+    <section
+      className={`flex flex-col overflow-hidden rounded-[10px] border border-border bg-surface ${className}`}
+      style={{ boxShadow: "0 1px 0 rgba(0,0,0,0.02)" }}
+    >
+      {title && (
+        <header className="flex items-center justify-between border-b border-border bg-bg-subtle px-3.5 py-2.5">
+          <h3
+            className="m-0 font-ui font-semibold uppercase text-ink-muted"
+            style={{ fontSize: 11.5, letterSpacing: "0.06em" }}
+          >
+            {title}
+          </h3>
+        </header>
+      )}
+      <div className={padded ? "p-3.5 flex-1 min-h-0" : "flex-1 min-h-0"}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+type TagTone = "neutral" | "accent" | "live";
+
+function Tag({
+  tone,
+  children,
+}: {
+  tone: TagTone;
+  children: React.ReactNode;
+}) {
+  const tones: Record<TagTone, { bg: string; fg: string; bd: string }> = {
+    neutral: {
+      bg: "var(--surface-alt)",
+      fg: "var(--ink-soft)",
+      bd: "var(--border)",
+    },
+    accent: {
+      bg: "var(--accent-soft)",
+      fg: "var(--accent)",
+      bd: "var(--accent-soft)",
+    },
+    live: {
+      bg: "var(--accent-soft)",
+      fg: "var(--accent)",
+      bd: "transparent",
+    },
+  };
+  const t = tones[tone];
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono"
+      style={{
+        background: t.bg,
+        color: t.fg,
+        boxShadow: `inset 0 0 0 1px ${t.bd}`,
+        fontSize: 11,
+        letterSpacing: "0.02em",
+      }}
+    >
+      {tone === "live" && (
+        <span
+          className="inline-block animate-parley-pulse"
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: "var(--accent)",
+          }}
+        />
+      )}
+      {children}
+    </span>
+  );
 }

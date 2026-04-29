@@ -37,6 +37,36 @@ licence. Attribution is not required.
 | `improvement-lumber-mill.svg`       | Lumber-mill worker improvement               | 20×20 |
 | `improvement-crystal-extractor.svg` | Crystal-extractor worker improvement         | 20×20 |
 
+## Prototype PNG pack (parchment-style preview tiles)
+
+Companion 32×32 PNG tiles produced for the Parley prototype mocks
+(landing/sign-in decorative maps and Sprite Atlas reference). Same CC0
+licence as the SVG pack.
+
+| File | Subject | Size |
+| --- | --- | --- |
+| `tile-grass.png`    | Grass terrain (preview) | 32×32 |
+| `tile-water.png`    | Water terrain (preview) | 32×32 |
+| `tile-forest.png`   | Forest terrain (preview) | 32×32 |
+| `tile-mountain.png` | Mountain terrain (preview) | 32×32 |
+| `tile-desert.png`   | Desert terrain (preview, not yet wired) | 32×32 |
+| `tile-hills.png`    | Hills terrain (preview, not yet wired) | 32×32 |
+| `tile-swamp.png`    | Swamp terrain (preview, not yet wired) | 32×32 |
+| `res-food.png`      | Food resource (preview) | 16×16 |
+| `res-wood.png`      | Wood resource (preview) | 16×16 |
+| `res-ore.png`       | Ore resource (preview) | 16×16 |
+| `res-crystal.png`   | Crystal resource (preview) | 16×16 |
+| `unit-scout.png`    | Scout (preview) | 32×32 |
+| `unit-worker.png`   | Worker (preview) | 32×32 |
+| `unit-soldier.png`  | Soldier (preview) | 32×32 |
+| `unit-archer.png`   | Archer (preview) | 32×32 |
+| `city.png`          | Generic city (preview) | 32×32 |
+
+Desert / hills / swamp are not yet supported by the engine `Terrain`
+enum — they ship here for future expansion. The remaining PNGs are
+companions to the canonical SVGs and are used by marketing/decorative
+surfaces.
+
 ## Swapping in a different pack
 
 The sprite-resolver module
