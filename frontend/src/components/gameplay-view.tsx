@@ -59,7 +59,10 @@ import {
 } from 'lucide-react'
 import { api, ApiError, queryKeys } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
+import { MiniMap } from '@/components/mini-map'
 import { RulesReferencePanel } from '@/components/rules-reference-panel'
+import { Identity } from '@/components/brand/identity'
+import { PLAYER_COLORS } from '@/types/game'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -68,6 +71,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Panel } from '@/components/ui/panel'
+import { StatPair } from '@/components/ui/stat'
+import { Tag } from '@/components/ui/tag'
 import {
   Tabs,
   TabsContent,
@@ -110,6 +116,7 @@ import type {
   ValidImprovement,
   ValidImprovementsResponse,
   ValidMovesResponse,
+  ViewportRect,
 } from '@/types/game'
 import {
   FREE_TEXT_CLAUSE_MAX_LENGTH,
@@ -353,7 +360,7 @@ function ResearchIndicator({
 
 function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
   return (
-    <div className="flex items-center gap-4 text-[13px]">
+    <div className="flex items-center gap-3.5 text-[13px]">
       {RESOURCE_META.map(({ key, emoji, label }) => {
         const amount = stockpile[key] ?? 0
         const delta = yieldBreakdown.total[key] ?? 0
@@ -371,10 +378,15 @@ function ResourceBar({ stockpile, yieldBreakdown }: ResourceBarProps) {
           <span
             key={key}
             title={tooltip}
-            className="inline-flex items-center gap-1.5 text-ink"
+            className="inline-flex items-center gap-1.5"
           >
             <span aria-hidden="true" className="text-base leading-none">{emoji}</span>
-            <span className="font-semibold tabular-nums">{amount}</span>
+            <span
+              className="font-display text-ink tabular-nums leading-none"
+              style={{ fontSize: 17, letterSpacing: '-0.01em' }}
+            >
+              {amount}
+            </span>
             {delta > 0 && (
               <span
                 className="font-mono text-success tabular-nums"
@@ -1284,6 +1296,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
   // retriggers even when the player cycles back to the same tile.
   const [focusTile, setFocusTile] = useState<Coord | null>(null)
 
+  // Phase 4 prototype-rollout: docked mini-map state. PixiMap reports its
+  // current viewport rect on every pan/zoom; the MiniMap overlays a
+  // rectangle for that area. Click-to-pan dispatches a fresh ``panToTile``
+  // wrapper so the same tile can be re-clicked.
+  const [viewportRect, setViewportRect] = useState<ViewportRect | null>(null)
+  const [panToTile, setPanToTile] = useState<Coord | null>(null)
+
   const cycleIdleUnit = useCallback(() => {
     if (!gameState || idleUnitIds.length === 0) return
     const currentIdx = idleUnitIds.indexOf(selectedUnitId ?? -1)
@@ -1766,6 +1785,25 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Left rail — docked mini-map. */}
+        <aside className="hidden xl:flex w-[220px] shrink-0 flex-col gap-3 border-r border-border bg-bg-subtle p-3">
+          <Panel
+            title="Mini-map"
+            kicker="overview"
+            padded={false}
+            className="overflow-visible"
+          >
+            <div className="p-2">
+              <MiniMap
+                gameState={gameState}
+                viewport={viewportRect}
+                onPanRequest={(coord) => setPanToTile({ ...coord })}
+                width={196}
+              />
+            </div>
+          </Panel>
+        </aside>
+
         <div className="flex-1 relative">
           <PixiMap
             gameState={gameState}
@@ -1781,6 +1819,8 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
             queuedOrderPath={committedOrderPath}
             queuedOrderDestination={committedOrderDestination}
             focusTile={focusTile}
+            onViewportRectChange={setViewportRect}
+            panToTile={panToTile}
             onTileClick={handleTileClick}
           />
           {stackSelector && stackSelectorEntries.length >= 2 ? (
@@ -2018,30 +2058,31 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
           />
 
           {/* Queue panel */}
-          <Card className="rounded-none border-0 border-b flex-1 flex flex-col">
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span>Queued orders ({queue.length})</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0">
-              {queue.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No orders queued. Select a unit or city to see what you
-                  can do this turn.
-                </p>
-              ) : (
-                queue.map((q) => (
+          <Panel
+            title={`Queued orders (${queue.length})`}
+            className="rounded-none border-x-0 border-t-0 flex-1"
+          >
+            {queue.length === 0 ? (
+              <p className="text-xs text-ink-muted">
+                No orders queued. Select a unit or city to see what you
+                can do this turn.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {queue.map((q) => (
                   <div
                     key={q.queue_id}
-                    className="flex items-center justify-between rounded border px-2 py-1.5 text-xs"
+                    className="flex items-center justify-between rounded-md border border-border bg-bg-subtle px-2 py-1.5"
+                    style={{ fontSize: 12 }}
                   >
                     <div className="flex flex-col">
-                      <span className="font-medium">
+                      <span className="text-ink">
                         {describeAction(q.action)}
                       </span>
                       {q.error && (
-                        <span className="text-destructive">{q.error}</span>
+                        <span className="text-destructive" style={{ fontSize: 11 }}>
+                          {q.error}
+                        </span>
                       )}
                     </div>
                     <Button
@@ -2054,13 +2095,16 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+                ))}
+              </div>
+            )}
+          </Panel>
           </div>
 
-          <div className="p-3 border-t shrink-0 space-y-2">
+          <div className="p-3 border-t border-border bg-bg-subtle shrink-0 space-y-2">
+            {/* End Turn — the only `accent`-coloured affordance in the
+                gameplay sidebar. Action buttons in UnitPanel / CityPanel
+                are flat (variant="outline") so the eye lands here. */}
             <Button
               className="w-full"
               disabled={submitMutation.isPending || waiting}
@@ -2093,13 +2137,13 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               </Button>
             ) : (
               <div
-                className="space-y-2 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs"
+                className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs"
                 data-testid="resign-confirm-root"
               >
                 <p className="font-medium text-destructive">
                   Resign from this game?
                 </p>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-[11px] text-ink-muted">
                   Your cities and units will be destroyed. In a 2-player
                   game the other player wins immediately.
                 </p>
@@ -2180,107 +2224,111 @@ function UnitPanel({
 }: UnitPanelProps) {
   const isWorker = unit?.type === 'worker'
   const automationActive = unit?.automation === 'auto_improve'
+  if (!unit) {
+    return (
+      <Panel title="Selection" className="rounded-none border-x-0 border-t-0">
+        <p className="text-xs text-ink-muted">
+          Click one of your units or cities to see what you can do.
+        </p>
+      </Panel>
+    )
+  }
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm">Selection</CardTitle>
-      </CardHeader>
-      <CardContent className="text-sm space-y-3">
-        {!unit ? (
-          <p className="text-xs text-muted-foreground">
-            Click one of your units or cities to see what you can do.
-          </p>
-        ) : (
-          <>
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="capitalize font-medium">{unit.type}</span>
-                <span className="text-muted-foreground text-xs">
-                  #{unit.id}
-                </span>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                HP {unit.hp} &middot; Moves left {unit.moves_left} &middot;
-                ({unit.loc.x}, {unit.loc.y})
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {highlightedCount} legal move
-                {highlightedCount === 1 ? '' : 's'}
-                {attackCount > 0 && (
-                  <>
-                    {' '}
-                    &middot; {attackCount} attack target
-                    {attackCount === 1 ? '' : 's'}
-                  </>
-                )}
-                {queueableCount > 0 && (
-                  <>
-                    {' '}
-                    &middot; {queueableCount} queueable
-                  </>
-                )}
+    <Panel
+      title="Selection"
+      kicker={`unit · #${unit.id}`}
+      className="rounded-none border-x-0 border-t-0"
+    >
+      <div className="space-y-3">
+        <div>
+          <div
+            className="font-display text-ink capitalize leading-tight"
+            style={{ fontSize: 22, letterSpacing: '-0.01em' }}
+          >
+            {unit.type}
+          </div>
+          <div
+            className="font-mono text-ink-muted mt-0.5"
+            style={{ fontSize: 11, letterSpacing: '0.04em' }}
+          >
+            {unit.type} · ({unit.loc.x}, {unit.loc.y})
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <StatPair label="HP" value={unit.hp} />
+          <StatPair label="Moves" value={unit.moves_left} />
+          <StatPair label="Legal moves" value={highlightedCount} />
+          {attackCount > 0 && (
+            <StatPair label="Targets" value={attackCount} accent="warning" />
+          )}
+          {queueableCount > 0 && (
+            <StatPair label="Queueable" value={queueableCount} />
+          )}
+        </div>
+
+        {queuedOrderDestination && (
+          <div
+            className="rounded-md border border-border bg-bg-subtle px-2.5 py-2"
+            style={{ fontSize: 12 }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <Tag tone="accent" mono>
+                queued → ({queuedOrderDestination.x}, {queuedOrderDestination.y})
+              </Tag>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={onCancelQueuedOrder}
+              >
+                Cancel
+              </Button>
+            </div>
+            <p className="text-ink-muted mt-1.5" style={{ fontSize: 11 }}>
+              Cancels automatically on enemy contact, obstruction, or damage.
+            </p>
+          </div>
+        )}
+
+        {isWorker && (
+          <div
+            className="rounded-md border border-border bg-bg-subtle px-2.5 py-2"
+            style={{ fontSize: 12 }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono uppercase text-ink-muted" style={{ fontSize: 10.5, letterSpacing: '0.08em' }}>
+                Auto-improve
+              </span>
+              <div className="flex items-center gap-2">
+                <Tag tone={automationActive ? 'warning' : 'neutral'} mono>
+                  {automationActive ? 'on' : 'off'}
+                </Tag>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  disabled={automationTogglePending}
+                  onClick={onToggleAutoImprove}
+                  data-testid="auto-improve-toggle"
+                >
+                  {automationActive ? 'Disable' : 'Enable'}
+                </Button>
               </div>
             </div>
+            <p className="text-ink-muted mt-1.5" style={{ fontSize: 11 }}>
+              Routes to the nearest unimproved owned tile and builds on arrival.
+            </p>
+          </div>
+        )}
 
-            {queuedOrderDestination && (
-              <div className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">
-                    Queued move → ({queuedOrderDestination.x},{' '}
-                    {queuedOrderDestination.y})
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={onCancelQueuedOrder}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-                <p className="text-muted-foreground mt-1">
-                  Cancels automatically on newly visible enemies,
-                  obstruction, or combat damage.
-                </p>
-              </div>
-            )}
-
-            {isWorker && (
-              <div className="rounded border border-amber-500/40 bg-amber-500/5 px-2 py-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">
-                    Auto-improve{' '}
-                    <span
-                      className={
-                        automationActive
-                          ? 'text-amber-600'
-                          : 'text-muted-foreground'
-                      }
-                    >
-                      {automationActive ? 'on' : 'off'}
-                    </span>
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    disabled={automationTogglePending}
-                    onClick={onToggleAutoImprove}
-                    data-testid="auto-improve-toggle"
-                  >
-                    {automationActive ? 'Disable' : 'Enable'}
-                  </Button>
-                </div>
-                <p className="text-muted-foreground mt-1">
-                  Routes the worker to the nearest unimproved owned tile
-                  and builds on arrival. Cancels automatically if an
-                  enemy moves adjacent.
-                </p>
-              </div>
-            )}
-
+        {(canFoundCity || (validImprovements && validImprovements.length > 0)) && (
+          <div className="space-y-1.5">
+            <span className="font-mono uppercase text-ink-muted" style={{ fontSize: 10.5, letterSpacing: '0.08em' }}>
+              Actions
+            </span>
             {canFoundCity && (
-              <div>
+              <>
                 <Button
                   variant="outline"
                   size="sm"
@@ -2294,19 +2342,14 @@ function UnitPanel({
                   {foundCityQueued && ' — queued'}
                 </Button>
                 {!canFoundCity.can_found && canFoundCity.reason && (
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-ink-muted" style={{ fontSize: 11 }}>
                     {canFoundCity.reason}
                   </p>
                 )}
-              </div>
+              </>
             )}
-
             {validImprovements && validImprovements.length > 0 && (
-              <div className="space-y-1">
-                <div className="text-xs font-medium flex items-center gap-1">
-                  <Hammer className="h-3.5 w-3.5" />
-                  Improvements
-                </div>
+              <>
                 {validImprovements.map((imp) => (
                   <Button
                     key={imp.improvement}
@@ -2321,25 +2364,26 @@ function UnitPanel({
                         : undefined
                     }
                   >
-                    <span className="capitalize">
+                    <span className="capitalize flex items-center gap-1.5">
+                      <Hammer className="h-3.5 w-3.5" />
                       {imp.improvement.replace(/_/g, ' ')}
                     </span>
-                    <span className="text-muted-foreground">
+                    <span className="font-mono text-ink-muted" style={{ fontSize: 11 }}>
                       {formatCost(imp.cost)}
                     </span>
                   </Button>
                 ))}
                 {improvementQueued && (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-ink-muted" style={{ fontSize: 11 }}>
                     An improvement is already queued for this worker.
                   </p>
                 )}
-              </div>
+              </>
             )}
-          </>
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   )
 }
 
@@ -2405,33 +2449,38 @@ function CityPanel({
     return out
   }, [queuedBuildings, queue])
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span>
-            <Building2 className="inline h-4 w-4 mr-1" />
-            City #{city.id}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            ({city.loc.x}, {city.loc.y}) &middot; HP {city.hp}
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
+    <Panel
+      title={`City · #${city.id}`}
+      kicker="city"
+      className="rounded-none border-x-0 border-t-0"
+    >
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Building2 className="h-5 w-5 text-ink-soft" />
+          <div className="flex items-center gap-3">
+            <StatPair label="HP" value={city.hp} />
+            <StatPair label="Loc" value={`(${city.loc.x}, ${city.loc.y})`} />
+          </div>
+        </div>
+
         {activeJob && (
           <div
             data-testid="city-production-indicator"
-            className="mb-3 rounded-md border bg-muted/40 px-2 py-2 text-xs"
+            className="rounded-md border border-border bg-bg-subtle px-2.5 py-2"
+            style={{ fontSize: 12 }}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1 font-medium">
-                <Clock className="h-3 w-3" />
-                Producing <span className="capitalize">{activeJob.target}</span>
+              <span className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-ink-soft" />
+                <span className="font-mono uppercase text-ink-muted" style={{ fontSize: 10.5, letterSpacing: '0.08em' }}>
+                  Producing
+                </span>
+                <span className="capitalize text-ink">{activeJob.target}</span>
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">
-                  {turnsRemaining} turn{turnsRemaining === 1 ? '' : 's'} left
-                </span>
+                <Tag tone="neutral" mono>
+                  {turnsRemaining}t
+                </Tag>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -2443,34 +2492,35 @@ function CityPanel({
                 </Button>
               </div>
             </div>
-            <div className="mt-1 h-1.5 w-full rounded bg-background">
+            <div className="mt-1.5 h-1 w-full rounded bg-surface-alt">
               <div
-                className="h-1.5 rounded bg-primary"
-                style={{ width: `${progressPct}%` }}
+                className="h-1 rounded"
+                style={{ width: `${progressPct}%`, background: 'var(--accent)' }}
               />
             </div>
-            <div className="mt-1 text-muted-foreground">
-              {activeJob.progress}/{activeJob.total_cost} production
-              &middot; {productionRate}/turn
+            <div className="mt-1 font-mono text-ink-muted tabular-nums" style={{ fontSize: 11 }}>
+              {activeJob.progress}/{activeJob.total_cost} · {productionRate}/turn
             </div>
           </div>
         )}
+
         {queue.length > 1 && (
           <div
             data-testid="city-queue-list"
-            className="mb-3 space-y-1 text-xs"
+            className="space-y-1"
+            style={{ fontSize: 12 }}
           >
-            <div className="text-muted-foreground font-medium">
-              Queued ({queue.length - 1})
-            </div>
+            <span className="font-mono uppercase text-ink-muted" style={{ fontSize: 10.5, letterSpacing: '0.08em' }}>
+              Queued · {queue.length - 1}
+            </span>
             {queue.slice(1).map((job, i) => {
               const idx = i + 1
               return (
                 <div
                   key={idx}
-                  className="flex items-center justify-between rounded-md border bg-muted/20 px-2 py-1"
+                  className="flex items-center justify-between rounded-md border border-border bg-bg-subtle px-2 py-1"
                 >
-                  <span className="capitalize">{job.target}</span>
+                  <span className="capitalize text-ink">{job.target}</span>
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
@@ -2507,6 +2557,7 @@ function CityPanel({
             })}
           </div>
         )}
+
         <Tabs defaultValue="train" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="train">
@@ -2521,9 +2572,9 @@ function CityPanel({
 
           <TabsContent value="train" className="space-y-1 mt-2">
             {!trainable ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
+              <p className="text-xs text-ink-muted">Loading…</p>
             ) : trainable.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-ink-muted">
                 No trainable units.
               </p>
             ) : (
@@ -2545,17 +2596,17 @@ function CityPanel({
                           : undefined
                   }
                 >
-                  <span className="capitalize flex items-center gap-1">
+                  <span className="capitalize flex items-center gap-1.5">
                     <Swords className="h-3 w-3" />
                     {u.unit_type}
                     {u.locked && (
                       <Lock
                         aria-label={`Requires ${u.required_tech_name ?? u.required_tech}`}
-                        className="h-3 w-3 text-muted-foreground"
+                        className="h-3 w-3 text-ink-muted"
                       />
                     )}
                   </span>
-                  <span className="text-muted-foreground">
+                  <span className="font-mono text-ink-muted" style={{ fontSize: 11 }}>
                     {u.locked
                       ? `Requires ${u.required_tech_name ?? u.required_tech}`
                       : formatCost(u.cost)}
@@ -2567,7 +2618,7 @@ function CityPanel({
 
           <TabsContent value="build" className="space-y-1 mt-2">
             {!buildable ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
+              <p className="text-xs text-ink-muted">Loading…</p>
             ) : (
               buildable
                 .filter((b) => !b.already_built)
@@ -2591,17 +2642,17 @@ function CityPanel({
                               : b.effect
                       }
                     >
-                      <span className="capitalize flex items-center gap-1">
+                      <span className="capitalize flex items-center gap-1.5">
                         {b.building_type}
                         {b.locked && (
                           <Lock
                             aria-label={`Requires ${b.required_tech_name ?? b.required_tech}`}
-                            className="h-3 w-3 text-muted-foreground"
+                            className="h-3 w-3 text-ink-muted"
                           />
                         )}
                         {queued && ' — queued'}
                       </span>
-                      <span className="text-muted-foreground">
+                      <span className="font-mono text-ink-muted" style={{ fontSize: 11 }}>
                         {b.locked
                           ? `Requires ${b.required_tech_name ?? b.required_tech}`
                           : formatCost(b.cost)}
@@ -2611,14 +2662,14 @@ function CityPanel({
                 })
             )}
             {buildable && buildable.every((b) => b.already_built) && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-ink-muted">
                 Every building is already constructed.
               </p>
             )}
           </TabsContent>
         </Tabs>
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   )
 }
 
@@ -3819,42 +3870,48 @@ function SubmissionRoster({
   submittedPlayers,
 }: SubmissionRosterProps) {
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm">Turn submissions</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 pt-0">
-        {players.map((p) => {
+    <Panel
+      title="Turn submissions"
+      kicker={`${submittedPlayers.size}/${players.length} ready`}
+      className="rounded-none border-x-0 border-t-0"
+      padded={false}
+    >
+      <ul className="m-0 list-none p-0">
+        {players.map((p, idx) => {
           const submitted = submittedPlayers.has(p)
           const isSelf = p === currentPlayer
+          const color = PLAYER_COLORS[idx % 8] ?? '#888'
           return (
-            <div
+            <li
               key={p}
-              className="flex items-center justify-between text-xs rounded px-2 py-1 bg-muted/30"
+              className="flex items-center justify-between gap-2 px-3.5 py-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-border"
               data-testid={`submission-row-${p}`}
               data-submitted={submitted ? 'true' : 'false'}
             >
-              <span className="font-medium truncate">
-                {p}
-                {isSelf && (
-                  <span className="ml-1 text-muted-foreground">(you)</span>
-                )}
-              </span>
+              <Identity
+                kind="human"
+                name={p}
+                id={p}
+                color={color}
+                size={20}
+                showLabel
+                label={isSelf ? 'you' : `seat ${idx + 1}`}
+              />
               {submitted ? (
-                <span className="flex items-center gap-1 text-green-600">
-                  <Check className="h-3.5 w-3.5" />
+                <Tag tone="success" mono>
+                  <Check className="h-3 w-3" />
                   submitted
-                </span>
+                </Tag>
               ) : (
-                <span className="flex items-center gap-1 text-amber-600">
-                  <Clock className="h-3.5 w-3.5" />
+                <Tag tone="warning" mono>
+                  <Clock className="h-3 w-3" />
                   deciding
-                </span>
+                </Tag>
               )}
-            </div>
+            </li>
           )
         })}
-      </CardContent>
-    </Card>
+      </ul>
+    </Panel>
   )
 }

@@ -1,7 +1,6 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { BookOpen } from 'lucide-react'
 
 import { api, queryKeys } from '@/lib/api'
 import type { RulesReference, ResourceBag } from '@/types/game'
@@ -12,7 +11,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Panel } from '@/components/ui/panel'
+import { Tag } from '@/components/ui/tag'
 
 function formatCost(cost: ResourceBag): string {
   const parts: string[] = []
@@ -34,32 +34,26 @@ export function RulesReferencePanel() {
 
   if (!rules) {
     return (
-      <Card className="rounded-none border-0 border-b">
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <BookOpen className="h-4 w-4" />
-            Rules reference
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0 pb-3">
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        </CardContent>
-      </Card>
+      <Panel
+        title="Rules reference"
+        className="rounded-none border-x-0 border-t-0"
+      >
+        <p className="text-xs text-ink-muted">Loading…</p>
+      </Panel>
     )
   }
 
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <BookOpen className="h-4 w-4" />
-          Rules reference
-          <span className="text-[10px] text-muted-foreground ml-auto">
-            v{rules.schema_version}
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0 pb-3">
+    <Panel
+      title="Rules reference"
+      kicker="canonical"
+      action={
+        <Tag tone="neutral" mono>
+          v{rules.schema_version}
+        </Tag>
+      }
+      className="rounded-none border-x-0 border-t-0"
+    >
         <Accordion type="multiple" className="text-xs">
           <AccordionItem value="units">
             <AccordionTrigger className="py-2 text-xs font-medium">
@@ -219,7 +213,6 @@ export function RulesReferencePanel() {
             </AccordionContent>
           </AccordionItem>
         </Accordion>
-      </CardContent>
-    </Card>
+    </Panel>
   )
 }
