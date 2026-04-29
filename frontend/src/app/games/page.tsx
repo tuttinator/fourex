@@ -1,13 +1,13 @@
 import { auth } from "@/auth";
 import { GamesListClient } from "@/components/games-list-client";
-import { TopBar } from "@/components/top-bar";
+import { TopBarServer } from "@/components/top-bar-server";
 
 export default async function GamesPage() {
   const session = await auth();
   const userIdentityId = session?.user?.id ?? null;
   return (
     <div className="flex min-h-full flex-col bg-bg text-ink font-ui">
-      <TopBar />
+      <TopBarServer />
       <main className="flex flex-1 flex-col gap-6 px-6 py-8 md:px-12">
         <header className="flex flex-wrap items-end justify-between gap-6">
           <div className="flex flex-col gap-1.5">

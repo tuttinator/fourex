@@ -7,6 +7,9 @@ import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
 import { ObservationView } from '@/components/observation-view'
 import { GameplayView } from '@/components/gameplay-view'
+import { TopBar } from '@/components/top-bar'
+import { useSessionEmail } from '@/components/session-email-provider'
+import { signOutAction } from '@/lib/auth-actions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -56,6 +59,7 @@ function formatDate(iso: string): string {
 
 export default function GameDetailPage() {
   const { id: gameId } = useParams<{ id: string }>()
+  const email = useSessionEmail()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [joinPlayerId, setJoinPlayerId] = useState('')
@@ -390,59 +394,41 @@ export default function GameDetailPage() {
   if (game.status === 'active' || game.status === 'ended') {
     return (
       <div className="h-full flex flex-col bg-bg text-ink font-ui">
-        {/* Header */}
-        <div className="border-b border-border bg-surface">
-          <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-3 min-w-0">
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/games">
-                  <ArrowLeft className="h-4 w-4 mr-1.5" />
-                  Back
-                </Link>
-              </Button>
-              <span className="h-[22px] w-px bg-border" aria-hidden />
-              <h1 className="font-mono text-[13px] text-ink truncate">{game.game_id}</h1>
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono ${
-                  game.status === 'active'
-                    ? 'bg-accent-soft text-accent'
-                    : 'bg-surface-alt text-ink-soft'
-                }`}
-                style={{ fontSize: 11, letterSpacing: "0.02em" }}
-              >
-                {game.status === 'active' && (
-                  <span
-                    className="inline-block animate-parley-pulse"
-                    style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)" }}
-                  />
-                )}
-                {game.status}
-              </span>
-              {game.winner && (
-                <span className="font-mono text-ink-muted" style={{ fontSize: 12 }}>
-                  winner · <span className="text-ink">{game.winner}</span>
-                  {game.victory_type && (
-                    <span className="text-ink-muted"> ({game.victory_type})</span>
-                  )}
-                </span>
+        <TopBar
+          email={email}
+          signOutAction={signOutAction}
+          game={{
+            name: game.game_id,
+            state: game.status === 'active' ? 'live' : 'ended',
+          }}
+        >
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/games">
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Back
+            </Link>
+          </Button>
+          {game.winner && (
+            <span className="font-mono text-ink-muted" style={{ fontSize: 12 }}>
+              winner · <span className="text-ink">{game.winner}</span>
+              {game.victory_type && (
+                <span className="text-ink-muted"> ({game.victory_type})</span>
               )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/games/${game.game_id}/diplomacy`}>
-                  <Users className="h-4 w-4 mr-1.5" />
-                  Diplomacy
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link href={`/games/${game.game_id}/replay`}>
-                  <Play className="h-4 w-4 mr-1.5" />
-                  Replay
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
+            </span>
+          )}
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/games/${game.game_id}/diplomacy`}>
+              <Users className="h-4 w-4 mr-1.5" />
+              Diplomacy
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/games/${game.game_id}/replay`}>
+              <Play className="h-4 w-4 mr-1.5" />
+              Replay
+            </Link>
+          </Button>
+        </TopBar>
 
         {/* Seated players in an active game get the gameplay controls;
             observers and spectators on ended games drop to the read-only

@@ -22,6 +22,9 @@ import {
 } from 'lucide-react'
 
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
+import { TopBar } from '@/components/top-bar'
+import { useSessionEmail } from '@/components/session-email-provider'
+import { signOutAction } from '@/lib/auth-actions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -283,6 +286,7 @@ function threadForCounterpart(
 
 export default function DiplomacyPage() {
   const { id: gameId } = useParams<{ id: string }>()
+  const email = useSessionEmail()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const currentPlayer = getAuthPlayerId(gameId)
@@ -679,41 +683,48 @@ export default function DiplomacyPage() {
         ? `Message is ${draft.length} characters; limit is ${MESSAGE_BODY_MAX_LENGTH}.`
         : null
 
+  const diplomacyTopBarState: 'live' | 'ended' | 'waiting' =
+    gameDetail?.status === 'active'
+      ? 'live'
+      : gameDetail?.status === 'ended'
+        ? 'ended'
+        : 'waiting'
+
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button asChild variant="ghost" size="sm">
-              <Link href={`/games/${gameId}`}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to game
-              </Link>
-            </Button>
-            <h1 className="text-xl font-semibold">Diplomacy</h1>
-            <Badge variant="outline">{gameId}</Badge>
-            <span className="text-sm text-muted-foreground">
-              Turn {diplomacy?.turn ?? '?'}
-            </span>
-          </div>
-          <div
-            className="text-sm text-muted-foreground flex items-center gap-2"
-            data-testid="current-player"
-          >
-            Acting as:
-            <span
-              className="inline-block h-3 w-3 rounded-full"
-              style={{
-                backgroundColor:
-                  currentPlayerIndex >= 0
-                    ? getPlayerColor(currentPlayerIndex)
-                    : '#888',
-              }}
-            />
-            <span className="font-mono">{currentPlayer}</span>
-          </div>
+      <TopBar
+        email={email}
+        signOutAction={signOutAction}
+        game={{
+          name: gameId,
+          state: diplomacyTopBarState,
+          turn:
+            typeof diplomacy?.turn === 'number' ? diplomacy.turn : undefined,
+        }}
+      >
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/games/${gameId}`}>
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            Back
+          </Link>
+        </Button>
+        <div
+          className="text-sm text-muted-foreground flex items-center gap-2"
+          data-testid="current-player"
+        >
+          <span className="hidden md:inline">Acting as:</span>
+          <span
+            className="inline-block h-3 w-3 rounded-full"
+            style={{
+              backgroundColor:
+                currentPlayerIndex >= 0
+                  ? getPlayerColor(currentPlayerIndex)
+                  : '#888',
+            }}
+          />
+          <span className="font-mono">{currentPlayer}</span>
         </div>
-      </div>
+      </TopBar>
 
       <div className="container mx-auto px-4 py-6 flex-1 space-y-6">
         <div className="grid gap-6 md:grid-cols-2">

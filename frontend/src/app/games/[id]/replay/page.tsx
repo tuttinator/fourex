@@ -7,6 +7,9 @@ import { api, queryKeys, ApiError } from '@/lib/api'
 import { PixiMap } from '@/components/pixi-map'
 import { PerspectiveSwitcher } from '@/components/perspective-switcher'
 import { PromptAccordion } from '@/components/prompt-accordion'
+import { TopBar } from '@/components/top-bar'
+import { useSessionEmail } from '@/components/session-email-provider'
+import { signOutAction } from '@/lib/auth-actions'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -30,6 +33,7 @@ import type { PlayerId } from '@/types/game'
 
 export default function ReplayPage() {
   const { id: gameId } = useParams<{ id: string }>()
+  const email = useSessionEmail()
 
   const [selectedTurn, setSelectedTurn] = useState<number>(1)
   const [perspective, setPerspective] = useState<PlayerId | null>(null)
@@ -164,38 +168,36 @@ export default function ReplayPage() {
 
   return (
     <div className="h-screen flex flex-col">
-      {/* Header */}
+      <TopBar
+        email={email}
+        signOutAction={signOutAction}
+        game={{
+          name: gameId,
+          state: 'replay',
+          turn: effectiveTurn,
+          max: totalTurns,
+        }}
+      >
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/games/${gameId}`}>
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            Back
+          </Link>
+        </Button>
+        {gameDetail?.status === 'ended' && gameDetail.winner && (
+          <Badge variant="outline">Winner: {gameDetail.winner}</Badge>
+        )}
+      </TopBar>
+
+      {/* Perspective pills — prominent so researchers can flip between
+          players' fog-of-war views without digging into the sidebar. */}
       <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button asChild variant="ghost" size="sm">
-                <Link href={`/games/${gameId}`}>
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back
-                </Link>
-              </Button>
-              <h1 className="text-xl font-semibold">Replay: {gameId}</h1>
-              <Badge variant="secondary">Historical</Badge>
-              {gameDetail?.status === 'ended' && gameDetail.winner && (
-                <Badge variant="outline">Winner: {gameDetail.winner}</Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="text-muted-foreground">
-                Turn {effectiveTurn} / {totalTurns}
-              </span>
-            </div>
-          </div>
-          {/* Perspective pills — prominent so researchers can flip between
-              players' fog-of-war views without digging into the sidebar. */}
-          <div className="mt-3">
-            <PerspectiveSwitcher
-              players={allPlayers}
-              perspective={perspective}
-              onPerspectiveChange={setPerspective}
-            />
-          </div>
+        <div className="container mx-auto px-4 py-2">
+          <PerspectiveSwitcher
+            players={allPlayers}
+            perspective={perspective}
+            onPerspectiveChange={setPerspective}
+          />
         </div>
       </div>
 

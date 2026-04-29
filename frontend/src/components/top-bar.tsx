@@ -1,17 +1,21 @@
+"use client";
+
 // In-app top bar — wordmark, optional game context, slotted right
-// actions, signed-in email + sign-out. Server component so `auth()` can
-// run inline; pages that render this should also be present in
-// SessionBarShell's HIDDEN_PATHS so the global session strip stays out
-// of their way.
+// actions, signed-in email + sign-out. Client component so it can be
+// rendered from client pages (game-detail, replay, diplomacy). For
+// server pages, render <TopBarServer> (which fetches the session and
+// the sign-out action then passes them down here).
+//
+// Pages that render this should also be present in SessionBarShell's
+// HIDDEN_PATHS so the global session strip stays out of their way.
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { auth, signOut } from "@/auth";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
-interface GameContext {
+export interface TopBarGameContext {
   name: string;
   state?: "live" | "replay" | "waiting" | "ended";
   turn?: number;
@@ -19,22 +23,21 @@ interface GameContext {
 }
 
 interface TopBarProps {
-  game?: GameContext;
+  email: string | null;
+  signOutAction: () => Promise<void>;
+  game?: TopBarGameContext;
   /** Right-aligned action slot, rendered before the session controls. */
   children?: ReactNode;
 }
 
-const STATE_LABEL: Record<NonNullable<GameContext["state"]>, string> = {
+const STATE_LABEL: Record<NonNullable<TopBarGameContext["state"]>, string> = {
   live: "live",
   replay: "replay",
   waiting: "waiting",
   ended: "ended",
 };
 
-export async function TopBar({ game, children }: TopBarProps) {
-  const session = await auth();
-  const email = session?.user?.email ?? null;
-
+export function TopBar({ email, signOutAction, game, children }: TopBarProps) {
   return (
     <header className="sticky top-0 z-10 flex min-h-14 flex-nowrap items-center gap-4 whitespace-nowrap border-b border-border bg-surface px-5 py-3">
       <Link href="/" className="inline-flex shrink-0">
@@ -99,12 +102,7 @@ export async function TopBar({ game, children }: TopBarProps) {
           >
             {email}
           </span>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/signin" });
-            }}
-          >
+          <form action={signOutAction}>
             <Button type="submit" size="sm" variant="ghost">
               Sign out
             </Button>
