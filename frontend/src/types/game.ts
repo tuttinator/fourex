@@ -477,6 +477,31 @@ export interface MapCanvasProps {
 	 * fresh object reference each time the cycler fires so repeated
 	 * requests to focus the same tile still trigger a recentre. */
 	focusTile?: Coord | null;
+	/** Phase 3 prototype-rollout: surrounding chrome variant. */
+	frameVariant?:
+		| "inset"
+		| "parchment"
+		| "cartographic"
+		| "floating";
+	/** Phase 3 prototype-rollout: tile-hover tooltip rendering mode. */
+	tooltipMode?: "parchment" | "off";
+	/** Phase 3 prototype-rollout: emits a viewport rect (in tile coords)
+	 *  whenever the user pans / zooms, so a MiniMap satellite can render
+	 *  a viewport-rectangle overlay. */
+	onViewportRectChange?: (rect: ViewportRect) => void;
+	/** Phase 3 prototype-rollout: caller-driven re-centre. The PixiMap
+	 *  pans (without changing zoom) so this tile coord lands at the
+	 *  centre of the viewport. Wrapped fresh per request, like
+	 *  ``focusTile``. */
+	panToTile?: Coord | null;
+}
+
+/** Viewport rect in tile coords (top-left + width/height in tiles). */
+export interface ViewportRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }
 
 export interface PlayerListProps {

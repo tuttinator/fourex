@@ -5,6 +5,7 @@ import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Identity } from "@/components/brand/identity";
 import { EventLog } from "@/components/event-log";
+import { MiniMap } from "@/components/mini-map";
 import { PerspectiveSwitcher } from "@/components/perspective-switcher";
 import { PixiMap } from "@/components/pixi-map";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { Panel } from "@/components/ui/panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api, queryKeys } from "@/lib/api";
-import { PLAYER_COLORS, type PlayerId } from "@/types/game";
+import { PLAYER_COLORS, type Coord, type PlayerId, type ViewportRect } from "@/types/game";
 
 const ACTIVE_POLL_INTERVAL = 3000;
 const DETAIL_POLL_INTERVAL = 5000;
@@ -23,6 +24,8 @@ interface ObservationViewProps {
 
 export function ObservationView({ gameId }: ObservationViewProps) {
   const [perspective, setPerspective] = useState<PlayerId | null>(null);
+  const [viewportRect, setViewportRect] = useState<ViewportRect | null>(null);
+  const [panToTile, setPanToTile] = useState<Coord | null>(null);
 
   const { data: gameDetail } = useQuery({
     queryKey: queryKeys.gameDetail(gameId),
@@ -120,7 +123,18 @@ export function ObservationView({ gameId }: ObservationViewProps) {
               gameState={gameState}
               selectedPlayer={perspective ?? undefined}
               fogOfWarEnabled={isFogOfWar}
+              frameVariant="parchment"
+              onViewportRectChange={setViewportRect}
+              panToTile={panToTile}
             />
+            <div className="pointer-events-auto absolute bottom-3 right-3">
+              <MiniMap
+                gameState={gameState}
+                viewport={viewportRect}
+                onPanRequest={(coord) => setPanToTile({ ...coord })}
+                width={180}
+              />
+            </div>
           </div>
         </Panel>
 

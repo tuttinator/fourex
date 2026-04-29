@@ -65,6 +65,16 @@
     --tooltip-bg: oklch(0.98 0.02 78);
     --tooltip-ink: oklch(0.205 0.018 60);
 
+    /* Map highlight rings — kept as hex so the Pixi renderer can
+     * resolve them without an oklch parser. The four canonical ring
+     * tones cover selection / valid-move / queued-order / valid-attack
+     * (plus a destructive variant for hostile cues). */
+    --ring-accent: #fbbf24;
+    --ring-success: #22c55e;
+    --ring-warning: #f59e0b;
+    --ring-info: #3b82f6;
+    --ring-destructive: #ef4444;
+
     /* Type system */
     --font-display:
       "Roboto Slab", "DM Serif Display", Georgia, serif;
@@ -128,6 +138,12 @@
     --map-void: oklch(0.115 0.012 60);
     --tooltip-bg: oklch(0.255 0.016 65);
     --tooltip-ink: oklch(0.965 0.01 80);
+
+    --ring-accent: #fbbf24;
+    --ring-success: #4ade80;
+    --ring-warning: #fb923c;
+    --ring-info: #60a5fa;
+    --ring-destructive: #f87171;
   }
 }
 

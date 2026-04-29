@@ -8,6 +8,10 @@ import { Wordmark, type WordmarkVariant } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import {
+  MapFrame,
+  type MapFrameVariant,
+} from "@/components/ui/map-frame";
 import { Panel } from "@/components/ui/panel";
 import { Stat, StatPair } from "@/components/ui/stat";
 import { Tag, type TagTone } from "@/components/ui/tag";
@@ -21,6 +25,13 @@ const TAG_TONES: TagTone[] = [
   "live",
   "destructive",
 ];
+const FRAME_VARIANTS: MapFrameVariant[] = [
+  "inset",
+  "parchment",
+  "cartographic",
+  "floating",
+];
+const RING_KEYS = ["accent", "success", "warning", "info", "destructive"] as const;
 
 export default function GalleryPage() {
   if (process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_ENABLE_DEV_GALLERY !== "1") {
@@ -209,8 +220,96 @@ export default function GalleryPage() {
             ))}
           </div>
         </Section>
+
+        <Section kicker="map · chrome" title="Frame variants">
+          <div className="grid gap-4 md:grid-cols-2">
+            {FRAME_VARIANTS.map((v) => (
+              <div key={v} className="flex flex-col gap-2">
+                <span
+                  className="font-mono uppercase text-ink-muted"
+                  style={{ fontSize: 10.5, letterSpacing: "0.08em" }}
+                >
+                  {v}
+                </span>
+                <MapFrame
+                  variant={v}
+                  style={{
+                    width: "100%",
+                    height: 140,
+                    background: "var(--map-void)",
+                  }}
+                >
+                  <DemoMapFill />
+                </MapFrame>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section kicker="map · chrome" title="Highlight rings">
+          <div className="flex flex-wrap items-center gap-3">
+            {RING_KEYS.map((k) => (
+              <div key={k} className="flex items-center gap-2">
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 22,
+                    height: 22,
+                    borderRadius: 4,
+                    background: "var(--map-void)",
+                    boxShadow: `inset 0 0 0 2px var(--ring-${k})`,
+                  }}
+                />
+                <span
+                  className="font-mono uppercase text-ink-muted"
+                  style={{ fontSize: 10.5, letterSpacing: "0.08em" }}
+                >
+                  {k}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Section>
       </main>
     </div>
+  );
+}
+
+function DemoMapFill() {
+  // Tiny 8×4 mock map so each frame variant has something to surround.
+  const cols = 16;
+  const rows = 8;
+  const tile = 100 / cols;
+  const tiles: { r: number; c: number; fill: string }[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const seed = (r * 7 + c * 3 + 9) % 13;
+      let fill = "#7BAE5B";
+      if (seed < 2) fill = "#3F84B8";
+      else if (seed < 5) fill = "#3E7A48";
+      else if (seed < 7) fill = "#A89860";
+      tiles.push({ r, c, fill });
+    }
+  }
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 100 50"
+      preserveAspectRatio="xMidYMid slice"
+      style={{ display: "block" }}
+    >
+      {tiles.map((t, i) => (
+        <rect
+          key={i}
+          x={t.c * tile}
+          y={t.r * (50 / rows)}
+          width={tile + 0.5}
+          height={50 / rows + 0.5}
+          fill={t.fill}
+        />
+      ))}
+    </svg>
   );
 }
 

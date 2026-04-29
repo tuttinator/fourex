@@ -6,6 +6,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { MapFrame } from "@/components/ui/map-frame";
 
 export default async function HomePage() {
   const session = await auth();
@@ -392,20 +393,20 @@ function MapPreview() {
     return "#7BAE5B";
   };
   return (
-    <div
-      className="overflow-hidden rounded-md"
+    <MapFrame
+      variant="parchment"
       style={{
-        width: cols * tile,
-        height: rows * tile,
+        width: cols * tile + 16,
+        height: rows * tile + 16,
         background: "var(--map-void)",
-        boxShadow: "inset 0 0 0 1px var(--border-strong)",
       }}
     >
       <svg
-        width={cols * tile}
-        height={rows * tile}
+        width="100%"
+        height="100%"
         viewBox={`0 0 ${cols * tile} ${rows * tile}`}
-        style={{ imageRendering: "pixelated" as const }}
+        preserveAspectRatio="xMidYMid slice"
+        style={{ imageRendering: "pixelated" as const, display: "block" }}
       >
         {tiles.map((t, i) => (
           <rect
@@ -423,7 +424,7 @@ function MapPreview() {
         <circle cx={8 * tile + tile / 2} cy={6 * tile + tile / 2} r={4} fill="#B5302E" />
         <circle cx={12 * tile + tile / 2} cy={7 * tile + tile / 2} r={4} fill="#3D3F8F" />
       </svg>
-    </div>
+    </MapFrame>
   );
 }
 
