@@ -44,12 +44,10 @@ import {
   Clock,
   FileSignature,
   Hammer,
-  Handshake,
   Flag,
   Landmark,
   Loader2,
   Lock,
-  MessageSquare,
   RefreshCw,
   Send,
   Sparkles,
@@ -65,12 +63,6 @@ import { Identity } from '@/components/brand/identity'
 import { PLAYER_COLORS } from '@/types/game'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Panel } from '@/components/ui/panel'
 import { StatPair } from '@/components/ui/stat'
 import { Tag } from '@/components/ui/tag'
@@ -1996,6 +1988,7 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
           {/* Diplomacy panel (Phase 7) */}
           <DiplomacyPanel
             currentPlayer={currentPlayer}
+            players={gameState.players}
             diplomacy={diplomacyState ?? null}
             selectedOpponent={selectedOpponent}
             onSelectOpponent={(opponent) => {
@@ -2953,6 +2946,9 @@ function TechGroup({
 
 interface DiplomacyPanelProps {
   currentPlayer: PlayerId
+  /** All player IDs in the game, in seat order — used to resolve the
+   * heraldic colour for each opponent's Identity treatment. */
+  players: PlayerId[]
   diplomacy: DiplomacyStateResponse | null
   selectedOpponent: PlayerId | null
   onSelectOpponent: (opponent: PlayerId | null) => void
@@ -2968,6 +2964,7 @@ interface DiplomacyPanelProps {
 
 interface DiplomacyThreadViewProps {
   currentPlayer: PlayerId
+  players: PlayerId[]
   diplomacy: DiplomacyStateResponse
   opponent: PlayerId
   queuedActions: GameAction[]
@@ -2995,6 +2992,7 @@ function describeClause(clause: TreatyClause): string {
 
 function DiplomacyThreadView({
   currentPlayer,
+  players,
   diplomacy,
   opponent,
   queuedActions,
@@ -3076,29 +3074,43 @@ function DiplomacyThreadView({
   const canDeclareWar = relation === 'peace' && !warAlreadyQueued
   const affectedTreatyCount = activeTreaties.length
 
+  const opponentIdx = players.indexOf(opponent)
+  const opponentColor = PLAYER_COLORS[opponentIdx >= 0 ? opponentIdx % 8 : 0] ?? '#888'
+
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center justify-between gap-2">
-          <button
-            className="flex items-center gap-1 hover:underline"
-            onClick={() => onSelectOpponent(null)}
-            aria-label="Back to diplomacy overview"
-            data-testid="diplomacy-back"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <span className="truncate">{opponent}</span>
-          </button>
-          <span className={`text-xs ${rel.className}`}>{rel.label}</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 pt-0">
+    <Panel
+      kicker="thread"
+      title={
+        <button
+          className="flex items-center gap-1.5 hover:underline focus:outline-none"
+          onClick={() => onSelectOpponent(null)}
+          aria-label="Back to diplomacy overview"
+          data-testid="diplomacy-back"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          <Identity
+            kind="human"
+            name={opponent}
+            id={opponent}
+            color={opponentColor}
+            size={18}
+          />
+        </button>
+      }
+      action={
+        <Tag tone={rel.tone} mono>
+          {rel.label}
+        </Tag>
+      }
+      className="rounded-none border-x-0 border-t-0"
+    >
+      <div className="space-y-3">
         <div
-          className="max-h-52 overflow-y-auto space-y-1 rounded border bg-muted/20 p-2"
+          className="max-h-52 space-y-1.5 overflow-y-auto rounded-md border border-border bg-bg-subtle p-2"
           data-testid="diplomacy-thread"
         >
           {thread.length === 0 && queuedOutboundMessages.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-ink-muted">
               No messages yet. Send the first line to open the channel.
             </p>
           ) : (
@@ -3112,13 +3124,16 @@ function DiplomacyThreadView({
                     data-testid={`diplomacy-message-${m.id}`}
                   >
                     <div
-                      className={`inline-block rounded px-2 py-1 ${
+                      className={`inline-block rounded-md px-2 py-1 ${
                         mine
-                          ? 'bg-primary/10 text-primary-foreground/90'
-                          : 'bg-background border'
+                          ? 'border border-accent-soft bg-accent-soft text-ink'
+                          : 'border border-border bg-surface text-ink'
                       }`}
                     >
-                      <span className="block font-medium text-[10px] text-muted-foreground">
+                      <span
+                        className="block font-mono uppercase text-ink-muted"
+                        style={{ fontSize: 10, letterSpacing: '0.08em' }}
+                      >
                         {mine ? 'you' : m.sender} · turn {m.turn_sent}
                       </span>
                       <span className="whitespace-pre-wrap">{m.body}</span>
@@ -3129,11 +3144,14 @@ function DiplomacyThreadView({
               {queuedOutboundMessages.map((q, idx) => (
                 <div
                   key={`queued-${idx}`}
-                  className="text-xs text-right opacity-60"
+                  className="text-xs text-right opacity-70"
                   data-testid="diplomacy-message-queued"
                 >
-                  <div className="inline-block rounded border border-dashed px-2 py-1">
-                    <span className="block font-medium text-[10px] text-muted-foreground">
+                  <div className="inline-block rounded-md border border-dashed border-border bg-surface px-2 py-1">
+                    <span
+                      className="block font-mono uppercase text-accent"
+                      style={{ fontSize: 10, letterSpacing: '0.10em' }}
+                    >
                       queued · sends on End Turn
                     </span>
                     <span className="whitespace-pre-wrap">{q.body}</span>
@@ -3145,15 +3163,18 @@ function DiplomacyThreadView({
         </div>
         <div className="space-y-1">
           <textarea
-            className="w-full min-h-16 resize-none rounded border bg-background px-2 py-1 text-xs"
+            className="w-full min-h-16 resize-none rounded-md border border-border bg-surface px-2 py-1 text-xs"
             placeholder="Compose a private message…"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             data-testid="diplomacy-compose"
             maxLength={MESSAGE_BODY_MAX_LENGTH + 1}
           />
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-            <span>
+          <div className="flex items-center justify-between">
+            <span
+              className="font-mono tabular-nums text-ink-muted"
+              style={{ fontSize: 10 }}
+            >
               {draft.length}/{MESSAGE_BODY_MAX_LENGTH}
             </span>
             <Button
@@ -3179,87 +3200,95 @@ function DiplomacyThreadView({
 
         {/* Phase 8: treaty lifecycle --------------------------------- */}
         {inbound.length > 0 && (
-          <div
-            className="space-y-1 rounded border bg-muted/20 p-2"
+          <Panel
+            kicker={`inbound · ${inbound.length}`}
+            padded={false}
             data-testid="diplomacy-inbound-proposals"
           >
-            <p className="text-[10px] font-medium uppercase text-muted-foreground">
-              Inbound proposals
-            </p>
-            {inbound.map((p) => (
-              <ProposalCard
-                key={p.id}
-                proposal={p}
-                variant="inbound"
-                disabled={queuedProposalResponses.has(p.id)}
-                onAccept={() => onQueueRespondToTreaty(p.id, true)}
-                onReject={() => onQueueRespondToTreaty(p.id, false)}
-              />
-            ))}
-          </div>
+            <div className="space-y-1.5 p-2">
+              {inbound.map((p) => (
+                <ProposalCard
+                  key={p.id}
+                  proposal={p}
+                  variant="inbound"
+                  disabled={queuedProposalResponses.has(p.id)}
+                  onAccept={() => onQueueRespondToTreaty(p.id, true)}
+                  onReject={() => onQueueRespondToTreaty(p.id, false)}
+                />
+              ))}
+            </div>
+          </Panel>
         )}
 
         {outbound.length > 0 && (
-          <div
-            className="space-y-1 rounded border bg-muted/20 p-2"
+          <Panel
+            kicker={`outbound · ${outbound.length}`}
+            padded={false}
             data-testid="diplomacy-outbound-proposals"
           >
-            <p className="text-[10px] font-medium uppercase text-muted-foreground">
-              Outbound proposals
-            </p>
-            {outbound.map((p) => (
-              <ProposalCard
-                key={p.id}
-                proposal={p}
-                variant="outbound"
-                disabled={queuedProposalWithdrawals.has(p.id)}
-                onWithdraw={() => onQueueWithdrawTreaty(p.id)}
-              />
-            ))}
-          </div>
+            <div className="space-y-1.5 p-2">
+              {outbound.map((p) => (
+                <ProposalCard
+                  key={p.id}
+                  proposal={p}
+                  variant="outbound"
+                  disabled={queuedProposalWithdrawals.has(p.id)}
+                  onWithdraw={() => onQueueWithdrawTreaty(p.id)}
+                />
+              ))}
+            </div>
+          </Panel>
         )}
 
         {activeTreaties.length > 0 && (
-          <div
-            className="space-y-1 rounded border bg-muted/20 p-2"
+          <Panel
+            kicker={`active treaties · ${activeTreaties.length}`}
+            padded={false}
             data-testid="diplomacy-active-treaties"
           >
-            <p className="text-[10px] font-medium uppercase text-muted-foreground">
-              Active treaties
-            </p>
-            {activeTreaties.map((t) => (
-              <div
-                key={t.id}
-                className="flex items-start justify-between gap-2 text-xs"
-                data-testid={`diplomacy-treaty-${t.id}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">
-                    Treaty #{t.id}
-                    <span className="ml-1 text-muted-foreground">
-                      · ratified t{t.turn_ratified}
-                    </span>
-                  </p>
-                  <ul className="list-disc pl-4 text-[11px] text-muted-foreground">
-                    {t.clauses.map((c, i) => (
-                      <li key={i}>{describeClause(c)}</li>
-                    ))}
-                  </ul>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={queuedTreatyCancellations.has(t.id)}
-                  onClick={() => onQueueCancelTreaty(t.id)}
-                  data-testid={`diplomacy-cancel-treaty-${t.id}`}
-                  className="shrink-0 text-xs"
+            <div className="space-y-1.5 p-2">
+              {activeTreaties.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-start justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5"
+                  data-testid={`diplomacy-treaty-${t.id}`}
                 >
-                  <X className="h-3.5 w-3.5 mr-1" />
-                  {queuedTreatyCancellations.has(t.id) ? 'Queued' : 'Cancel'}
-                </Button>
-              </div>
-            ))}
-          </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1.5 text-xs">
+                      <span
+                        className="font-display text-ink leading-none"
+                        style={{ fontSize: 13, letterSpacing: '-0.01em' }}
+                      >
+                        Treaty #{t.id}
+                      </span>
+                      <Tag tone="success" mono>
+                        ratified t{t.turn_ratified}
+                      </Tag>
+                    </p>
+                    <ul
+                      className="mt-1 list-disc pl-4 text-ink-muted"
+                      style={{ fontSize: 11 }}
+                    >
+                      {t.clauses.map((c, i) => (
+                        <li key={i}>{describeClause(c)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={queuedTreatyCancellations.has(t.id)}
+                    onClick={() => onQueueCancelTreaty(t.id)}
+                    data-testid={`diplomacy-cancel-treaty-${t.id}`}
+                    className="shrink-0 text-xs"
+                  >
+                    <X className="h-3.5 w-3.5 mr-1" />
+                    {queuedTreatyCancellations.has(t.id) ? 'Queued' : 'Cancel'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </Panel>
         )}
 
         <ProposeTreatyForm
@@ -3275,7 +3304,7 @@ function DiplomacyThreadView({
             before anything lands on the queue. */}
         {relation === 'peace' && (
           <div
-            className="rounded border border-destructive/40 bg-destructive/5 p-2"
+            className="rounded-md border border-destructive/40 bg-destructive/5 p-2"
             data-testid="diplomacy-declare-war-root"
           >
             {!confirmingWar ? (
@@ -3295,7 +3324,7 @@ function DiplomacyThreadView({
                 <p className="font-medium text-destructive">
                   Declare war on {opponent}?
                 </p>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-[11px] text-ink-muted">
                   Relation flips to war on End Turn.
                   {affectedTreatyCount > 0 &&
                     ` ${affectedTreatyCount} active treat${
@@ -3330,8 +3359,8 @@ function DiplomacyThreadView({
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   )
 }
 
@@ -3354,17 +3383,25 @@ function ProposalCard({
 }: ProposalCardProps) {
   return (
     <div
-      className="flex items-start justify-between gap-2 text-xs"
+      className="flex items-start justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5"
       data-testid={`diplomacy-proposal-${proposal.id}`}
     >
       <div className="min-w-0 flex-1">
-        <p className="font-medium">
-          Proposal #{proposal.id}
-          <span className="ml-1 text-muted-foreground">
-            · expires t{proposal.expires_on_turn}
+        <p className="flex items-center gap-1.5">
+          <span
+            className="font-display text-ink leading-none"
+            style={{ fontSize: 13, letterSpacing: '-0.01em' }}
+          >
+            Proposal #{proposal.id}
           </span>
+          <Tag tone="warning" mono>
+            expires t{proposal.expires_on_turn}
+          </Tag>
         </p>
-        <ul className="list-disc pl-4 text-[11px] text-muted-foreground">
+        <ul
+          className="mt-1 list-disc pl-4 text-ink-muted"
+          style={{ fontSize: 11 }}
+        >
           {proposal.clauses.map((c, i) => (
             <li key={i}>{describeClause(c)}</li>
           ))}
@@ -3505,22 +3542,32 @@ function ProposeTreatyForm({
   const canQueue = clause !== null
 
   return (
-    <div className="rounded border bg-muted/20 p-2" data-testid="diplomacy-propose-root">
+    <div
+      className="rounded-md border border-border bg-bg-subtle p-2"
+      data-testid="diplomacy-propose-root"
+    >
       <button
-        className="flex w-full items-center justify-between text-xs font-medium"
+        className="flex w-full items-center justify-between text-xs"
         onClick={() => setOpen((v) => !v)}
         data-testid="diplomacy-propose-toggle"
       >
-        <span className="flex items-center gap-1">
-          <FileSignature className="h-3.5 w-3.5" />
-          Propose treaty
+        <span className="flex items-center gap-1.5">
+          <FileSignature className="h-3.5 w-3.5 text-accent" />
+          <span
+            className="font-mono uppercase text-accent"
+            style={{ fontSize: 10.5, letterSpacing: '0.10em' }}
+          >
+            Propose treaty
+          </span>
           {queuedProposalsCount > 0 && (
-            <span className="ml-1 text-muted-foreground">
-              · {queuedProposalsCount} queued
-            </span>
+            <Tag tone="accent" mono>
+              {queuedProposalsCount} queued
+            </Tag>
           )}
         </span>
-        <span className="text-muted-foreground">{open ? '−' : '+'}</span>
+        <span className="font-mono text-ink-muted" style={{ fontSize: 14 }}>
+          {open ? '−' : '+'}
+        </span>
       </button>
       {open && (
         <div className="mt-2 space-y-2">
@@ -3536,9 +3583,12 @@ function ProposeTreatyForm({
               <button
                 key={k}
                 onClick={() => setKind(k)}
-                className={`rounded border px-2 py-0.5 text-[11px] ${
-                  kind === k ? 'bg-primary/10' : ''
+                className={`rounded-full border px-2 py-0.5 font-mono uppercase transition-colors ${
+                  kind === k
+                    ? 'border-accent-soft bg-accent-soft text-accent'
+                    : 'border-border bg-surface text-ink-muted hover:bg-bg-subtle'
                 }`}
+                style={{ fontSize: 10, letterSpacing: '0.08em' }}
                 data-testid={`diplomacy-propose-kind-${k}`}
               >
                 {k.replace(/_/g, ' ')}
@@ -3707,34 +3757,67 @@ function ResourceInputs({
     { key: 'crystal', value: crystal, setter: onChange.crystal },
   ]
   return (
-    <div className="grid grid-cols-2 gap-1">
-      {rows.map(({ key, value, setter }) => (
-        <label key={key} className="flex items-center gap-1 text-[11px]">
-          <span className="capitalize">{key}</span>
-          <input
-            type="number"
-            min={0}
-            value={value}
-            onChange={(e) => setter(Number(e.target.value))}
-            className="w-full rounded border bg-background px-1 py-0.5"
-            data-testid={`${testPrefix}-${key}`}
-          />
-        </label>
-      ))}
+    <div className="grid grid-cols-2 gap-1.5">
+      {rows.map(({ key, value, setter }) => {
+        const dec = () => setter(Math.max(0, value - 1))
+        const inc = () => setter(Math.max(0, value + 1))
+        return (
+          <div
+            key={key}
+            className="flex items-center justify-between gap-1 rounded-md border border-border bg-bg-subtle px-1.5 py-0.5"
+          >
+            <span
+              className="font-mono uppercase text-ink-muted"
+              style={{ fontSize: 9.5, letterSpacing: '0.08em' }}
+            >
+              {key}
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                aria-label={`Decrease ${key}`}
+                onClick={dec}
+                disabled={value <= 0}
+                className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-ink-muted transition-colors hover:bg-bg-subtle disabled:opacity-40"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={0}
+                value={value}
+                onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                aria-label={key}
+                className="w-10 rounded border-0 bg-transparent px-0.5 py-0 text-center font-mono tabular-nums text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                style={{ fontSize: 11 }}
+                data-testid={`${testPrefix}-${key}`}
+              />
+              <button
+                type="button"
+                aria-label={`Increase ${key}`}
+                onClick={inc}
+                className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-ink-muted transition-colors hover:bg-bg-subtle"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
 function relationLabel(
   relation: 'peace' | 'alliance' | 'war',
-): { label: string; className: string } {
+): { label: string; tone: 'destructive' | 'accent' | 'success' } {
   switch (relation) {
     case 'war':
-      return { label: 'at war', className: 'text-destructive' }
+      return { label: 'at war', tone: 'destructive' }
     case 'alliance':
-      return { label: 'allied', className: 'text-emerald-600' }
+      return { label: 'allied', tone: 'accent' }
     default:
-      return { label: 'peace', className: 'text-muted-foreground' }
+      return { label: 'peace', tone: 'success' }
   }
 }
 
@@ -3778,6 +3861,7 @@ function treatiesFor(
  */
 function DiplomacyPanel({
   currentPlayer,
+  players,
   diplomacy,
   selectedOpponent,
   onSelectOpponent,
@@ -3792,17 +3876,13 @@ function DiplomacyPanel({
 }: DiplomacyPanelProps) {
   if (!diplomacy) {
     return (
-      <Card className="rounded-none border-0 border-b">
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Handshake className="h-4 w-4" />
-            Diplomacy
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        </CardContent>
-      </Card>
+      <Panel
+        title="Diplomacy"
+        kicker="diplomacy"
+        className="rounded-none border-x-0 border-t-0"
+      >
+        <p className="text-xs text-ink-muted">Loading…</p>
+      </Panel>
     )
   }
 
@@ -3813,6 +3893,7 @@ function DiplomacyPanel({
       <DiplomacyThreadView
         key={selectedOpponent}
         currentPlayer={currentPlayer}
+        players={players}
         diplomacy={diplomacy}
         opponent={selectedOpponent}
         queuedActions={queuedActions}
@@ -3828,72 +3909,82 @@ function DiplomacyPanel({
   }
 
   return (
-    <Card className="rounded-none border-0 border-b">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Handshake className="h-4 w-4" />
-          Diplomacy
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 pt-0">
+    <Panel
+      title="Diplomacy"
+      kicker="diplomacy"
+      className="rounded-none border-x-0 border-t-0"
+      padded={false}
+    >
+      <div className="p-2">
         {opponents.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-ink-muted px-1.5 py-1">
             No other players discovered yet.
           </p>
         ) : (
-          opponents.map((opponent) => {
-            const relation = findRelation(
-              diplomacy.relations,
-              currentPlayer,
-              opponent,
-            )
-            const rel = relationLabel(relation)
-            const treaties = treatiesFor(
-              diplomacy.active_treaties,
-              currentPlayer,
-              opponent,
-            )
-            const lastSeen = lastSeenMessageIds[opponent] ?? 0
-            const unread = diplomacy.messages.filter(
-              (m) =>
-                m.sender === opponent &&
-                m.recipient === currentPlayer &&
-                m.id > lastSeen,
-            ).length
-            return (
-              <button
-                key={opponent}
-                onClick={() => onSelectOpponent(opponent)}
-                className="w-full flex items-center justify-between text-xs rounded px-2 py-1.5 hover:bg-muted/50 border"
-                data-testid={`diplomacy-opponent-${opponent}`}
-                data-unread={unread > 0 ? 'true' : 'false'}
-              >
-                <span className="flex flex-col items-start">
-                  <span className="font-medium truncate">{opponent}</span>
-                  <span className={`text-[10px] ${rel.className}`}>
-                    {rel.label}
-                    {treaties.length > 0 &&
-                      ` · ${treaties.length} treat${treaties.length === 1 ? 'y' : 'ies'}`}
-                  </span>
-                </span>
-                <span className="flex items-center gap-1">
-                  {unread > 0 && (
-                    <Badge
-                      variant="destructive"
-                      className="h-4 px-1 text-[10px]"
-                      data-testid={`diplomacy-unread-${opponent}`}
-                    >
-                      {unread}
-                    </Badge>
-                  )}
-                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-                </span>
-              </button>
-            )
-          })
+          <ul className="space-y-1.5">
+            {opponents.map((opponent) => {
+              const relation = findRelation(
+                diplomacy.relations,
+                currentPlayer,
+                opponent,
+              )
+              const rel = relationLabel(relation)
+              const treaties = treatiesFor(
+                diplomacy.active_treaties,
+                currentPlayer,
+                opponent,
+              )
+              const lastSeen = lastSeenMessageIds[opponent] ?? 0
+              const unread = diplomacy.messages.filter(
+                (m) =>
+                  m.sender === opponent &&
+                  m.recipient === currentPlayer &&
+                  m.id > lastSeen,
+              ).length
+              const idx = players.indexOf(opponent)
+              const color = PLAYER_COLORS[idx >= 0 ? idx % 8 : 0] ?? '#888'
+              return (
+                <li key={opponent}>
+                  <button
+                    onClick={() => onSelectOpponent(opponent)}
+                    className="group flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left transition-colors hover:bg-bg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    data-testid={`diplomacy-opponent-${opponent}`}
+                    data-unread={unread > 0 ? 'true' : 'false'}
+                  >
+                    <Identity
+                      kind="human"
+                      name={opponent}
+                      id={opponent}
+                      color={color}
+                      size={20}
+                    />
+                    <span className="ml-auto flex items-center gap-1.5">
+                      {treaties.length > 0 && (
+                        <Tag tone="neutral" mono>
+                          {treaties.length}t
+                        </Tag>
+                      )}
+                      <Tag tone={rel.tone} mono>
+                        {rel.label}
+                      </Tag>
+                      {unread > 0 && (
+                        <Tag
+                          tone="accent"
+                          mono
+                          data-testid={`diplomacy-unread-${opponent}`}
+                        >
+                          {unread}
+                        </Tag>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   )
 }
 

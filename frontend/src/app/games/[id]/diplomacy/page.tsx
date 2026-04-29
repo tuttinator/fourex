@@ -26,8 +26,9 @@ import { TopBar } from '@/components/top-bar'
 import { useSessionEmail } from '@/components/session-email-provider'
 import { signOutAction } from '@/lib/auth-actions'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Panel } from '@/components/ui/panel'
+import { Tag, type TagTone } from '@/components/ui/tag'
+import { Identity } from '@/components/brand/identity'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToast } from '@/hooks/use-toast'
 import type {
@@ -66,16 +67,14 @@ function relationLabel(state: DiplomacyRelation['state']): string {
   }
 }
 
-function relationVariant(
-  state: DiplomacyRelation['state'],
-): 'default' | 'secondary' | 'destructive' | 'outline' {
+function relationTone(state: DiplomacyRelation['state']): TagTone {
   switch (state) {
     case 'war':
       return 'destructive'
     case 'alliance':
-      return 'default'
+      return 'accent'
     case 'peace':
-      return 'secondary'
+      return 'success'
   }
 }
 
@@ -221,30 +220,63 @@ function BagInputs({
 }) {
   return (
     <div className="space-y-1">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="grid grid-cols-4 gap-1">
-        {BAG_KEYS.map((key) => (
-          <label
-            key={key}
-            className="flex flex-col text-[10px] text-muted-foreground"
-          >
-            <span className="capitalize">{key}</span>
-            <input
-              type="number"
-              min={0}
-              value={bag[key]}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                onChange({
-                  ...bag,
-                  [key]: Number.isFinite(v) && v >= 0 ? v : 0,
-                })
-              }}
-              className="border rounded-md bg-background px-1 py-0.5 text-xs"
-              data-testid={`${testIdPrefix}-${key}`}
-            />
-          </label>
-        ))}
+      <span
+        className="block font-mono uppercase text-ink-muted"
+        style={{ fontSize: 10, letterSpacing: '0.08em' }}
+      >
+        {label}
+      </span>
+      <div className="grid grid-cols-2 gap-1.5">
+        {BAG_KEYS.map((key) => {
+          const value = bag[key] ?? 0
+          const setValue = (next: number) =>
+            onChange({ ...bag, [key]: Math.max(0, next) })
+          return (
+            <div
+              key={key}
+              className="flex items-center justify-between gap-1 rounded-md border border-border bg-bg-subtle px-1.5 py-0.5"
+            >
+              <span
+                className="font-mono uppercase text-ink-muted"
+                style={{ fontSize: 9.5, letterSpacing: '0.08em' }}
+              >
+                {key}
+              </span>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label={`Decrease ${key}`}
+                  onClick={() => setValue(value - 1)}
+                  disabled={value <= 0}
+                  className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-ink-muted transition-colors hover:bg-bg-subtle disabled:opacity-40"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  value={value}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setValue(Number.isFinite(v) && v >= 0 ? v : 0)
+                  }}
+                  aria-label={key}
+                  className="w-10 border-0 bg-transparent px-0.5 py-0 text-center font-mono tabular-nums text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                  style={{ fontSize: 11 }}
+                  data-testid={`${testIdPrefix}-${key}`}
+                />
+                <button
+                  type="button"
+                  aria-label={`Increase ${key}`}
+                  onClick={() => setValue(value + 1)}
+                  className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-ink-muted transition-colors hover:bg-bg-subtle"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -448,23 +480,18 @@ export default function DiplomacyPage() {
   if (!currentPlayer) {
     return (
       <div className="container mx-auto px-4 py-10">
-        <Card>
-          <CardHeader>
-            <CardTitle>Sign in required</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Diplomacy is per-player. Sign in (set an auth token) before opening
-              this page so we can show your relations and event feed.
-            </p>
-            <Button asChild variant="outline" className="mt-4">
-              <Link href={`/games/${gameId}`}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to game
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <Panel title="Sign in required" kicker="auth">
+          <p className="text-sm text-ink-muted">
+            Diplomacy is per-player. Sign in (set an auth token) before opening
+            this page so we can show your relations and event feed.
+          </p>
+          <Button asChild variant="outline" className="mt-4">
+            <Link href={`/games/${gameId}`}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to game
+            </Link>
+          </Button>
+        </Panel>
       </div>
     )
   }
@@ -728,127 +755,115 @@ export default function DiplomacyPage() {
 
       <div className="container mx-auto px-4 py-6 flex-1 space-y-6">
         <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Relations</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {discovered.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  You have not yet discovered any other players. Move a unit
-                  within sight of an opponent to open diplomatic channels.
-                </p>
-              ) : (
-                <ul className="space-y-3">
-                  {discovered.map((target) => {
-                    const state = findRelation(relations, currentPlayer, target)
-                    const targetIndex = allPlayers.indexOf(target)
-                    return (
-                      <li
-                        key={target}
-                        className="flex items-center justify-between gap-3 border rounded-md px-3 py-2"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span
-                            className="inline-block h-3 w-3 rounded-full"
-                            style={{
-                              backgroundColor:
-                                targetIndex >= 0
-                                  ? getPlayerColor(targetIndex)
-                                  : '#888',
-                            }}
-                          />
-                          <span className="font-mono">{target}</span>
-                          <Badge variant={relationVariant(state)}>
-                            {relationLabel(state)}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {state !== 'war' && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={declareWar.isPending}
-                              onClick={() => declareWar.mutate(target)}
-                            >
-                              <Swords className="h-4 w-4 mr-2" />
-                              Declare war
-                            </Button>
-                          )}
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>World events</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {events.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No diplomatic events yet. Declarations of war and treacherous
-                  attacks will appear here as they happen.
-                </p>
-              ) : (
-                <ScrollArea className="max-h-[60vh] pr-2">
-                  <ul className="space-y-2">
-                    {[...events]
-                      .sort((a, b) => b.id - a.id)
-                      .map((event) => {
-                        const { label, className, Icon } = eventStyle(event)
-                        return (
-                          <li
-                            key={event.id}
-                            className={`border-l-4 rounded px-3 py-2 ${className}`}
-                            data-event-type={event.type}
+          <Panel title="Relations" kicker="discovered">
+            {discovered.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                You have not yet discovered any other players. Move a unit
+                within sight of an opponent to open diplomatic channels.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {discovered.map((target) => {
+                  const state = findRelation(relations, currentPlayer, target)
+                  const targetIndex = allPlayers.indexOf(target)
+                  const targetColor =
+                    targetIndex >= 0 ? getPlayerColor(targetIndex) : '#888'
+                  return (
+                    <li
+                      key={target}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Identity
+                          kind="human"
+                          name={target}
+                          id={target}
+                          color={targetColor}
+                          size={22}
+                        />
+                        <Tag tone={relationTone(state)} mono>
+                          {relationLabel(state)}
+                        </Tag>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {state !== 'war' && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={declareWar.isPending}
+                            onClick={() => declareWar.mutate(target)}
                           >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <Icon className="h-4 w-4" />
-                                <span className="font-medium">{label}</span>
-                              </div>
-                              <span className="text-xs opacity-70">
-                                Turn {event.turn}
-                              </span>
+                            <Swords className="h-4 w-4 mr-2" />
+                            Declare war
+                          </Button>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Panel>
+
+          <Panel title="World events" kicker="feed">
+            {events.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                No diplomatic events yet. Declarations of war and treacherous
+                attacks will appear here as they happen.
+              </p>
+            ) : (
+              <ScrollArea className="max-h-[60vh] pr-2">
+                <ul className="space-y-2">
+                  {[...events]
+                    .sort((a, b) => b.id - a.id)
+                    .map((event) => {
+                      const { label, className, Icon } = eventStyle(event)
+                      return (
+                        <li
+                          key={event.id}
+                          className={`border-l-4 rounded px-3 py-2 ${className}`}
+                          data-event-type={event.type}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <Icon className="h-4 w-4" />
+                              <span className="font-medium">{label}</span>
                             </div>
-                            <div className="text-sm font-mono mt-1">
-                              {event.actor}
-                              {event.counterparty && (
-                                <>
-                                  <span className="opacity-60"> → </span>
-                                  {event.counterparty}
-                                </>
-                              )}
-                            </div>
-                          </li>
-                        )
-                      })}
-                  </ul>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
+                            <span className="font-mono tabular-nums opacity-70" style={{ fontSize: 11 }}>
+                              t{event.turn}
+                            </span>
+                          </div>
+                          <div className="mt-1 font-mono text-sm">
+                            {event.actor}
+                            {event.counterparty && (
+                              <>
+                                <span className="opacity-60"> → </span>
+                                {event.counterparty}
+                              </>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    })}
+                </ul>
+              </ScrollArea>
+            )}
+          </Panel>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          <Card data-testid="proposal-builder">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Propose treaty
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {discovered.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Discover another player before proposing a treaty.
-                </p>
-              ) : (
+          <Panel
+            data-testid="proposal-builder"
+            title="Propose treaty"
+            kicker="builder"
+            action={<FileText className="h-4 w-4 text-ink-muted" />}
+          >
+            <div className="space-y-4">
+            {discovered.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                Discover another player before proposing a treaty.
+              </p>
+            ) : (
                 <>
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">
@@ -1087,28 +1102,23 @@ export default function DiplomacyPage() {
                     <Send className="h-4 w-4 mr-2" />
                     Send proposal
                   </Button>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-ink-muted">
                     Proposals expire after {TREATY_PROPOSAL_EXPIRY_TURNS} turns
                     if not answered.
                   </p>
                 </>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </Panel>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ScrollText className="h-5 w-5" />
-                Active treaties
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {activeTreaties.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No active treaties.
-                </p>
-              ) : (
+          <Panel
+            title="Active treaties"
+            kicker="ratified"
+            action={<ScrollText className="h-4 w-4 text-ink-muted" />}
+          >
+            {activeTreaties.length === 0 ? (
+              <p className="text-sm text-ink-muted">No active treaties.</p>
+            ) : (
                 <ul className="space-y-2">
                   {activeTreaties.map((t: TreatyRecord) => {
                     const otherParty =
@@ -1118,18 +1128,18 @@ export default function DiplomacyPage() {
                     return (
                       <li
                         key={t.id}
-                        className="border rounded-md p-3 space-y-2"
+                        className="space-y-2 rounded-md border border-border bg-surface p-3"
                         data-testid={`treaty-${t.id}`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="font-mono text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-sm">
                             with {otherParty}
-                          </div>
-                          <span className="text-xs text-muted-foreground">
-                            Ratified turn {t.turn_ratified}
                           </span>
+                          <Tag tone="success" mono>
+                            ratified t{t.turn_ratified}
+                          </Tag>
                         </div>
-                        <ul className="text-xs space-y-0.5">
+                        <ul className="space-y-0.5 text-xs">
                           {t.clauses.map((c, i) => (
                             <li key={i}>• {clauseSummary(c)}</li>
                           ))}
@@ -1147,299 +1157,284 @@ export default function DiplomacyPage() {
                       </li>
                     )
                   })}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+              </ul>
+            )}
+          </Panel>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Proposals inbox</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {inbox.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No pending proposals addressed to you.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {inbox.map((p: TreatyProposalRecord) => (
-                    <li
-                      key={p.id}
-                      className="border rounded-md p-3 space-y-2"
-                      data-testid={`inbox-proposal-${p.id}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-mono text-sm">
-                          from {p.proposer}
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          Expires turn {p.expires_on_turn}
-                        </span>
-                      </div>
-                      <ul className="text-xs space-y-0.5">
-                        {p.clauses.map((c, i) => (
-                          <li key={i}>• {clauseSummary(c)}</li>
-                        ))}
-                      </ul>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          disabled={!gameActive || respondToTreaty.isPending}
-                          onClick={() =>
-                            respondToTreaty.mutate({
-                              proposalId: p.id,
-                              accept: true,
-                            })
-                          }
-                          data-testid={`accept-${p.id}`}
-                        >
-                          <Check className="h-4 w-4 mr-1" />
-                          Accept
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!gameActive || respondToTreaty.isPending}
-                          onClick={() =>
-                            respondToTreaty.mutate({
-                              proposalId: p.id,
-                              accept: false,
-                            })
-                          }
-                          data-testid={`decline-${p.id}`}
-                        >
-                          <X className="h-4 w-4 mr-1" />
-                          Decline
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Proposals outbox</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {outbox.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  You have no pending proposals awaiting reply.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {outbox.map((p: TreatyProposalRecord) => (
-                    <li
-                      key={p.id}
-                      className="border rounded-md p-3 space-y-2"
-                      data-testid={`outbox-proposal-${p.id}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-mono text-sm">
-                          to {p.recipient}
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          Expires turn {p.expires_on_turn}
-                        </span>
-                      </div>
-                      <ul className="text-xs space-y-0.5">
-                        {p.clauses.map((c, i) => (
-                          <li key={i}>• {clauseSummary(c)}</li>
-                        ))}
-                      </ul>
+          <Panel title="Proposals inbox" kicker="awaiting you">
+            {inbox.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                No pending proposals addressed to you.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {inbox.map((p: TreatyProposalRecord) => (
+                  <li
+                    key={p.id}
+                    className="space-y-2 rounded-md border border-border bg-surface p-3"
+                    data-testid={`inbox-proposal-${p.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-sm">
+                        from {p.proposer}
+                      </span>
+                      <Tag tone="warning" mono>
+                        expires t{p.expires_on_turn}
+                      </Tag>
+                    </div>
+                    <ul className="space-y-0.5 text-xs">
+                      {p.clauses.map((c, i) => (
+                        <li key={i}>• {clauseSummary(c)}</li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        disabled={!gameActive || respondToTreaty.isPending}
+                        onClick={() =>
+                          respondToTreaty.mutate({
+                            proposalId: p.id,
+                            accept: true,
+                          })
+                        }
+                        data-testid={`accept-${p.id}`}
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        Accept
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!gameActive || withdrawTreaty.isPending}
-                        onClick={() => withdrawTreaty.mutate(p.id)}
-                        data-testid={`withdraw-${p.id}`}
+                        disabled={!gameActive || respondToTreaty.isPending}
+                        onClick={() =>
+                          respondToTreaty.mutate({
+                            proposalId: p.id,
+                            accept: false,
+                          })
+                        }
+                        data-testid={`decline-${p.id}`}
                       >
                         <X className="h-4 w-4 mr-1" />
-                        Withdraw
+                        Decline
                       </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5" />
-                Messages
-              </span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {messagesRemaining} of {MESSAGES_PER_TURN_LIMIT} sends left this
-                turn
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {discovered.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Once you discover other players, you will be able to send them
-                up to {MESSAGES_PER_TURN_LIMIT} private messages per turn.
+          <Panel title="Proposals outbox" kicker="awaiting reply">
+            {outbox.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                You have no pending proposals awaiting reply.
               </p>
             ) : (
-              <div className="grid gap-4 md:grid-cols-[200px_1fr]">
-                <div className="border rounded-md p-2 space-y-1">
-                  {discovered.map((counterpart) => {
-                    const isSelected = counterpart === effectiveSelected
-                    const idx = allPlayers.indexOf(counterpart)
-                    const unread = unreadCounts[counterpart] ?? 0
-                    return (
-                      <button
-                        key={counterpart}
-                        type="button"
-                        onClick={() => setSelectedCounterpart(counterpart)}
-                        className={`w-full text-left px-2 py-1 rounded flex items-center gap-2 text-sm ${
-                          isSelected
-                            ? 'bg-primary/10 font-medium'
-                            : 'hover:bg-muted'
-                        }`}
-                        data-testid={`counterpart-${counterpart}`}
-                      >
-                        <span
-                          className="inline-block h-3 w-3 rounded-full shrink-0"
-                          style={{
-                            backgroundColor:
-                              idx >= 0 ? getPlayerColor(idx) : '#888',
-                          }}
-                        />
-                        <span className="font-mono truncate">{counterpart}</span>
-                        {unread > 0 && (
-                          <Badge variant="secondary" className="ml-auto">
-                            {unread}
-                          </Badge>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                <div className="flex flex-col border rounded-md">
-                  {effectiveSelected ? (
-                    <>
-                      <div className="border-b px-3 py-2 flex items-center justify-between">
-                        <div className="text-sm">
-                          Thread with{' '}
-                          <span className="font-mono">{effectiveSelected}</span>
-                        </div>
-                        <Badge
-                          variant={relationVariant(
-                            findRelation(
-                              relations,
-                              currentPlayer,
-                              effectiveSelected,
-                            ),
-                          )}
-                        >
-                          {relationLabel(
-                            findRelation(
-                              relations,
-                              currentPlayer,
-                              effectiveSelected,
-                            ),
-                          )}
-                        </Badge>
-                      </div>
-
-                      <ScrollArea className="h-[40vh] px-3 py-2">
-                        {thread.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            No messages yet. Say something.
-                          </p>
-                        ) : (
-                          <ul className="space-y-2">
-                            {thread.map((m) => {
-                              const mine = m.sender === currentPlayer
-                              return (
-                                <li
-                                  key={m.id}
-                                  className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
-                                    mine
-                                      ? 'ml-auto bg-primary text-primary-foreground'
-                                      : 'mr-auto bg-muted'
-                                  }`}
-                                  data-testid="message"
-                                  data-sender={m.sender}
-                                >
-                                  <div className="whitespace-pre-wrap break-words">
-                                    {m.body}
-                                  </div>
-                                  <div className="text-[10px] opacity-70 mt-1">
-                                    Turn {m.turn_sent} · {mine ? 'you' : m.sender}
-                                  </div>
-                                </li>
-                              )
-                            })}
-                          </ul>
-                        )}
-                      </ScrollArea>
-
-                      <div className="border-t p-3 space-y-2">
-                        <textarea
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          placeholder={
-                            sendDisabledReason ??
-                            `Message ${effectiveSelected}...`
-                          }
-                          rows={3}
-                          maxLength={MESSAGE_BODY_MAX_LENGTH + 200}
-                          disabled={!gameActive}
-                          title={sendDisabledReason ?? undefined}
-                          className="w-full resize-y border rounded-md p-2 bg-background text-sm disabled:opacity-60"
-                          data-testid="message-draft"
-                        />
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            className={`text-xs ${
-                              draftTooLong
-                                ? 'text-destructive'
-                                : 'text-muted-foreground'
-                            }`}
-                          >
-                            {draft.length}/{MESSAGE_BODY_MAX_LENGTH}
-                          </span>
-                          <Button
-                            size="sm"
-                            disabled={!canSend}
-                            title={sendDisabledReason ?? undefined}
-                            onClick={() => {
-                              if (!effectiveSelected) return
-                              sendMessage.mutate({
-                                recipient: effectiveSelected,
-                                body: draft,
-                              })
-                            }}
-                            data-testid="message-send"
-                          >
-                            <Send className="h-4 w-4 mr-2" />
-                            Send
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="p-4 text-sm text-muted-foreground">
-                      Select a counterpart to start a thread.
+              <ul className="space-y-2">
+                {outbox.map((p: TreatyProposalRecord) => (
+                  <li
+                    key={p.id}
+                    className="space-y-2 rounded-md border border-border bg-surface p-3"
+                    data-testid={`outbox-proposal-${p.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-sm">
+                        to {p.recipient}
+                      </span>
+                      <Tag tone="warning" mono>
+                        expires t{p.expires_on_turn}
+                      </Tag>
                     </div>
-                  )}
-                </div>
-              </div>
+                    <ul className="space-y-0.5 text-xs">
+                      {p.clauses.map((c, i) => (
+                        <li key={i}>• {clauseSummary(c)}</li>
+                      ))}
+                    </ul>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!gameActive || withdrawTreaty.isPending}
+                      onClick={() => withdrawTreaty.mutate(p.id)}
+                      data-testid={`withdraw-${p.id}`}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Withdraw
+                    </Button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </CardContent>
-        </Card>
+          </Panel>
+        </div>
+
+        <Panel
+          title="Messages"
+          kicker={`${messagesRemaining}/${MESSAGES_PER_TURN_LIMIT} sends left`}
+          action={<MessageSquare className="h-4 w-4 text-ink-muted" />}
+        >
+          {discovered.length === 0 ? (
+            <p className="text-sm text-ink-muted">
+              Once you discover other players, you will be able to send them
+              up to {MESSAGES_PER_TURN_LIMIT} private messages per turn.
+            </p>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-[200px_1fr]">
+              <div className="space-y-1 rounded-md border border-border bg-bg-subtle p-2">
+                {discovered.map((counterpart) => {
+                  const isSelected = counterpart === effectiveSelected
+                  const idx = allPlayers.indexOf(counterpart)
+                  const counterpartColor =
+                    idx >= 0 ? getPlayerColor(idx) : '#888'
+                  const unread = unreadCounts[counterpart] ?? 0
+                  return (
+                    <button
+                      key={counterpart}
+                      type="button"
+                      onClick={() => setSelectedCounterpart(counterpart)}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
+                        isSelected
+                          ? 'bg-accent-soft'
+                          : 'hover:bg-surface'
+                      }`}
+                      data-testid={`counterpart-${counterpart}`}
+                    >
+                      <Identity
+                        kind="human"
+                        name={counterpart}
+                        id={counterpart}
+                        color={counterpartColor}
+                        size={18}
+                      />
+                      {unread > 0 && (
+                        <Tag tone="accent" mono className="ml-auto">
+                          {unread}
+                        </Tag>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div className="flex flex-col rounded-md border border-border bg-surface">
+                {effectiveSelected ? (
+                  <>
+                    <div className="flex items-center justify-between border-b border-border bg-bg-subtle px-3 py-2">
+                      <div className="text-sm">
+                        Thread with{' '}
+                        <span className="font-mono">{effectiveSelected}</span>
+                      </div>
+                      <Tag
+                        tone={relationTone(
+                          findRelation(
+                            relations,
+                            currentPlayer,
+                            effectiveSelected,
+                          ),
+                        )}
+                        mono
+                      >
+                        {relationLabel(
+                          findRelation(
+                            relations,
+                            currentPlayer,
+                            effectiveSelected,
+                          ),
+                        )}
+                      </Tag>
+                    </div>
+
+                    <ScrollArea className="h-[40vh] px-3 py-2">
+                      {thread.length === 0 ? (
+                        <p className="text-sm text-ink-muted">
+                          No messages yet. Say something.
+                        </p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {thread.map((m) => {
+                            const mine = m.sender === currentPlayer
+                            return (
+                              <li
+                                key={m.id}
+                                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                                  mine
+                                    ? 'ml-auto border border-accent-soft bg-accent-soft text-ink'
+                                    : 'mr-auto border border-border bg-bg-subtle'
+                                }`}
+                                data-testid="message"
+                                data-sender={m.sender}
+                              >
+                                <div className="whitespace-pre-wrap break-words">
+                                  {m.body}
+                                </div>
+                                <div
+                                  className="mt-1 font-mono uppercase text-ink-muted"
+                                  style={{ fontSize: 10, letterSpacing: '0.08em' }}
+                                >
+                                  t{m.turn_sent} · {mine ? 'you' : m.sender}
+                                </div>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </ScrollArea>
+
+                    <div className="space-y-2 border-t border-border p-3">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder={
+                          sendDisabledReason ??
+                          `Message ${effectiveSelected}...`
+                        }
+                        rows={3}
+                        maxLength={MESSAGE_BODY_MAX_LENGTH + 200}
+                        disabled={!gameActive}
+                        title={sendDisabledReason ?? undefined}
+                        className="w-full resize-y rounded-md border border-border bg-bg p-2 text-sm disabled:opacity-60"
+                        data-testid="message-draft"
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`font-mono tabular-nums ${
+                            draftTooLong
+                              ? 'text-destructive'
+                              : 'text-ink-muted'
+                          }`}
+                          style={{ fontSize: 11 }}
+                        >
+                          {draft.length}/{MESSAGE_BODY_MAX_LENGTH}
+                        </span>
+                        <Button
+                          size="sm"
+                          disabled={!canSend}
+                          title={sendDisabledReason ?? undefined}
+                          onClick={() => {
+                            if (!effectiveSelected) return
+                            sendMessage.mutate({
+                              recipient: effectiveSelected,
+                              body: draft,
+                            })
+                          }}
+                          data-testid="message-send"
+                        >
+                          <Send className="h-4 w-4 mr-2" />
+                          Send
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-4 text-sm text-ink-muted">
+                    Select a counterpart to start a thread.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </Panel>
       </div>
     </div>
   )
