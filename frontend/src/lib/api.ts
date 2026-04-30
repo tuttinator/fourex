@@ -441,14 +441,18 @@ export const api = {
 
 	async getGameStateAsPlayer(
 		gameId: string,
-		// eslint-disable-next-line @typescript-eslint/no-unused-vars
-		_playerId: string,
+		playerId: string,
 	): Promise<GameState> {
-		// The legacy `player_<name>` bearer prefix has been retired. Observation
-		// perspective switching now only applies fog-of-war redaction if the
-		// caller holds the relevant per-game API key (i.e. they are that player).
-		// Otherwise the request falls through to god-mode observation.
-		return fetchApi(`/state?game_id=${gameId}`, { gameId });
+		// `as_player` asks the backend to redact the response as if the
+		// caller were ``playerId`` — used by observers (e.g. an unseated
+		// lobby creator) switching perspective in the spectator UI. Strictly
+		// less information than the unauthenticated god-mode response, so no
+		// extra auth is required.
+		const qs = new URLSearchParams({
+			game_id: gameId,
+			as_player: playerId,
+		});
+		return fetchApi(`/state?${qs.toString()}`, { gameId });
 	},
 
 	async listTurns(

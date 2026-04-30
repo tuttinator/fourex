@@ -259,7 +259,9 @@ describe("observation: player perspective (fog-of-war) fetching", () => {
 
 		await api.getGameStateAsPlayer("my-game", "alice");
 		const [playerUrl] = mockFetch.mock.calls[1];
-		expect(playerUrl).toContain("/state?game_id=my-game");
+		expect(playerUrl).toContain("/state?");
+		expect(playerUrl).toContain("game_id=my-game");
+		expect(playerUrl).toContain("as_player=alice");
 	});
 });
 

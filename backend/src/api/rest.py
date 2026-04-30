@@ -244,18 +244,36 @@ async def get_rules_reference() -> dict[str, Any]:
 @router.get("/state", tags=["state"])
 async def get_game_state(
     game_id: str = "default",
+    as_player: PlayerId | None = None,
     current_player: PlayerId | None = Depends(get_current_player_optional),
     session: AsyncSession = Depends(get_database_session),
 ) -> GameState:
     """
     Get the current game state with optional fog-of-war applied for the requesting player.
     If no authentication token is provided, returns the full game state without fog-of-war.
+
+    The ``as_player`` query param lets a god-mode observer (e.g. an
+    unseated lobby creator watching two Agents play) request the
+    fog-of-war view of a chosen player. It's strictly less information
+    than the unauthenticated god-mode response, so no extra auth is
+    required — anyone who could see the full board can also ask to see
+    a redacted slice of it.
     """
     try:
         controller = get_persistent_game_controller(session)
         state = await controller.get_game_state(game_id)
         if not state:
             raise HTTPException(status_code=404, detail="Game not found")
+
+        # Explicit perspective request wins over the caller's own seat —
+        # observers (creators, spectators) use this to switch views.
+        if as_player is not None:
+            if as_player not in state.players:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"as_player {as_player!r} is not a player in this game",
+                )
+            return redact_state(state, as_player)
 
         # Apply fog-of-war only if player is authenticated
         if current_player:
