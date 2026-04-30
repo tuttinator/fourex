@@ -4,6 +4,7 @@ Game rules and turn resolution logic.
 
 import heapq
 import random
+from collections.abc import Callable
 from copy import deepcopy
 
 from .models import (
@@ -79,74 +80,550 @@ from .models import (
     WithdrawTreatyAction,
 )
 
+MAP_TEMPLATES: tuple[str, ...] = (
+    "random",
+    "continent",
+    "islands",
+    "river",
+    "lakes",
+    "archipelago",
+)
+"""Names of the parametric map templates registered below.
 
-def generate_map(width: int, height: int, seed: int) -> list[Tile]:
-    """Generate a random map with the given dimensions and seed.
+The registry is populated at import time via the ``_template`` decorator;
+``MAP_TEMPLATES`` is the canonical ordering used by the lobby UI and by
+self-play smoke tests. ``saved:<id>`` (database-backed maps, Phase 4) is
+not a parametric template and is resolved by the lobby controller, not
+by this registry.
+"""
 
-    Phase 1 keeps the historical "independent roll per tile" structure as
-    the ``random`` template (the registry-driven dispatch lands in
-    Phase 2). The terrain table is widened to the seven-biome enum and
-    ore is moved off mountains onto hills so mines are reachable.
-    Mountains are guaranteed resource-free.
+_LAND_BIOMES: tuple[Terrain, ...] = (
+    Terrain.GRASS,
+    Terrain.FOREST,
+    Terrain.HILLS,
+    Terrain.MOUNTAIN,
+    Terrain.DESERT,
+    Terrain.SWAMP,
+)
+
+
+def _place_resource(rng: random.Random, terrain: Terrain) -> Resource | None:
+    """Roll a resource for ``terrain`` per the Phase 1 rules.
+
+    Mountains and water never carry resources; ore lives on hills, food on
+    grass, wood on forest, crystal primarily on desert with a rare-node
+    fallback on other passable land. Kept as a helper so every template
+    shares the same per-tile probability table.
     """
-    rng = random.Random(seed)
-    tiles = []
-    tile_id = 0
+    if terrain == Terrain.GRASS and rng.random() < 0.3:
+        return Resource.FOOD
+    if terrain == Terrain.FOREST and rng.random() < 0.4:
+        return Resource.WOOD
+    if terrain == Terrain.HILLS and rng.random() < 0.5:
+        return Resource.ORE
+    if terrain == Terrain.DESERT and rng.random() < 0.15:
+        return Resource.CRYSTAL
+    if (
+        terrain not in (Terrain.MOUNTAIN, Terrain.WATER, Terrain.SWAMP)
+        and rng.random() < 0.05
+    ):
+        return Resource.CRYSTAL
+    return None
 
+
+def _grid_to_tiles(grid: list[list[Terrain]], rng: random.Random) -> list[Tile]:
+    """Materialise a width×height grid of ``Terrain`` values into ``Tile`` rows.
+
+    Tile ids run 0..(w*h-1) in row-major (y, x) order so the engine's
+    ``state.tiles`` list stays index-addressable. Resources are rolled
+    per-tile via ``_place_resource``.
+    """
+    height = len(grid)
+    width = len(grid[0]) if height else 0
+    tiles: list[Tile] = []
+    tile_id = 0
     for y in range(height):
         for x in range(width):
-            # Independent roll per tile (legacy "noise" behaviour). The
-            # cumulative thresholds widen the previous 4-band table to 7
-            # bands while keeping land/water roughly comparable.
-            terrain_roll = rng.random()
-            if terrain_roll < 0.30:
-                terrain = Terrain.GRASS
-            elif terrain_roll < 0.45:
-                terrain = Terrain.FOREST
-            elif terrain_roll < 0.60:
-                terrain = Terrain.HILLS
-            elif terrain_roll < 0.70:
-                terrain = Terrain.MOUNTAIN
-            elif terrain_roll < 0.80:
-                terrain = Terrain.DESERT
-            elif terrain_roll < 0.85:
-                terrain = Terrain.SWAMP
-            else:
-                terrain = Terrain.WATER
-
-            # Add resources based on terrain. Mountains and water are
-            # always resource-free; ore lives on hills (the bug fix).
-            resource = None
-            if terrain == Terrain.GRASS and rng.random() < 0.3:
-                resource = Resource.FOOD
-            elif terrain == Terrain.FOREST and rng.random() < 0.4:
-                resource = Resource.WOOD
-            elif terrain == Terrain.HILLS and rng.random() < 0.5:
-                resource = Resource.ORE
-            elif terrain == Terrain.DESERT and rng.random() < 0.15:
-                resource = Resource.CRYSTAL
-            elif (
-                terrain
-                not in (
-                    Terrain.MOUNTAIN,
-                    Terrain.WATER,
-                    Terrain.SWAMP,
-                )
-                and rng.random() < 0.05
-            ):
-                # Rare crystal nodes on any other passable land tile.
-                resource = Resource.CRYSTAL
-
+            terrain = grid[y][x]
             tiles.append(
                 Tile(
                     id=tile_id,
                     loc=Coord(x=x, y=y),
                     terrain=terrain,
-                    resource=resource,
+                    resource=_place_resource(rng, terrain),
                 )
             )
             tile_id += 1
+    return tiles
 
+
+def _wrap(value: int, modulus: int) -> int:
+    """Toroidal wrap: positive remainder modulo ``modulus``."""
+    return value % modulus
+
+
+def _smooth_biomes(
+    grid: list[list[Terrain]],
+    width: int,
+    height: int,
+    iterations: int = 2,
+) -> None:
+    """Cellular-automata pass that pulls neighbouring biomes together.
+
+    Each pass replaces every land tile with the most common biome among
+    its 8-neighbourhood (counting itself). Water tiles stay water — the
+    smoothing is land-only, so coastlines are preserved exactly. The
+    result is coherent biome regions instead of pixel static.
+    """
+    for _ in range(iterations):
+        next_grid: list[list[Terrain]] = [row.copy() for row in grid]
+        for y in range(height):
+            for x in range(width):
+                if grid[y][x] == Terrain.WATER:
+                    continue
+                counts: dict[Terrain, int] = {}
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        nx = _wrap(x + dx, width)
+                        ny = _wrap(y + dy, height)
+                        nb = grid[ny][nx]
+                        if nb == Terrain.WATER:
+                            continue
+                        counts[nb] = counts.get(nb, 0) + 1
+                if not counts:
+                    continue
+                # Tie-break by Terrain enum order so the smoothing is
+                # fully deterministic given the input grid.
+                next_grid[y][x] = max(
+                    counts.items(),
+                    key=lambda kv: (kv[1], -_LAND_BIOMES.index(kv[0])),
+                )[0]
+        for y in range(height):
+            grid[y] = next_grid[y]
+
+
+def _land_biome_distribution(rng: random.Random) -> Terrain:
+    """Sample a single land biome from the Phase-1 distribution.
+
+    Cumulative bands: grass 35 / forest 20 / hills 18 / mountain 12 /
+    desert 10 / swamp 5. Tweaked vs. the legacy table to keep grass
+    plurality after smoothing pulls neighbours together (smoothing
+    favours majority biomes, so the seed distribution can lean more
+    grass-heavy without crushing variety).
+    """
+    roll = rng.random()
+    if roll < 0.35:
+        return Terrain.GRASS
+    if roll < 0.55:
+        return Terrain.FOREST
+    if roll < 0.73:
+        return Terrain.HILLS
+    if roll < 0.85:
+        return Terrain.MOUNTAIN
+    if roll < 0.95:
+        return Terrain.DESERT
+    return Terrain.SWAMP
+
+
+def _seeded_land_grid(
+    is_land: list[list[bool]],
+    rng: random.Random,
+    smooth_iterations: int = 2,
+) -> list[list[Terrain]]:
+    """Fill a land/water mask with biomes and smooth into coherent regions."""
+    height = len(is_land)
+    width = len(is_land[0]) if height else 0
+    grid: list[list[Terrain]] = [
+        [
+            _land_biome_distribution(rng) if is_land[y][x] else Terrain.WATER
+            for x in range(width)
+        ]
+        for y in range(height)
+    ]
+    _smooth_biomes(grid, width, height, iterations=smooth_iterations)
+    return grid
+
+
+def _torus_distance(a: Coord, b: Coord, width: int, height: int) -> int:
+    """Manhattan distance on a torus: the engine wraps map edges."""
+    dx = min(abs(a.x - b.x), width - abs(a.x - b.x))
+    dy = min(abs(a.y - b.y), height - abs(a.y - b.y))
+    return dx + dy
+
+
+def _select_spawn_zones(
+    tiles: list[Tile],
+    width: int,
+    height: int,
+    rng: random.Random,
+    player_count: int,
+    min_distance: int | None = None,
+) -> list[Coord]:
+    """Greedy farthest-point selection of spawn zones over candidate tiles.
+
+    Candidates are city-eligible land tiles (passable, ``CITY_ELIGIBLE_TERRAIN``).
+    The first zone is sampled randomly to keep the result seed-driven; each
+    subsequent zone is the candidate with the largest minimum torus-distance
+    to the already-chosen zones. ``min_distance`` is a soft floor — if the
+    map is too cramped to honour it, the helper still returns the best
+    spread it could find rather than failing.
+    """
+    if min_distance is None:
+        min_distance = max(3, min(width, height) // 4)
+
+    by_loc = {tile.loc: tile for tile in tiles}
+    candidates: list[Coord] = sorted(
+        (tile.loc for tile in tiles if tile.terrain in CITY_ELIGIBLE_TERRAIN),
+        key=lambda c: (c.y, c.x),
+    )
+    if not candidates:
+        return []
+
+    chosen: list[Coord] = [candidates[rng.randint(0, len(candidates) - 1)]]
+
+    while len(chosen) < player_count:
+        # Distance from each candidate to the nearest already-chosen zone.
+        scored = [
+            (
+                min(_torus_distance(c, picked, width, height) for picked in chosen),
+                c,
+            )
+            for c in candidates
+            if c not in chosen
+        ]
+        if not scored:
+            break
+        scored.sort(key=lambda item: (-item[0], item[1].y, item[1].x))
+        # Pick the best (largest min-distance). If the best already
+        # violates ``min_distance`` we still take it — caller decides
+        # what to do with a too-cramped result.
+        chosen.append(scored[0][1])
+
+    # Final pass: snap every chosen zone to a non-swamp tile if possible
+    # so opening turns aren't burned on a cost-3 entry. Swamps remain
+    # transit-eligible at runtime, just not opening tiles.
+    snapped: list[Coord] = []
+    for zone in chosen:
+        tile = by_loc.get(zone)
+        if tile is None:
+            continue
+        if tile.terrain == Terrain.SWAMP:
+            replacement = next(
+                (
+                    c
+                    for c in candidates
+                    if c not in chosen
+                    and by_loc[c].terrain != Terrain.SWAMP
+                    and all(_torus_distance(c, s, width, height) >= 2 for s in snapped)
+                ),
+                None,
+            )
+            if replacement is not None:
+                snapped.append(replacement)
+                continue
+        snapped.append(zone)
+    return snapped
+
+
+_TemplateGenerator = Callable[[int, int, int, int], tuple[list[Tile], list[Coord]]]
+
+
+_TEMPLATE_REGISTRY: dict[str, _TemplateGenerator] = {}
+
+
+def _template(name: str):
+    """Decorator that registers a template generator under ``name``."""
+
+    def deco(fn):
+        _TEMPLATE_REGISTRY[name] = fn
+        return fn
+
+    return deco
+
+
+def generate_map(
+    template: str,
+    width: int,
+    height: int,
+    seed: int,
+    player_count: int = 2,
+) -> tuple[list[Tile], list[Coord]]:
+    """Generate a map for ``template`` and return tiles + spawn zones.
+
+    Deterministic on ``(template, width, height, seed, player_count)``.
+    Returns a list of ``Tile`` rows (row-major, sequential ids) and a
+    list of ``Coord`` spawn zones — one per player, each on a passable
+    + city-eligible tile, separated by the per-template minimum
+    inter-zone distance where the map allows.
+
+    Templates: see ``MAP_TEMPLATES``. ``saved:<id>`` is resolved by the
+    lobby controller, not by this registry.
+    """
+    if template not in _TEMPLATE_REGISTRY:
+        raise ValueError(
+            f"Unknown map template {template!r}. "
+            f"Known templates: {sorted(_TEMPLATE_REGISTRY)}"
+        )
+    if width <= 0 or height <= 0:
+        raise ValueError("Map dimensions must be positive")
+    if player_count < 1:
+        raise ValueError("player_count must be >= 1")
+    return _TEMPLATE_REGISTRY[template](width, height, seed, player_count)
+
+
+@_template("random")
+def _generate_random(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """Legacy independent-roll-per-tile generator preserved as the escape
+    hatch.
+
+    Each tile is sampled independently from the seven-biome distribution.
+    No biome smoothing, so the result remains the unstructured "noise"
+    look the legacy generator produced. Spawn zones are still picked
+    via the shared farthest-point helper so opening turns are placeable.
+    """
+    rng = random.Random(seed)
+    grid: list[list[Terrain]] = []
+    for _y in range(height):
+        row: list[Terrain] = []
+        for _x in range(width):
+            roll = rng.random()
+            if roll < 0.30:
+                row.append(Terrain.GRASS)
+            elif roll < 0.45:
+                row.append(Terrain.FOREST)
+            elif roll < 0.60:
+                row.append(Terrain.HILLS)
+            elif roll < 0.70:
+                row.append(Terrain.MOUNTAIN)
+            elif roll < 0.80:
+                row.append(Terrain.DESERT)
+            elif roll < 0.85:
+                row.append(Terrain.SWAMP)
+            else:
+                row.append(Terrain.WATER)
+        grid.append(row)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+def _continent_mask(
+    width: int, height: int, rng: random.Random, water_margin: float = 0.18
+) -> list[list[bool]]:
+    """One big landmass mask: tiles within an inset radial bound become land.
+
+    The bound is a softened ellipse — distance from centre is normalised
+    to [0, 1] and tiles with normalised distance < ``1 - water_margin``
+    are land, with a small per-tile noise term so the coastline isn't a
+    perfect ellipse. Toroidal wrap is intentionally ignored: the
+    continent template wants visible water margins.
+    """
+    cx = (width - 1) / 2
+    cy = (height - 1) / 2
+    rx = max(width / 2 - 1, 1)
+    ry = max(height / 2 - 1, 1)
+    is_land = [[False] * width for _ in range(height)]
+    for y in range(height):
+        for x in range(width):
+            nx = (x - cx) / rx
+            ny = (y - cy) / ry
+            radial = (nx * nx + ny * ny) ** 0.5
+            jitter = (rng.random() - 0.5) * 0.18
+            is_land[y][x] = (radial + jitter) < (1.0 - water_margin)
+    return is_land
+
+
+@_template("continent")
+def _generate_continent(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """One large landmass surrounded by water margins."""
+    rng = random.Random(seed)
+    is_land = _continent_mask(width, height, rng)
+    grid = _seeded_land_grid(is_land, rng)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+def _islands_mask(
+    width: int,
+    height: int,
+    rng: random.Random,
+    island_count: int,
+) -> list[list[bool]]:
+    """Place ``island_count`` blob islands by sampling centres + radii.
+
+    Each island is a circle in torus distance with a radius scaled to
+    the map and the requested island count, plus a small noise term on
+    the boundary so islands aren't perfectly round.
+    """
+    is_land = [[False] * width for _ in range(height)]
+    centres: list[tuple[int, int]] = []
+    base_radius = max(2, int(min(width, height) / (island_count + 1)))
+    attempts = 0
+    while len(centres) < island_count and attempts < island_count * 30:
+        attempts += 1
+        cx = rng.randint(base_radius, width - base_radius - 1)
+        cy = rng.randint(base_radius, height - base_radius - 1)
+        if all(
+            ((cx - ox) ** 2 + (cy - oy) ** 2) ** 0.5 > base_radius * 1.6
+            for ox, oy in centres
+        ):
+            centres.append((cx, cy))
+    if not centres:
+        # Fall back to evenly spaced centres when the random sampler
+        # exhausted attempts (tiny maps + many islands).
+        centres = [
+            (
+                int((i + 0.5) * width / island_count),
+                height // 2,
+            )
+            for i in range(island_count)
+        ]
+    for cx, cy in centres:
+        radius = base_radius + rng.randint(-1, 2)
+        for y in range(height):
+            for x in range(width):
+                dx = min(abs(x - cx), width - abs(x - cx))
+                dy = min(abs(y - cy), height - abs(y - cy))
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist + (rng.random() - 0.5) * 0.6 < radius:
+                    is_land[y][x] = True
+    return is_land
+
+
+@_template("islands")
+def _generate_islands(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """``player_count`` distinct landmasses; one spawn zone per island."""
+    rng = random.Random(seed)
+    is_land = _islands_mask(width, height, rng, island_count=max(player_count, 2))
+    grid = _seeded_land_grid(is_land, rng)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+@_template("river")
+def _generate_river(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """Continent split by a tile-aligned water strip running through it.
+
+    The river runs vertically or horizontally (50/50) through the
+    middle third of the map. The PRD's "straight tile-aligned water
+    strips" wording is honoured exactly — true flowing rivers are out
+    of scope.
+    """
+    rng = random.Random(seed)
+    is_land = _continent_mask(width, height, rng, water_margin=0.12)
+    horizontal = rng.random() < 0.5
+    if horizontal:
+        # Pick a row band 1-2 tiles tall in the middle third.
+        band_y = rng.randint(height // 3, 2 * height // 3 - 1)
+        band_thickness = rng.choice([1, 1, 2])
+        for dy in range(band_thickness):
+            y = band_y + dy
+            for x in range(width):
+                # Random gaps so the strip isn't a perfect bar.
+                if rng.random() > 0.05:
+                    is_land[y][x] = False
+    else:
+        band_x = rng.randint(width // 3, 2 * width // 3 - 1)
+        band_thickness = rng.choice([1, 1, 2])
+        for dx in range(band_thickness):
+            x = band_x + dx
+            for y in range(height):
+                if rng.random() > 0.05:
+                    is_land[y][x] = False
+    grid = _seeded_land_grid(is_land, rng)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+@_template("lakes")
+def _generate_lakes(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """Continent with several scattered inland water bodies."""
+    rng = random.Random(seed)
+    is_land = _continent_mask(width, height, rng, water_margin=0.10)
+    lake_count = max(3, (width * height) // 80)
+    base_radius = max(2, int(min(width, height) / 10))
+    for _ in range(lake_count):
+        cx = rng.randint(2, width - 3)
+        cy = rng.randint(2, height - 3)
+        radius = base_radius + rng.randint(-1, 1)
+        for y in range(height):
+            for x in range(width):
+                dx = abs(x - cx)
+                dy = abs(y - cy)
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist + (rng.random() - 0.5) * 0.5 < radius:
+                    is_land[y][x] = False
+    grid = _seeded_land_grid(is_land, rng)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+@_template("archipelago")
+def _generate_archipelago(
+    width: int, height: int, seed: int, player_count: int
+) -> tuple[list[Tile], list[Coord]]:
+    """Mostly water with many small island clusters.
+
+    Targets ``~3 × player_count`` small islands so unused spawn zones
+    still feel like explorable places. Island radius is smaller than
+    the ``islands`` template so the result reads as scatter, not a few
+    big landmasses.
+    """
+    rng = random.Random(seed)
+    target_islands = max(player_count * 2, 5)
+    is_land = [[False] * width for _ in range(height)]
+    # Smaller, sparser islands so the result reads as "scatter on water"
+    # rather than "more land than sea". The base radius caps at 2 — a
+    # 30×30 archipelago should sit around 60-65% water.
+    base_radius = min(2, max(1, int(min(width, height) / (target_islands * 1.4))))
+    centres: list[tuple[int, int]] = []
+    attempts = 0
+    while len(centres) < target_islands and attempts < target_islands * 40:
+        attempts += 1
+        cx = rng.randint(1, width - 2)
+        cy = rng.randint(1, height - 2)
+        if all(
+            ((cx - ox) ** 2 + (cy - oy) ** 2) ** 0.5 > base_radius * 2.4
+            for ox, oy in centres
+        ):
+            centres.append((cx, cy))
+    for cx, cy in centres:
+        radius = base_radius + rng.randint(0, 1)
+        for y in range(height):
+            for x in range(width):
+                dx = min(abs(x - cx), width - abs(x - cx))
+                dy = min(abs(y - cy), height - abs(y - cy))
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist + (rng.random() - 0.5) * 0.7 < radius:
+                    is_land[y][x] = True
+    grid = _seeded_land_grid(is_land, rng, smooth_iterations=1)
+    tiles = _grid_to_tiles(grid, rng)
+    spawn_zones = _select_spawn_zones(tiles, width, height, rng, player_count)
+    return tiles, spawn_zones
+
+
+def generate_random_tiles(width: int, height: int, seed: int) -> list[Tile]:
+    """Backwards-compat helper: run the ``random`` template and drop spawn zones.
+
+    Used by tests and callers that want only a tile grid without
+    template selection. New code should call ``generate_map(...)``
+    directly.
+    """
+    tiles, _zones = generate_map("random", width, height, seed, player_count=2)
     return tiles
 
 
@@ -3505,34 +3982,55 @@ def place_starting_units(
     player_id: PlayerId,
     rng: random.Random,
     min_distance: int = 5,
+    spawn_zone: Coord | None = None,
 ) -> None:
     """Place a starting worker and scout for ``player_id``.
 
-    The worker is placed on a plains/forest tile inside a margin-trimmed inner
-    region, at least ``min_distance`` away from any existing unit. If no such
-    spot is found after 100 attempts, falls back to the first suitable tile.
-    The scout is placed on an adjacent passable tile via ``_find_scout_placement``.
+    Phase 2 of the map system overhaul adds the ``spawn_zone`` argument:
+    when provided, the worker is placed there directly and the scout is
+    placed on an adjacent passable tile. When omitted, the helper falls
+    back to the legacy random-roll placement (margin-trimmed, at least
+    ``min_distance`` from existing units, 100-attempt budget) so callers
+    that haven't migrated to spawn-zone-aware generators still work.
 
-    Both units are registered on ``state.units`` and on their tile's ``unit_id``,
-    and ``state.next_unit_id`` is advanced.
+    Both units are registered on ``state.units`` and on their tile's
+    ``unit_id``, and ``state.next_unit_id`` is advanced.
     """
     map_w = state.map_width
     map_h = state.map_height
-    margin = min(2, map_w // 5, map_h // 5)
 
     worker_loc: Coord | None = None
-    for _ in range(100):
-        x = rng.randint(margin, map_w - margin - 1)
-        y = rng.randint(margin, map_h - margin - 1)
-        coord = Coord(x=x, y=y)
-        tile = state.get_tile(coord)
-        if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
-            too_close = any(
-                coord.distance_to(u.loc) < min_distance for u in state.units.values()
-            )
-            if not too_close:
-                worker_loc = coord
-                break
+
+    if spawn_zone is not None:
+        # Spawn-zone-driven placement: respect the per-template choice
+        # exactly. If the requested tile is occupied (e.g. another
+        # player snuck in), find the nearest passable empty tile so we
+        # don't double-stack.
+        candidate_tile = state.get_tile(spawn_zone)
+        if (
+            candidate_tile is not None
+            and candidate_tile.terrain in _PASSABLE_TERRAIN
+            and not candidate_tile.unit_ids
+        ):
+            worker_loc = spawn_zone
+        else:
+            worker_loc = _find_scout_placement(state, spawn_zone)
+
+    if worker_loc is None:
+        margin = min(2, map_w // 5, map_h // 5)
+        for _ in range(100):
+            x = rng.randint(margin, map_w - margin - 1)
+            y = rng.randint(margin, map_h - margin - 1)
+            coord = Coord(x=x, y=y)
+            tile = state.get_tile(coord)
+            if tile and tile.terrain in _PASSABLE_TERRAIN and not tile.unit_ids:
+                too_close = any(
+                    coord.distance_to(u.loc) < min_distance
+                    for u in state.units.values()
+                )
+                if not too_close:
+                    worker_loc = coord
+                    break
 
     if worker_loc is None:
         for tile in state.tiles:

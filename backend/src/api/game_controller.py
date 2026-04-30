@@ -44,7 +44,9 @@ class GameController:
             raise ValueError("Games require 2-8 players")
 
         # Generate map
-        tiles = generate_map(20, 20, seed)
+        tiles, spawn_zones = generate_map(
+            "random", 20, 20, seed, player_count=len(players)
+        )
 
         # Create initial game state
         state = GameState(
@@ -60,8 +62,9 @@ class GameController:
 
         # Place starting worker + scout per player
         rng = random.Random(seed)
-        for player in players:
-            place_starting_units(state, player, rng)
+        for idx, player in enumerate(players):
+            zone = spawn_zones[idx] if idx < len(spawn_zones) else None
+            place_starting_units(state, player, rng, spawn_zone=zone)
 
         # Initialise discovered-players sets from starting visibility.
         update_discovery(state)

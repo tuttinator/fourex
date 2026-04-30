@@ -256,6 +256,12 @@ export interface CreateLobbyRequest {
 	map_width?: number;
 	map_height?: number;
 	seed?: number;
+	/** Phase 2 (map system overhaul): parametric template name for
+	 * map generation. One of ``random`` | ``continent`` | ``islands`` |
+	 * ``river`` | ``lakes`` | ``archipelago``. Future namespaces
+	 * (``saved:<id>``, ``scenario:<id>``) are accepted as bare strings.
+	 * Defaults to ``random`` server-side. */
+	map_template?: MapTemplate | string;
 	/** Phase 3: false → owner-only / all-Agent game; the creator is
 	 * not seated in any slot and has no per-game API key. */
 	creator_seated?: boolean;
@@ -264,6 +270,54 @@ export interface CreateLobbyRequest {
 	 * behaviour. */
 	slots?: SlotConfigRequest[];
 }
+
+/** Phase 2 (map system overhaul): canonical parametric template names
+ * surfaced in the lobby UI drop-down. Saved-map identifiers
+ * (``saved:<id>``) live in a separate namespace. */
+export type MapTemplate =
+	| "random"
+	| "continent"
+	| "islands"
+	| "river"
+	| "lakes"
+	| "archipelago";
+
+export const MAP_TEMPLATES: ReadonlyArray<{
+	value: MapTemplate;
+	label: string;
+	description: string;
+}> = [
+	{
+		value: "random",
+		label: "Random",
+		description: "Legacy unstructured noise — no continents.",
+	},
+	{
+		value: "continent",
+		label: "Continent",
+		description: "One large landmass with water margins.",
+	},
+	{
+		value: "islands",
+		label: "Islands",
+		description: "Distinct landmasses, one per player.",
+	},
+	{
+		value: "river",
+		label: "River",
+		description: "Continent split by a tile-aligned water strip.",
+	},
+	{
+		value: "lakes",
+		label: "Lakes",
+		description: "Mostly land with scattered inland water bodies.",
+	},
+	{
+		value: "archipelago",
+		label: "Archipelago",
+		description: "Mostly water with small island clusters.",
+	},
+];
 
 export interface JoinLobbyRequest {
 	player_id: string;
@@ -324,6 +378,9 @@ export interface GameDetailResponse {
 	map_width: number;
 	map_height: number;
 	seed: number;
+	/** Phase 2 (map system overhaul): the parametric template that
+	 * generated the map. Defaults to "random" for legacy rows. */
+	map_template?: string;
 	status: "waiting" | "active" | "ended" | "created";
 	winner: string | null;
 	victory_type: string | null;

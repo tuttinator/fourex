@@ -18,7 +18,8 @@ import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
 import { setGameCredentials } from '@/lib/game-auth'
 import { useToast } from '@/hooks/use-toast'
-import type { CreateLobbyRequest, SlotConfigRequest } from '@/types/game'
+import type { CreateLobbyRequest, MapTemplate, SlotConfigRequest } from '@/types/game'
+import { MAP_TEMPLATES } from '@/types/game'
 
 interface CreateGameDialogProps {
   open: boolean
@@ -71,6 +72,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
   const [mapWidth, setMapWidth] = useState('20')
   const [mapHeight, setMapHeight] = useState('20')
   const [seed, setSeed] = useState('42')
+  const [mapTemplate, setMapTemplate] = useState<MapTemplate>('random')
 
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -157,6 +159,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
     setMapWidth('20')
     setMapHeight('20')
     setSeed('42')
+    setMapTemplate('random')
     onOpenChange(false)
   }
 
@@ -211,6 +214,7 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
       map_width: width,
       map_height: height,
       seed: parseInt(seed) || 42,
+      map_template: mapTemplate,
       creator_seated: creatorSeated,
       slots: slotConfigs,
     }
@@ -364,6 +368,26 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
               />
               <p className="text-xs text-muted-foreground mt-1">10-100 tiles</p>
             </div>
+          </div>
+
+          <div>
+            <Label htmlFor="mapTemplate">Map Template</Label>
+            <select
+              id="mapTemplate"
+              value={mapTemplate}
+              onChange={(e) => setMapTemplate(e.target.value as MapTemplate)}
+              className="mt-1 w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+              data-testid="create-map-template"
+            >
+              {MAP_TEMPLATES.map((tpl) => (
+                <option key={tpl.value} value={tpl.value}>
+                  {tpl.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              {MAP_TEMPLATES.find((t) => t.value === mapTemplate)?.description}
+            </p>
           </div>
 
           <div>

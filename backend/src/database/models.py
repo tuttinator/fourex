@@ -42,6 +42,13 @@ class Game(Base):
     map_width: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     map_height: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     rng_state: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Phase 2 (map system overhaul): the parametric template name that
+    # generated this game's map. Stored as a free string so future
+    # namespaces (``saved:<id>``, ``scenario:<id>``) are additive without a
+    # schema change. ``random`` reproduces the legacy noise generator.
+    map_template: Mapped[str] = mapped_column(
+        String(64), default="random", server_default="random", nullable=False
+    )
 
     # Lobby configuration
     player_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)

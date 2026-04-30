@@ -43,7 +43,7 @@ from backend.src.game.rules import (
     emit_diplomatic_event,
     execute_attack,
     execute_declare_war,
-    generate_map,
+    generate_random_tiles,
     has_discovered,
     place_starting_units,
     record_discovery,
@@ -68,7 +68,7 @@ def _fresh_state(
 ) -> GameState:
     return GameState(
         rng_state=seed,
-        tiles=generate_map(width, height, seed),
+        tiles=generate_random_tiles(width, height, seed),
         players=players or [],
         map_width=width,
         map_height=height,

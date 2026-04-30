@@ -33,7 +33,7 @@ from backend.src.game.models import (
 )
 from backend.src.game.rules import (
     execute_send_message,
-    generate_map,
+    generate_random_tiles,
     place_starting_units,
     record_discovery,
     redact_state,
@@ -55,7 +55,7 @@ def _fresh_state(
 ) -> GameState:
     return GameState(
         rng_state=seed,
-        tiles=generate_map(width, height, seed),
+        tiles=generate_random_tiles(width, height, seed),
         players=players or [],
         map_width=width,
         map_height=height,

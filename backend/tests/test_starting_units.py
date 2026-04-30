@@ -17,7 +17,7 @@ from backend.src.game.models import Coord, GameState, Terrain, UnitType
 from backend.src.game.rules import (
     STARTING_STOCKPILE,
     STARTING_WORKER_HP,
-    generate_map,
+    generate_random_tiles,
     place_starting_units,
 )
 from backend.src.mcp_server.server import create_mcp_server
@@ -31,7 +31,7 @@ from backend.src.mcp_server.server import create_mcp_server
 def _fresh_state(width: int = 20, height: int = 20, seed: int = 42) -> GameState:
     return GameState(
         rng_state=seed,
-        tiles=generate_map(width, height, seed),
+        tiles=generate_random_tiles(width, height, seed),
         players=[],
         map_width=width,
         map_height=height,

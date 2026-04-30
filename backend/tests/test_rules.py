@@ -23,7 +23,7 @@ from backend.src.game.rules import (
     execute_found_city,
     execute_move,
     execute_train_unit,
-    generate_map,
+    generate_random_tiles,
     get_neighbors,
     get_visible_tiles,
     is_valid_move,
@@ -31,6 +31,17 @@ from backend.src.game.rules import (
     reset_unit_moves,
     resolve_turn,
 )
+
+
+def generate_map(width: int, height: int, seed: int):
+    """Test shim for legacy ``generate_map(width, height, seed)`` signature.
+
+    Phase 2 of the map system overhaul replaced the engine entry point
+    with ``generate_map(template, width, height, seed, player_count)``.
+    These tests target the historical behaviour of the noise generator,
+    so we route through the dedicated tile-only helper.
+    """
+    return generate_random_tiles(width, height, seed)
 
 
 class TestMapGeneration:

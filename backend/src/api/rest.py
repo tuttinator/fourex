@@ -921,6 +921,15 @@ class CreateLobbyRequest(BaseModel):
     map_width: int = Field(default=20, ge=10, le=100, description="Map width")
     map_height: int = Field(default=20, ge=10, le=100, description="Map height")
     seed: int = Field(default=42, description="Random seed for map generation")
+    map_template: str = Field(
+        default="random",
+        max_length=64,
+        description=(
+            "Parametric map template name. One of random, continent, "
+            "islands, river, lakes, archipelago. Future namespaces "
+            "(saved:<id>, scenario:<id>) are accepted as bare strings."
+        ),
+    )
     creator_seated: bool = Field(
         default=True,
         description=(
@@ -977,6 +986,7 @@ class GameDetailResponse(BaseModel):
     map_width: int
     map_height: int
     seed: int
+    map_template: str = "random"
     status: str
     winner: str | None
     victory_type: str | None
@@ -1169,6 +1179,7 @@ async def create_lobby(
             creator=request.player_id if request.creator_seated else None,
             creator_user_identity_id=identity.user_identity_id,
             slot_configs=slot_configs,
+            map_template=request.map_template,
         )
 
         # Seat the creator immediately so the lobby isn't empty (when
@@ -1845,6 +1856,7 @@ def _game_detail_response(
         map_width=game.map_width,
         map_height=game.map_height,
         seed=game.seed,
+        map_template=getattr(game, "map_template", "random") or "random",
         status=game.status,
         winner=game.winner,
         victory_type=game.victory_type,

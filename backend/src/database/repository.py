@@ -51,6 +51,7 @@ class GameRepository:
         creator: str | None = None,
         creator_user_identity_id: int | None = None,
         status: str = "created",
+        map_template: str = "random",
     ) -> Game:
         """Create a new game record."""
         # Create initial game state
@@ -83,6 +84,7 @@ class GameRepository:
             creator=creator,
             creator_user_identity_id=creator_user_identity_id,
             status=status,
+            map_template=map_template,
         )
 
         self.session.add(game)

@@ -68,6 +68,7 @@ class PersistentGameController:
         creator: str | None,
         creator_user_identity_id: int | None = None,
         slot_configs: list[SlotDict] | None = None,
+        map_template: str = "random",
     ) -> None:
         """Create a game lobby in waiting status.
 
@@ -78,6 +79,13 @@ class PersistentGameController:
         their ``player_api_key_id`` / ``plaintext_key`` are populated
         separately by the REST/MCP caller after a key is minted —
         keeping the auth layer as the single key-minting site.
+
+        ``map_template`` (Phase 2 of the map system overhaul) selects a
+        parametric generator from ``MAP_TEMPLATES``. Spawn zones are
+        not persisted — they are re-derived deterministically from
+        ``(map_template, map_width, map_height, seed, player_slots)``
+        whenever a player is seated, so we never have to store a
+        spawn-zone list and risk it drifting from the tile data.
         """
         if player_slots < 2 or player_slots > 8:
             raise ValueError("Games require 2-8 player slots")
@@ -87,7 +95,9 @@ class PersistentGameController:
             raise ValueError(f"Game {game_id} already exists")
 
         # Generate map at creation time
-        tiles = generate_map(map_width, map_height, seed)
+        tiles, _spawn_zones = generate_map(
+            map_template, map_width, map_height, seed, player_count=player_slots
+        )
 
         # Create game state with no players yet (they join via /join)
         state = GameState(
@@ -111,6 +121,7 @@ class PersistentGameController:
             creator=creator,
             creator_user_identity_id=creator_user_identity_id,
             status="waiting",
+            map_template=map_template,
         )
 
         # Seed lobby_slots: when the caller provides a per-slot config
@@ -501,7 +512,21 @@ class PersistentGameController:
                 )
 
             rng = random.Random(db_game.seed + len(players))
-            place_starting_units(state, player_id, rng)
+            # Re-derive spawn zones for the per-player join path so each
+            # joiner lands on their own template-chosen tile rather than
+            # rolling random placement. Position in the zone list maps
+            # to the joiner's slot index (the player just appended at
+            # ``len(players) - 1``).
+            _tiles, spawn_zones = generate_map(
+                db_game.map_template,
+                db_game.map_width,
+                db_game.map_height,
+                db_game.seed,
+                player_count=db_game.player_slots,
+            )
+            zone_idx = len(players) - 1
+            zone = spawn_zones[zone_idx] if 0 <= zone_idx < len(spawn_zones) else None
+            place_starting_units(state, player_id, rng, spawn_zone=zone)
             update_discovery(state)
 
             await self.repo.update_game_state(game_id, state)
@@ -612,8 +637,19 @@ class PersistentGameController:
             state.stockpiles[player] = STARTING_STOCKPILE.model_copy()
         seed_research(state, players)
 
-        # Place starting units
-        self._place_starting_units(state, players, db_game.seed)
+        # Place starting units. Spawn zones are re-derived from the
+        # template + dimensions + seed + slot count so the placement
+        # matches what the per-template generator picked at create_lobby
+        # time. Tiles are already in ``state``; we only need the zone
+        # list, so the recomputed tiles are discarded.
+        _tiles, spawn_zones = generate_map(
+            db_game.map_template,
+            db_game.map_width,
+            db_game.map_height,
+            db_game.seed,
+            player_count=db_game.player_slots,
+        )
+        self._place_starting_units(state, players, db_game.seed, spawn_zones)
 
         # Seed discovered-players sets from starting visibility.
         update_discovery(state)
@@ -726,15 +762,33 @@ class PersistentGameController:
 
     @staticmethod
     def _place_starting_units(
-        state: GameState, players: list[PlayerId], seed: int
+        state: GameState,
+        players: list[PlayerId],
+        seed: int,
+        spawn_zones: list[Any] | None = None,
     ) -> None:
-        """Place a starting worker + scout per player on suitable terrain."""
+        """Place a starting worker + scout per player on suitable terrain.
+
+        ``spawn_zones`` (Phase 2 of the map system overhaul) is a list of
+        per-template spawn coords from ``generate_map``. When provided,
+        each player is seated on their indexed zone; falls back to the
+        legacy random-roll placement when omitted.
+        """
         rng = random.Random(seed)
-        for player in players:
-            place_starting_units(state, player, rng)
+        for idx, player in enumerate(players):
+            zone = (
+                spawn_zones[idx]
+                if spawn_zones is not None and idx < len(spawn_zones)
+                else None
+            )
+            place_starting_units(state, player, rng, spawn_zone=zone)
 
     async def create_game(
-        self, game_id: str, players: list[PlayerId], seed: int = 42
+        self,
+        game_id: str,
+        players: list[PlayerId],
+        seed: int = 42,
+        map_template: str = "random",
     ) -> None:
         """Create a new game instance with database persistence (legacy: immediate start)."""
         if len(players) < 2 or len(players) > 8:
@@ -746,7 +800,9 @@ class PersistentGameController:
             raise ValueError(f"Game {game_id} already exists")
 
         # Generate map
-        tiles = generate_map(20, 20, seed)
+        tiles, spawn_zones = generate_map(
+            map_template, 20, 20, seed, player_count=len(players)
+        )
 
         # Create initial game state
         state = GameState(
@@ -761,7 +817,7 @@ class PersistentGameController:
         seed_research(state, players)
 
         # Place starting units
-        self._place_starting_units(state, players, seed)
+        self._place_starting_units(state, players, seed, spawn_zones)
 
         # Seed discovered-players sets from starting visibility.
         update_discovery(state)
@@ -775,6 +831,7 @@ class PersistentGameController:
             map_height=20,
             max_turns=100,
             player_slots=len(players),
+            map_template=map_template,
         )
 
         # Phase 2: keep ``lobby_slots`` in lock-step with ``players`` for

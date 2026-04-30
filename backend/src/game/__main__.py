@@ -35,7 +35,7 @@ def create_test_game(players: list[PlayerId], seed: int) -> GameState:
     console = Console()
 
     # Generate map
-    tiles = generate_map(20, 20, seed)
+    tiles, spawn_zones = generate_map("random", 20, 20, seed, player_count=len(players))
 
     # Create game state
     state = GameState(
@@ -51,9 +51,10 @@ def create_test_game(players: list[PlayerId], seed: int) -> GameState:
 
     # Place starting worker + scout for each player
     rng = random.Random(seed + 1000)
-    for player in players:
+    for idx, player in enumerate(players):
         before = set(state.units.keys())
-        place_starting_units(state, player, rng)
+        zone = spawn_zones[idx] if idx < len(spawn_zones) else None
+        place_starting_units(state, player, rng, spawn_zone=zone)
         for unit_id in sorted(set(state.units.keys()) - before):
             unit = state.units[unit_id]
             console.print(

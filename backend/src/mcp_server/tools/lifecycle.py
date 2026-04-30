@@ -47,6 +47,7 @@ def register(mcp: FastMCP) -> None:
         map_width: int = 20,
         map_height: int = 20,
         victory_conditions: list[str] | None = None,
+        map_template: str = "random",
     ) -> dict[str, Any]:
         """Create a new game with the given player names.
 
@@ -58,6 +59,10 @@ def register(mcp: FastMCP) -> None:
             map_height: Map height in tiles.
             victory_conditions: Enabled victory conditions. Defaults to all four:
                 ["domination", "economic", "elimination", "score"].
+            map_template: Parametric map template name (Phase 2). One of
+                ``random``, ``continent``, ``islands``, ``river``,
+                ``lakes``, ``archipelago``. Defaults to ``random`` for
+                the legacy noise generator.
 
         Returns:
             game_id and a mapping of player name → API key.
@@ -91,8 +96,17 @@ def register(mcp: FastMCP) -> None:
             if existing:
                 game_id = f"game_{secrets.token_hex(4)}"
 
-            # Generate map
-            tiles = generate_map(map_width, map_height, seed)
+            # Generate map (Phase 2: registry-driven dispatch)
+            try:
+                tiles, spawn_zones = generate_map(
+                    map_template,
+                    map_width,
+                    map_height,
+                    seed,
+                    player_count=len(players),
+                )
+            except ValueError as exc:
+                return {"error": str(exc)}
 
             # Build initial game state
             state = GameState(
@@ -112,8 +126,9 @@ def register(mcp: FastMCP) -> None:
 
             # Place starting worker + scout per player
             rng = random.Random(seed)
-            for player in players:
-                place_starting_units(state, player, rng)
+            for idx, player in enumerate(players):
+                zone = spawn_zones[idx] if idx < len(spawn_zones) else None
+                place_starting_units(state, player, rng, spawn_zone=zone)
 
             # Seed discovered-players sets from starting visibility.
             update_discovery(state)
@@ -126,6 +141,7 @@ def register(mcp: FastMCP) -> None:
                 max_turns=max_turns,
                 map_width=map_width,
                 map_height=map_height,
+                map_template=map_template,
             )
             await repo.update_game_state(game_id, state)
             await repo.create_game_snapshot(
