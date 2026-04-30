@@ -1195,6 +1195,18 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
     [queue, selectedUnitId],
   )
 
+  // Total unread inbound messages across all opponents — surfaces a
+  // badge on the Diplomacy tab so the user notices new traffic without
+  // opening the panel.
+  const totalUnreadMessages = useMemo(() => {
+    if (!diplomacyState) return 0
+    return diplomacyState.messages.filter(
+      (m) =>
+        m.recipient === currentPlayer &&
+        m.id > (lastSeenMessageIds[m.sender] ?? 0),
+    ).length
+  }, [diplomacyState, lastSeenMessageIds, currentPlayer])
+
   // Hide already-queued buildings from the city panel so the same
   // building isn't stacked twice.
   const queuedBuildingsForCity = useMemo(() => {
@@ -1827,7 +1839,11 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
 
         {/* Sidebar */}
         <div className="w-96 border-l border-border bg-bg-subtle flex flex-col h-full min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+          {/* Selection — always pinned at the top so the contextual
+              affordances (Found City, Auto-improve, Train, Build, …) are
+              never pushed below the fold by Diplomacy / Research / Rules.
+              Caps at 55vh so a fat city queue can't eat the tabs. */}
+          <div className="shrink-0 max-h-[55vh] overflow-y-auto flex flex-col">
           {selectedCity ? (
             <CityPanel
               city={selectedCity}
@@ -1977,122 +1993,201 @@ export function GameplayView({ gameId, currentPlayer }: GameplayViewProps) {
               }}
             />
           )}
-
-          {/* Submission roster (Phase 6) */}
-          <SubmissionRoster
-            players={gameState.players}
-            currentPlayer={currentPlayer}
-            submittedPlayers={submittedPlayers}
-          />
-
-          {/* Diplomacy panel (Phase 7) */}
-          <DiplomacyPanel
-            currentPlayer={currentPlayer}
-            players={gameState.players}
-            diplomacy={diplomacyState ?? null}
-            selectedOpponent={selectedOpponent}
-            onSelectOpponent={(opponent) => {
-              setSelectedOpponent(opponent)
-              // Viewing the thread clears unread: advance the high-water
-              // mark to the latest message id visible between us and
-              // ``opponent``.
-              if (opponent && diplomacyState) {
-                const maxId = diplomacyState.messages.reduce((acc, m) => {
-                  if (
-                    (m.sender === currentPlayer && m.recipient === opponent) ||
-                    (m.sender === opponent && m.recipient === currentPlayer)
-                  ) {
-                    return Math.max(acc, m.id)
-                  }
-                  return acc
-                }, lastSeenMessageIds[opponent] ?? 0)
-                setLastSeenMessageIds((prev) => ({
-                  ...prev,
-                  [opponent]: maxId,
-                }))
-              }
-            }}
-            lastSeenMessageIds={lastSeenMessageIds}
-            queuedActions={queue.map((q) => q.action)}
-            onQueueMessage={(recipient, body) =>
-              appendToQueue({ type: 'SEND_MESSAGE', recipient, body })
-            }
-            onQueueProposeTreaty={(recipient, clauses) =>
-              appendToQueue({ type: 'PROPOSE_TREATY', recipient, clauses })
-            }
-            onQueueRespondToTreaty={(proposal_id, accept) =>
-              appendToQueue({ type: 'RESPOND_TO_TREATY', proposal_id, accept })
-            }
-            onQueueWithdrawTreaty={(proposal_id) =>
-              appendToQueue({ type: 'WITHDRAW_TREATY', proposal_id })
-            }
-            onQueueCancelTreaty={(treaty_id) =>
-              appendToQueue({ type: 'CANCEL_TREATY', treaty_id })
-            }
-            onQueueDeclareWar={(target_player) =>
-              appendToQueue({ type: 'DECLARE_WAR', target_player })
-            }
-          />
-
-          {/* Rules reference (Phase 1) — static canonical payload. */}
-          <RulesReferencePanel />
-
-          {/* Tech tree panel (Phase 6) */}
-          <TechTreePanel
-            techTree={techTreeData?.tech_tree ?? null}
-            research={techTreeData?.research ?? null}
-            sciencePerTurn={
-              computeYieldBreakdown(gameState, currentPlayer).total.science
-            }
-            queuedResearchTechId={queuedResearchTechId}
-            onSelectActive={(tech_id) =>
-              appendToQueue({ type: 'SET_ACTIVE_RESEARCH', tech_id })
-            }
-          />
-
-          {/* Queue panel */}
-          <Panel
-            title={`Queued orders (${queue.length})`}
-            className="rounded-none border-x-0 border-t-0 flex-1"
-          >
-            {queue.length === 0 ? (
-              <p className="text-xs text-ink-muted">
-                No orders queued. Select a unit or city to see what you
-                can do this turn.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {queue.map((q) => (
-                  <div
-                    key={q.queue_id}
-                    className="flex items-center justify-between rounded-md border border-border bg-bg-subtle px-2 py-1.5"
-                    style={{ fontSize: 12 }}
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-ink">
-                        {describeAction(q.action)}
-                      </span>
-                      {q.error && (
-                        <span className="text-destructive" style={{ fontSize: 11 }}>
-                          {q.error}
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label="Remove queued order"
-                      onClick={() => removeFromQueue(q.queue_id)}
-                      className="h-6 w-6 p-0"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
           </div>
+
+          {/* Tabbed sidebar — Orders is default so the queue and
+              submission roster are visible on first paint. forceMount
+              keeps every TabsContent in the DOM so React Query state
+              and message drafts survive tab switches and existing
+              testids stay reachable. */}
+          <Tabs
+            defaultValue="orders"
+            className="flex-1 min-h-0 flex flex-col"
+          >
+            <TabsList className="h-9 shrink-0 grid grid-cols-4 rounded-none border-b border-border bg-bg-subtle p-0 gap-0">
+              <TabsTrigger
+                value="orders"
+                className="rounded-none border-r border-border h-full text-xs data-[state=active]:bg-surface data-[state=active]:shadow-none"
+                data-testid="sidebar-tab-orders"
+              >
+                Orders
+                {queue.length > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="ml-1.5 h-4 px-1.5 text-[10px] leading-none"
+                  >
+                    {queue.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger
+                value="diplomacy"
+                className="rounded-none border-r border-border h-full text-xs data-[state=active]:bg-surface data-[state=active]:shadow-none"
+                data-testid="sidebar-tab-diplomacy"
+              >
+                Diplomacy
+                {totalUnreadMessages > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="ml-1.5 h-4 px-1.5 text-[10px] leading-none"
+                    data-testid="sidebar-tab-diplomacy-unread"
+                  >
+                    {totalUnreadMessages}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger
+                value="research"
+                className="rounded-none border-r border-border h-full text-xs data-[state=active]:bg-surface data-[state=active]:shadow-none"
+                data-testid="sidebar-tab-research"
+              >
+                Research
+              </TabsTrigger>
+              <TabsTrigger
+                value="rules"
+                className="rounded-none h-full text-xs data-[state=active]:bg-surface data-[state=active]:shadow-none"
+                data-testid="sidebar-tab-rules"
+              >
+                Rules
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent
+              value="orders"
+              forceMount
+              className="mt-0 flex-1 min-h-0 overflow-y-auto flex flex-col data-[state=inactive]:hidden"
+            >
+              {/* Submission roster (Phase 6) */}
+              <SubmissionRoster
+                players={gameState.players}
+                currentPlayer={currentPlayer}
+                submittedPlayers={submittedPlayers}
+              />
+
+              {/* Queue panel */}
+              <Panel
+                title={`Queued orders (${queue.length})`}
+                className="rounded-none border-x-0 border-t-0 flex-1"
+              >
+                {queue.length === 0 ? (
+                  <p className="text-xs text-ink-muted">
+                    No orders queued. Select a unit or city to see what you
+                    can do this turn.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {queue.map((q) => (
+                      <div
+                        key={q.queue_id}
+                        className="flex items-center justify-between rounded-md border border-border bg-bg-subtle px-2 py-1.5"
+                        style={{ fontSize: 12 }}
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-ink">
+                            {describeAction(q.action)}
+                          </span>
+                          {q.error && (
+                            <span className="text-destructive" style={{ fontSize: 11 }}>
+                              {q.error}
+                            </span>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Remove queued order"
+                          onClick={() => removeFromQueue(q.queue_id)}
+                          className="h-6 w-6 p-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            </TabsContent>
+
+            <TabsContent
+              value="diplomacy"
+              forceMount
+              className="mt-0 flex-1 min-h-0 overflow-y-auto flex flex-col data-[state=inactive]:hidden"
+            >
+              <DiplomacyPanel
+                currentPlayer={currentPlayer}
+                players={gameState.players}
+                diplomacy={diplomacyState ?? null}
+                selectedOpponent={selectedOpponent}
+                onSelectOpponent={(opponent) => {
+                  setSelectedOpponent(opponent)
+                  // Viewing the thread clears unread: advance the high-water
+                  // mark to the latest message id visible between us and
+                  // ``opponent``.
+                  if (opponent && diplomacyState) {
+                    const maxId = diplomacyState.messages.reduce((acc, m) => {
+                      if (
+                        (m.sender === currentPlayer && m.recipient === opponent) ||
+                        (m.sender === opponent && m.recipient === currentPlayer)
+                      ) {
+                        return Math.max(acc, m.id)
+                      }
+                      return acc
+                    }, lastSeenMessageIds[opponent] ?? 0)
+                    setLastSeenMessageIds((prev) => ({
+                      ...prev,
+                      [opponent]: maxId,
+                    }))
+                  }
+                }}
+                lastSeenMessageIds={lastSeenMessageIds}
+                queuedActions={queue.map((q) => q.action)}
+                onQueueMessage={(recipient, body) =>
+                  appendToQueue({ type: 'SEND_MESSAGE', recipient, body })
+                }
+                onQueueProposeTreaty={(recipient, clauses) =>
+                  appendToQueue({ type: 'PROPOSE_TREATY', recipient, clauses })
+                }
+                onQueueRespondToTreaty={(proposal_id, accept) =>
+                  appendToQueue({ type: 'RESPOND_TO_TREATY', proposal_id, accept })
+                }
+                onQueueWithdrawTreaty={(proposal_id) =>
+                  appendToQueue({ type: 'WITHDRAW_TREATY', proposal_id })
+                }
+                onQueueCancelTreaty={(treaty_id) =>
+                  appendToQueue({ type: 'CANCEL_TREATY', treaty_id })
+                }
+                onQueueDeclareWar={(target_player) =>
+                  appendToQueue({ type: 'DECLARE_WAR', target_player })
+                }
+              />
+            </TabsContent>
+
+            <TabsContent
+              value="research"
+              forceMount
+              className="mt-0 flex-1 min-h-0 overflow-y-auto flex flex-col data-[state=inactive]:hidden"
+            >
+              <TechTreePanel
+                techTree={techTreeData?.tech_tree ?? null}
+                research={techTreeData?.research ?? null}
+                sciencePerTurn={
+                  computeYieldBreakdown(gameState, currentPlayer).total.science
+                }
+                queuedResearchTechId={queuedResearchTechId}
+                onSelectActive={(tech_id) =>
+                  appendToQueue({ type: 'SET_ACTIVE_RESEARCH', tech_id })
+                }
+              />
+            </TabsContent>
+
+            <TabsContent
+              value="rules"
+              forceMount
+              className="mt-0 flex-1 min-h-0 overflow-y-auto flex flex-col data-[state=inactive]:hidden"
+            >
+              <RulesReferencePanel />
+            </TabsContent>
+          </Tabs>
 
           <div className="p-3 border-t border-border bg-bg-subtle shrink-0 space-y-2">
             {/* End Turn — the only `accent`-coloured affordance in the
