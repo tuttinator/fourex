@@ -46,7 +46,7 @@ def _make_state(width: int = 7, height: int = 7) -> GameState:
     for y in range(height):
         for x in range(width):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     for player in ("p1", "p2"):
@@ -343,7 +343,7 @@ class TestLegacyTileDeserialisation:
         legacy = {
             "id": 0,
             "loc": {"x": 0, "y": 0},
-            "terrain": "plains",
+            "terrain": "grass",
             "unit_id": 42,
         }
         tile = Tile.model_validate(legacy)
@@ -353,7 +353,7 @@ class TestLegacyTileDeserialisation:
         legacy = {
             "id": 0,
             "loc": {"x": 0, "y": 0},
-            "terrain": "plains",
+            "terrain": "grass",
             "unit_id": None,
         }
         tile = Tile.model_validate(legacy)

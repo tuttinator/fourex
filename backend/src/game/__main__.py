@@ -119,7 +119,7 @@ def simulate_player_actions(state: GameState, player: PlayerId) -> list[Action]:
                 if (
                     tile
                     and not tile.city_id
-                    and tile.terrain.value in ["plains", "forest"]
+                    and tile.terrain.value in ["grass", "forest", "hills", "desert"]
                 ):
                     actions.append(FoundCityAction(worker_id=unit.id))
                     continue
@@ -134,7 +134,8 @@ def simulate_player_actions(state: GameState, player: PlayerId) -> list[Action]:
                 if (
                     target_tile
                     and not target_tile.unit_ids
-                    and target_tile.terrain.value in ["plains", "forest"]
+                    and target_tile.terrain.value
+                    in ["grass", "forest", "hills", "desert"]
                 ):
                     possible_moves.append(new_loc)
 

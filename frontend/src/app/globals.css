@@ -219,7 +219,10 @@
   50% { opacity: 0.55; }
 }
 
-.terrain-plains   { background-color: theme('colors.terrain.plains'); }
+.terrain-grass    { background-color: theme('colors.terrain.grass'); }
 .terrain-forest   { background-color: theme('colors.terrain.forest'); }
+.terrain-hills    { background-color: theme('colors.terrain.hills'); }
 .terrain-mountain { background-color: theme('colors.terrain.mountain'); }
+.terrain-desert   { background-color: theme('colors.terrain.desert'); }
+.terrain-swamp    { background-color: theme('colors.terrain.swamp'); }
 .terrain-water    { background-color: theme('colors.terrain.water'); }

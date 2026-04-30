@@ -9,6 +9,7 @@ from copy import deepcopy
 from .models import (
     BUILDING_PRODUCTION_COST,
     BUILDING_STATS,
+    CITY_ELIGIBLE_TERRAIN,
     FORTIFICATION_CITY_DEFENCE_BONUS,
     IMPROVEMENT_STATS,
     MESSAGE_BODY_MAX_LENGTH,
@@ -80,33 +81,60 @@ from .models import (
 
 
 def generate_map(width: int, height: int, seed: int) -> list[Tile]:
-    """Generate a random map with the given dimensions and seed."""
+    """Generate a random map with the given dimensions and seed.
+
+    Phase 1 keeps the historical "independent roll per tile" structure as
+    the ``random`` template (the registry-driven dispatch lands in
+    Phase 2). The terrain table is widened to the seven-biome enum and
+    ore is moved off mountains onto hills so mines are reachable.
+    Mountains are guaranteed resource-free.
+    """
     rng = random.Random(seed)
     tiles = []
     tile_id = 0
 
     for y in range(height):
         for x in range(width):
-            # Randomly choose terrain
+            # Independent roll per tile (legacy "noise" behaviour). The
+            # cumulative thresholds widen the previous 4-band table to 7
+            # bands while keeping land/water roughly comparable.
             terrain_roll = rng.random()
-            if terrain_roll < 0.4:
-                terrain = Terrain.PLAINS
-            elif terrain_roll < 0.6:
+            if terrain_roll < 0.30:
+                terrain = Terrain.GRASS
+            elif terrain_roll < 0.45:
                 terrain = Terrain.FOREST
-            elif terrain_roll < 0.8:
+            elif terrain_roll < 0.60:
+                terrain = Terrain.HILLS
+            elif terrain_roll < 0.70:
                 terrain = Terrain.MOUNTAIN
+            elif terrain_roll < 0.80:
+                terrain = Terrain.DESERT
+            elif terrain_roll < 0.85:
+                terrain = Terrain.SWAMP
             else:
                 terrain = Terrain.WATER
 
-            # Add resources based on terrain
+            # Add resources based on terrain. Mountains and water are
+            # always resource-free; ore lives on hills (the bug fix).
             resource = None
-            if terrain == Terrain.PLAINS and rng.random() < 0.3:
+            if terrain == Terrain.GRASS and rng.random() < 0.3:
                 resource = Resource.FOOD
             elif terrain == Terrain.FOREST and rng.random() < 0.4:
                 resource = Resource.WOOD
-            elif terrain == Terrain.MOUNTAIN and rng.random() < 0.5:
+            elif terrain == Terrain.HILLS and rng.random() < 0.5:
                 resource = Resource.ORE
-            elif rng.random() < 0.05:  # Rare crystal nodes
+            elif terrain == Terrain.DESERT and rng.random() < 0.15:
+                resource = Resource.CRYSTAL
+            elif (
+                terrain
+                not in (
+                    Terrain.MOUNTAIN,
+                    Terrain.WATER,
+                    Terrain.SWAMP,
+                )
+                and rng.random() < 0.05
+            ):
+                # Rare crystal nodes on any other passable land tile.
                 resource = Resource.CRYSTAL
 
             tiles.append(
@@ -2268,10 +2296,10 @@ def execute_found_city(state: GameState, action: FoundCityAction) -> ActionResul
             action=action,
         )
 
-    if tile.terrain == Terrain.WATER or tile.terrain == Terrain.MOUNTAIN:
+    if tile.terrain not in CITY_ELIGIBLE_TERRAIN:
         return ActionResult(
             success=False,
-            message=f"Cannot found city on {tile.terrain}",
+            message=f"Cannot found city on {tile.terrain.value}",
             action=action,
         )
 
@@ -2804,9 +2832,10 @@ def accumulate_culture(state: GameState) -> None:
 def _expand_borders(state: GameState, city: City) -> None:
     """Claim tiles within the city's border radius that aren't already owned.
 
-    Water and mountain tiles can be owned — they contribute whatever resource
-    they carry (e.g. ore on a mountain) but still cannot host cities or
-    non-mine improvements.
+    Water, mountain, and swamp tiles can be owned — they contribute
+    whatever resource they carry (mountains never carry one in the
+    current generator) but still cannot host cities and have restricted
+    improvement options.
     """
     for tile in state.tiles:
         distance = city.loc.distance_to(tile.loc)
@@ -2829,7 +2858,7 @@ def _calculate_tile_yield(tile: Tile) -> ResourceBag:
     - Ore resource tile: +1 ore
     - Crystal resource tile: +1 crystal
     - Forest tile (no wood resource): +1 wood
-    - Plains without resource: +0
+    - Grass / hills / desert / swamp without resource: +0
 
     Improved tile yields (total, replacing base):
     - Farm on food tile: +3 food
@@ -3248,7 +3277,7 @@ def can_found_city_here(state: GameState, worker_id: int) -> dict:
             "reason": f"City already exists at {worker.loc}",
             "cost": cost_dict,
         }
-    if tile.terrain in (Terrain.WATER, Terrain.MOUNTAIN):
+    if tile.terrain not in CITY_ELIGIBLE_TERRAIN:
         return {
             "can_found": False,
             "reason": f"Cannot found city on {tile.terrain.value}",
@@ -3427,7 +3456,14 @@ def get_buildable_buildings(state: GameState, city_id: int) -> list[dict]:
 
 STARTING_STOCKPILE = ResourceBag(food=50, wood=20, ore=10)
 STARTING_WORKER_HP = 100
-_PASSABLE_TERRAIN = (Terrain.PLAINS, Terrain.FOREST)
+# Land tiles that worker/scout placement may target. Mirrors
+# ``TERRAIN_ENTRY_COST`` (impassable terrain has cost ``None``) but
+# excludes swamp because the entry cost makes opening turns punitive.
+_PASSABLE_TERRAIN = tuple(
+    terrain
+    for terrain, cost in TERRAIN_ENTRY_COST.items()
+    if cost is not None and terrain != Terrain.SWAMP
+)
 
 
 def _find_scout_placement(state: GameState, worker_loc: Coord) -> Coord | None:

@@ -146,7 +146,7 @@ def test_update_discovery_records_visible_units_only():
     state = _fresh_state(players=["alice", "bob"], width=10, height=10)
     # Put alice's scout next to bob's worker so alice sees bob.
     state.tiles = [
-        Tile(id=i, loc=Coord(x=i % 10, y=i // 10), terrain=Terrain.PLAINS)
+        Tile(id=i, loc=Coord(x=i % 10, y=i // 10), terrain=Terrain.GRASS)
         for i in range(100)
     ]
     # Alice's scout (sight=3) at (1,1); Bob's worker (sight=2) at (1,4).
@@ -265,7 +265,7 @@ def test_set_relation_clears_inverse_key():
 def _two_unit_combat_state(distance: int = 1) -> GameState:
     state = _fresh_state(players=["alice", "bob"], width=8, height=8)
     state.tiles = [
-        Tile(id=i, loc=Coord(x=i % 8, y=i // 8), terrain=Terrain.PLAINS)
+        Tile(id=i, loc=Coord(x=i % 8, y=i // 8), terrain=Terrain.GRASS)
         for i in range(64)
     ]
     state.units[1] = Unit(
@@ -315,7 +315,7 @@ def test_treacherous_attack_on_unit_flips_to_war_and_emits_events():
 def test_treacherous_attack_on_city_flips_to_war():
     state = _fresh_state(players=["alice", "bob"], width=8, height=8)
     state.tiles = [
-        Tile(id=i, loc=Coord(x=i % 8, y=i // 8), terrain=Terrain.PLAINS)
+        Tile(id=i, loc=Coord(x=i % 8, y=i // 8), terrain=Terrain.GRASS)
         for i in range(64)
     ]
     state.units[1] = Unit(

@@ -15,7 +15,7 @@ const mockGameState: GameState = {
 	map_width: 20,
 	map_height: 20,
 	tiles: [
-		{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice", unit_ids: [1] },
+		{ id: 0, loc: { x: 0, y: 0 }, terrain: "grass", owner: "alice", unit_ids: [1] },
 		{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", owner: "alice", unit_ids: [2] },
 		{ id: 2, loc: { x: 0, y: 1 }, terrain: "mountain", owner: "bob", unit_ids: [3] },
 		{ id: 3, loc: { x: 1, y: 1 }, terrain: "water", unit_ids: [] },
@@ -197,7 +197,7 @@ describe("observation: player perspective (fog-of-war) fetching", () => {
 			json: async () => ({
 				...mockGameState,
 				tiles: [
-					{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice" },
+					{ id: 0, loc: { x: 0, y: 0 }, terrain: "grass", owner: "alice" },
 					{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", owner: "alice" },
 				],
 				units: {

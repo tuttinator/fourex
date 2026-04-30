@@ -43,8 +43,10 @@ _RESOURCE_IMPROVEMENT: dict[str, str] = {
     "crystal": "crystal_extractor",
 }
 
-# Terrain types a unit can step onto. Matches ``is_valid_move``.
-_PASSABLE_TERRAINS = {"plains", "forest"}
+# Terrain types a unit can step onto. Matches the engine's
+# ``TERRAIN_ENTRY_COST`` table (everything except mountain and water).
+# Swamp is included — it is passable, just expensive.
+_PASSABLE_TERRAINS = {"grass", "forest", "hills", "desert", "swamp"}
 
 # Fallback building pick when profile has no strong signal. Ordered so
 # granary (economic) wins ties in the balanced profile.

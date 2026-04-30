@@ -131,7 +131,7 @@ class TestVisibility:
                 tile = Tile(
                     id=x * 5 + y,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
                 state.tiles.append(tile)
 
@@ -183,7 +183,7 @@ class TestMovement:
         # Add tiles
         for x in range(10):
             for y in range(10):
-                terrain = Terrain.WATER if x == 0 else Terrain.PLAINS
+                terrain = Terrain.WATER if x == 0 else Terrain.GRASS
                 tile = Tile(
                     id=x * 10 + y,
                     loc=Coord(x=x, y=y),
@@ -226,7 +226,7 @@ class TestMovement:
                 tile = Tile(
                     id=x * 10 + y,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
                 state.tiles.append(tile)
 
@@ -385,7 +385,7 @@ class TestCityManagement:
         tile = Tile(
             id=1,
             loc=Coord(x=5, y=5),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
         )
         state.tiles.append(tile)
 
@@ -432,7 +432,7 @@ class TestCityManagement:
         tile = Tile(
             id=1,
             loc=Coord(x=5, y=5),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
         )
         state.tiles.append(tile)
 

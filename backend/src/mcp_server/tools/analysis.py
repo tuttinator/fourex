@@ -151,10 +151,15 @@ def register(mcp: FastMCP) -> None:
             if tile.resource:
                 resource_tiles.append(tile)
 
-        # Find expansion opportunities on neutral plains/forest tiles
+        # Find expansion opportunities on neutral city-eligible tiles
         expansion_opportunities = []
         for tile in neutral_tiles:
-            if tile.terrain in (Terrain.PLAINS, Terrain.FOREST):
+            if tile.terrain in (
+                Terrain.GRASS,
+                Terrain.FOREST,
+                Terrain.HILLS,
+                Terrain.DESERT,
+            ):
                 nearby_resources = sum(
                     1
                     for rt in resource_tiles

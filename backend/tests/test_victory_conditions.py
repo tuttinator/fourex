@@ -48,7 +48,7 @@ def _make_state(
                 Tile(
                     id=tile_id,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
             )
             tile_id += 1

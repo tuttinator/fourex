@@ -34,7 +34,7 @@ def _make_state(width: int = 10, height: int = 10) -> GameState:
                 Tile(
                     id=tile_id,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
             )
             tile_id += 1
@@ -77,7 +77,7 @@ class TestBuildFarm:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         worker = _add_worker(state, "p1", 3, 3)
 
         action = BuildImprovementAction(
@@ -107,13 +107,13 @@ class TestBuildFarm:
         result = execute_build_improvement(state, action)
 
         assert not result.success
-        assert "plains" in result.message.lower()
+        assert "grass" in result.message.lower()
 
     def test_farm_no_food_resource(self):
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, None)  # no resource
+        _set_tile(state, 3, 3, Terrain.GRASS, None)  # no resource
         worker = _add_worker(state, "p1", 3, 3)
 
         action = BuildImprovementAction(
@@ -126,13 +126,13 @@ class TestBuildFarm:
 
 
 class TestBuildMine:
-    """MINE requires mountain terrain + ore resource."""
+    """MINE requires hills terrain + ore resource."""
 
     def test_valid_mine(self):
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 4, 4, Terrain.MOUNTAIN, Resource.ORE)
+        _set_tile(state, 4, 4, Terrain.HILLS, Resource.ORE)
         worker = _add_worker(state, "p1", 4, 4)
 
         action = BuildImprovementAction(
@@ -149,7 +149,7 @@ class TestBuildMine:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 4, 4, Terrain.PLAINS, Resource.ORE)
+        _set_tile(state, 4, 4, Terrain.GRASS, Resource.ORE)
         worker = _add_worker(state, "p1", 4, 4)
 
         action = BuildImprovementAction(
@@ -158,13 +158,13 @@ class TestBuildMine:
         result = execute_build_improvement(state, action)
 
         assert not result.success
-        assert "mountain" in result.message.lower()
+        assert "hills" in result.message.lower()
 
     def test_mine_no_ore_resource(self):
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 4, 4, Terrain.MOUNTAIN, None)
+        _set_tile(state, 4, 4, Terrain.HILLS, None)
         worker = _add_worker(state, "p1", 4, 4)
 
         action = BuildImprovementAction(
@@ -215,7 +215,7 @@ class TestBuildLumberMill:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 5, 5, Terrain.PLAINS)
+        _set_tile(state, 5, 5, Terrain.GRASS)
         worker = _add_worker(state, "p1", 5, 5)
 
         action = BuildImprovementAction(
@@ -234,7 +234,7 @@ class TestBuildCrystalExtractor:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100, ore=100)
-        _set_tile(state, 6, 6, Terrain.PLAINS, Resource.CRYSTAL)
+        _set_tile(state, 6, 6, Terrain.GRASS, Resource.CRYSTAL)
         worker = _add_worker(state, "p1", 6, 6)
 
         action = BuildImprovementAction(
@@ -246,11 +246,11 @@ class TestBuildCrystalExtractor:
         tile = state.get_tile(Coord(x=6, y=6))
         assert tile.improvement == ImprovementType.CRYSTAL_EXTRACTOR
 
-    def test_valid_crystal_extractor_mountain(self):
+    def test_valid_crystal_extractor_hills(self):
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100, ore=100)
-        _set_tile(state, 6, 6, Terrain.MOUNTAIN, Resource.CRYSTAL)
+        _set_tile(state, 6, 6, Terrain.HILLS, Resource.CRYSTAL)
         worker = _add_worker(state, "p1", 6, 6)
 
         action = BuildImprovementAction(
@@ -264,7 +264,7 @@ class TestBuildCrystalExtractor:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100, ore=100)
-        _set_tile(state, 6, 6, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 6, 6, Terrain.GRASS, Resource.FOOD)
         worker = _add_worker(state, "p1", 6, 6)
 
         action = BuildImprovementAction(
@@ -308,7 +308,7 @@ class TestEdgeCases:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
 
         # Add a soldier instead of worker
         soldier = Unit(
@@ -334,7 +334,7 @@ class TestEdgeCases:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=0)  # no wood
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         worker = _add_worker(state, "p1", 3, 3)
 
         action = BuildImprovementAction(
@@ -351,7 +351,7 @@ class TestEdgeCases:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=200)
-        tile = _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        tile = _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         tile.improvement = ImprovementType.FARM  # already improved
         worker = _add_worker(state, "p1", 3, 3)
 
@@ -368,7 +368,7 @@ class TestEdgeCases:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=50, ore=50)
-        _set_tile(state, 6, 6, Terrain.PLAINS, Resource.CRYSTAL)
+        _set_tile(state, 6, 6, Terrain.GRASS, Resource.CRYSTAL)
         worker = _add_worker(state, "p1", 6, 6)
 
         action = BuildImprovementAction(
@@ -389,7 +389,7 @@ class TestResolveTurnIntegration:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         worker = _add_worker(state, "p1", 3, 3)
 
         actions = {
@@ -410,7 +410,7 @@ class TestResolveTurnIntegration:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         worker = _add_worker(state, "p1", 3, 3)
 
         actions = {
@@ -437,7 +437,7 @@ class TestResolveTurnIntegration:
         state = _make_state()
         state.players = ["p1"]
         state.stockpiles["p1"] = ResourceBag(wood=100)
-        _set_tile(state, 3, 3, Terrain.PLAINS, Resource.FOOD)
+        _set_tile(state, 3, 3, Terrain.GRASS, Resource.FOOD)
         _set_tile(state, 4, 3, Terrain.FOREST)
         worker = _add_worker(state, "p1", 3, 3)
 

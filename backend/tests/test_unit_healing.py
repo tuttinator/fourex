@@ -29,7 +29,7 @@ def _make_state(width: int = 5, height: int = 5) -> GameState:
                 Tile(
                     id=tile_id,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
             )
             tile_id += 1

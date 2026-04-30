@@ -81,9 +81,12 @@ const config: Config = {
         'map-void': 'var(--map-void)',
         // Game-specific terrain colors (used as fallbacks behind sprites)
         terrain: {
-          plains: '#8fbc8f',
+          grass: '#8fbc8f',
           forest: '#228b22',
+          hills: '#a1887f',
           mountain: '#696969',
+          desert: '#f4d58d',
+          swamp: '#5d7a3a',
           water: '#4682b4',
         },
         // 8-player heraldic palette — picked for max discriminability on

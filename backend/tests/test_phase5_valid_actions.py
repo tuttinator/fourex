@@ -79,7 +79,7 @@ def _make_state(width: int = 5, height: int = 5, *, players: tuple[str, ...] = (
     for y in range(height):
         for x in range(width):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     for p in players:

@@ -20,6 +20,7 @@ from .models import (
     BUILDING_STATS,
     CITY_BASE_PRODUCTION_RATE,
     CITY_BASE_SCIENCE_PER_TURN,
+    CITY_ELIGIBLE_TERRAIN,
     FORTIFICATION_CITY_DEFENCE_BONUS,
     IMPROVEMENT_STATS,
     LIBRARY_SCIENCE_BONUS,
@@ -28,6 +29,7 @@ from .models import (
     TECH_TREE,
     TEMPLE_SCIENCE_BONUS,
     TERRAIN_ENTRY_COST,
+    TERRAIN_PRIMARY_RESOURCE,
     UNIT_PRODUCTION_COST,
     UNIT_STATS,
 )
@@ -95,6 +97,12 @@ def build_rules_reference() -> dict[str, Any]:
         terrain_type.value: {
             "entry_cost": cost,
             "passable": cost is not None,
+            "city_eligible": terrain_type in CITY_ELIGIBLE_TERRAIN,
+            "primary_resource": (
+                resource.value
+                if (resource := TERRAIN_PRIMARY_RESOURCE.get(terrain_type)) is not None
+                else None
+            ),
         }
         for terrain_type, cost in TERRAIN_ENTRY_COST.items()
     }

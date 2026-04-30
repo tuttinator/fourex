@@ -431,7 +431,7 @@ describe("api.getValidMoves", () => {
 				unit_id: 7,
 				moves_left: 2,
 				moves: [
-					{ x: 1, y: 0, terrain: "plains", distance: 1 },
+					{ x: 1, y: 0, terrain: "grass", distance: 1 },
 					{ x: 0, y: 1, terrain: "forest", distance: 1 },
 				],
 			}),
@@ -462,7 +462,7 @@ describe("api.getQueueableTiles", () => {
 					{
 						x: 5,
 						y: 3,
-						terrain: "plains",
+						terrain: "grass",
 						cost: 5,
 						distance: 5,
 						path: [{ x: 1, y: 0 }],
@@ -601,7 +601,7 @@ describe("api.getValidImprovements", () => {
 						improvement: "farm",
 						cost: { food: 0, wood: 5, ore: 0, crystal: 0 },
 						affordable: true,
-						terrain: "plains",
+						terrain: "grass",
 						resource: "food",
 					},
 				],

@@ -33,7 +33,7 @@ def _make_state(width: int = 10, height: int = 10) -> GameState:
                 Tile(
                     id=tile_id,
                     loc=Coord(x=x, y=y),
-                    terrain=Terrain.PLAINS,
+                    terrain=Terrain.GRASS,
                 )
             )
             tile_id += 1
@@ -63,7 +63,7 @@ def _set_tile(
     state: GameState,
     x: int,
     y: int,
-    terrain: Terrain = Terrain.PLAINS,
+    terrain: Terrain = Terrain.GRASS,
     resource: Resource | None = None,
     owner: str | None = None,
     city_id: int | None = None,
@@ -88,7 +88,7 @@ class TestTileYieldCalculation:
 
     def test_food_resource_tile(self):
         tile = Tile(
-            id=0, loc=Coord(x=0, y=0), terrain=Terrain.PLAINS, resource=Resource.FOOD
+            id=0, loc=Coord(x=0, y=0), terrain=Terrain.GRASS, resource=Resource.FOOD
         )
         assert _calculate_tile_yield(tile) == ResourceBag(food=1)
 
@@ -111,7 +111,7 @@ class TestTileYieldCalculation:
         tile = Tile(
             id=0,
             loc=Coord(x=0, y=0),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
             resource=Resource.CRYSTAL,
         )
         assert _calculate_tile_yield(tile) == ResourceBag(crystal=1)
@@ -122,7 +122,7 @@ class TestTileYieldCalculation:
         assert _calculate_tile_yield(tile) == ResourceBag(wood=1)
 
     def test_plains_without_resource_yields_nothing(self):
-        tile = Tile(id=0, loc=Coord(x=0, y=0), terrain=Terrain.PLAINS)
+        tile = Tile(id=0, loc=Coord(x=0, y=0), terrain=Terrain.GRASS)
         assert _calculate_tile_yield(tile) == ResourceBag()
 
     def test_farm_on_food_tile(self):
@@ -130,7 +130,7 @@ class TestTileYieldCalculation:
         tile = Tile(
             id=0,
             loc=Coord(x=0, y=0),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
             resource=Resource.FOOD,
             improvement=ImprovementType.FARM,
         )
@@ -173,7 +173,7 @@ class TestTileYieldCalculation:
         tile = Tile(
             id=0,
             loc=Coord(x=0, y=0),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
             resource=Resource.CRYSTAL,
             improvement=ImprovementType.CRYSTAL_EXTRACTOR,
         )

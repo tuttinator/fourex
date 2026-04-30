@@ -1,6 +1,13 @@
 export type PlayerId = string;
 
-export type Terrain = "plains" | "forest" | "mountain" | "water";
+export type Terrain =
+	| "grass"
+	| "forest"
+	| "hills"
+	| "mountain"
+	| "desert"
+	| "swamp"
+	| "water";
 export type Resource = "food" | "wood" | "ore" | "crystal" | "science";
 export type UnitType = "scout" | "worker" | "soldier" | "archer";
 export type BuildingType =
@@ -526,9 +533,12 @@ export const UNIT_COLORS: Record<UnitType, string> = {
 };
 
 export const TERRAIN_COLORS: Record<Terrain, string> = {
-	plains: "#8fbc8f",
+	grass: "#8fbc8f",
 	forest: "#228b22",
+	hills: "#a1887f",
 	mountain: "#696969",
+	desert: "#f4d58d",
+	swamp: "#5d7a3a",
 	water: "#4682b4",
 };
 

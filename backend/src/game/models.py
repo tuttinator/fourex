@@ -13,11 +13,20 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class Terrain(str, Enum):
-    """Terrain types on the map."""
+    """Terrain types on the map.
 
-    PLAINS = "plains"
+    Seven biome-aware values. ``GRASS`` replaces the historical ``PLAINS``
+    value: identical mechanics (food yield, cost-1 entry, city-eligible).
+    ``HILLS`` is the new home of the ``ore`` resource and the ``MINE``
+    improvement; mountains are now resource-free strict obstacles.
+    """
+
+    GRASS = "grass"
     FOREST = "forest"
+    HILLS = "hills"
     MOUNTAIN = "mountain"
+    DESERT = "desert"
+    SWAMP = "swamp"
     WATER = "water"
 
 
@@ -228,13 +237,13 @@ class ImprovementStats(BaseModel):
 IMPROVEMENT_STATS = {
     ImprovementType.FARM: ImprovementStats(
         cost=ResourceBag(wood=10),
-        valid_terrain=[Terrain.PLAINS],
+        valid_terrain=[Terrain.GRASS],
         required_resource=Resource.FOOD,
         effect="+2 food bonus (total +3 food on food tile)",
     ),
     ImprovementType.MINE: ImprovementStats(
         cost=ResourceBag(wood=10),
-        valid_terrain=[Terrain.MOUNTAIN],
+        valid_terrain=[Terrain.HILLS],
         required_resource=Resource.ORE,
         effect="+2 ore bonus (total +3 ore on ore tile)",
     ),
@@ -246,7 +255,7 @@ IMPROVEMENT_STATS = {
     ),
     ImprovementType.CRYSTAL_EXTRACTOR: ImprovementStats(
         cost=ResourceBag(wood=10, ore=5),
-        valid_terrain=[Terrain.PLAINS, Terrain.FOREST, Terrain.MOUNTAIN],
+        valid_terrain=[Terrain.GRASS, Terrain.FOREST, Terrain.HILLS, Terrain.DESERT],
         required_resource=Resource.CRYSTAL,
         effect="+1 crystal bonus (total +2 crystal on crystal tile)",
     ),
@@ -584,12 +593,33 @@ TEMPLE_SCIENCE_BONUS = 1
 RULES_SCHEMA_VERSION = 1
 
 # Per-tile entry cost for land units. ``None`` means impassable.
-# Future terrain types (e.g. hills, rivers) slot in here without touching
-# engine code.
 TERRAIN_ENTRY_COST: dict[Terrain, int | None] = {
-    Terrain.PLAINS: 1,
+    Terrain.GRASS: 1,
     Terrain.FOREST: 2,
+    Terrain.HILLS: 2,
     Terrain.MOUNTAIN: None,
+    Terrain.DESERT: 1,
+    Terrain.SWAMP: 3,
+    Terrain.WATER: None,
+}
+
+# Terrain where a city may be founded. Mountains and water are obstacles;
+# swamp is too unstable to host a city in this rule set.
+CITY_ELIGIBLE_TERRAIN: frozenset[Terrain] = frozenset(
+    {Terrain.GRASS, Terrain.FOREST, Terrain.HILLS, Terrain.DESERT}
+)
+
+# Primary resource that may spawn on each terrain (for the rules
+# reference). ``None`` means no resource spawns there in normal
+# generation. Crystal is a rare cross-terrain spawn that the generator
+# sprinkles independently and is not listed here.
+TERRAIN_PRIMARY_RESOURCE: dict[Terrain, Resource | None] = {
+    Terrain.GRASS: Resource.FOOD,
+    Terrain.FOREST: Resource.WOOD,
+    Terrain.HILLS: Resource.ORE,
+    Terrain.MOUNTAIN: None,
+    Terrain.DESERT: Resource.CRYSTAL,
+    Terrain.SWAMP: None,
     Terrain.WATER: None,
 }
 

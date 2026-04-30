@@ -89,7 +89,7 @@ def test_planner_is_deterministic_for_same_inputs():
         },
         "cities": {},
         "tiles": [
-            {"loc": {"x": x, "y": y}, "terrain": "plains"}
+            {"loc": {"x": x, "y": y}, "terrain": "grass"}
             for x in range(4, 9)
             for y in range(4, 9)
         ],
@@ -108,7 +108,7 @@ def test_planner_suppresses_attack_below_military_ratio():
         },
         "cities": {},
         "tiles": [
-            {"loc": {"x": x, "y": y}, "terrain": "plains"}
+            {"loc": {"x": x, "y": y}, "terrain": "grass"}
             for x in range(-2, 3)
             for y in range(-2, 3)
         ],
