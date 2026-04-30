@@ -227,6 +227,34 @@ async def require_creator_auth(
     )
 
 
+class MeResponse(BaseModel):
+    """Identity metadata for the JWT-authenticated caller."""
+
+    id: int
+    email: str | None
+    is_admin: bool
+
+
+@router.get("/me", tags=["identity"], response_model=MeResponse)
+async def get_me(
+    identity: UserIdentityContext = Depends(require_user_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> MeResponse:
+    """Return the authenticated user's identity, including ``is_admin``.
+
+    Phase 3 of the map system overhaul: the frontend reads this on every
+    page load to decide whether to render the admin-only ``Maps`` link
+    in the navbar and to pass the route guard on ``/maps``. The flag is
+    re-synced from the env-var allowlist on each Auth.js verify, so this
+    endpoint is a pure read.
+    """
+    repo = GameRepository(session)
+    row = await repo.get_user_identity_by_id(identity.user_identity_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="identity not found")
+    return MeResponse(id=row.id, email=row.email, is_admin=row.is_admin)
+
+
 @router.get("/rules", tags=["rules"])
 async def get_rules_reference() -> dict[str, Any]:
     """Return the canonical rules reference payload.

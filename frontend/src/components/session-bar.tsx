@@ -3,6 +3,7 @@ import { auth, signOut } from "@/auth";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { fetchServerIdentity } from "@/lib/server-identity";
 
 interface SessionBarProps {
   /** When true, render a compact session strip with the wordmark on the left.
@@ -13,6 +14,7 @@ interface SessionBarProps {
 
 export async function SessionBar({ showWordmark = true }: SessionBarProps = {}) {
   const session = await auth();
+  const identity = session?.user?.email ? await fetchServerIdentity() : null;
 
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2 text-sm">
@@ -20,6 +22,15 @@ export async function SessionBar({ showWordmark = true }: SessionBarProps = {}) 
         {showWordmark && (
           <Link href="/" className="inline-flex">
             <Wordmark variant="flag" size={16} />
+          </Link>
+        )}
+        {identity?.isAdmin && (
+          <Link
+            href="/maps"
+            className="text-ink-muted hover:text-ink font-mono text-xs"
+            data-testid="nav-maps"
+          >
+            Maps
           </Link>
         )}
       </div>

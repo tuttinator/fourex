@@ -37,6 +37,7 @@ class UpsertIdentityRequest(BaseModel):
 class UpsertIdentityResponse(BaseModel):
     id: int
     email: str
+    is_admin: bool = False
 
 
 class CreateVerificationTokenRequest(BaseModel):
@@ -93,7 +94,9 @@ async def get_identity_by_email(
     identity = await repo.get_user_identity_by_email(email)
     if identity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
-    return UpsertIdentityResponse(id=identity.id, email=identity.email)
+    return UpsertIdentityResponse(
+        id=identity.id, email=identity.email, is_admin=identity.is_admin
+    )
 
 
 @router.get(
@@ -117,7 +120,9 @@ async def get_identity_by_id(
     identity = await repo.get_user_identity_by_id(id)
     if identity is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
-    return UpsertIdentityResponse(id=identity.id, email=identity.email)
+    return UpsertIdentityResponse(
+        id=identity.id, email=identity.email, is_admin=identity.is_admin
+    )
 
 
 @router.post(
@@ -137,9 +142,13 @@ async def upsert_identity(
     frontend embeds as the JWT ``sub`` claim.
     """
     repo = GameRepository(session)
-    identity = await repo.upsert_user_identity_by_email(body.email)
+    identity = await repo.upsert_user_identity_by_email(
+        body.email, admin_emails=settings.admin_email_allowlist
+    )
     await session.commit()
-    return UpsertIdentityResponse(id=identity.id, email=identity.email)
+    return UpsertIdentityResponse(
+        id=identity.id, email=identity.email, is_admin=identity.is_admin
+    )
 
 
 @router.post(
@@ -188,6 +197,14 @@ async def consume_verification_token(
     row = await repo.consume_verification_token(body.identifier, body.token)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    # Phase 3 (map system overhaul): the consume call is the single
+    # unambiguous "magic-link verify succeeded" moment. Re-sync the
+    # admin flag against the env-var allowlist here so an existing
+    # user's flag refreshes on every successful sign-in (Auth.js's
+    # getUserByEmail call later in the verify flow does not write).
+    await repo.upsert_user_identity_by_email(
+        row.identifier, admin_emails=settings.admin_email_allowlist
+    )
     await session.commit()
     return VerificationTokenResponse(
         identifier=row.identifier, token=row.token, expires=row.expires_at

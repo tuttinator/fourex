@@ -398,6 +398,13 @@ class UserIdentity(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    # Phase 3 (map system overhaul): admin-only authoring surface gate.
+    # Re-synced from the env-var allowlist on each Auth.js verify, so the
+    # DB row mirrors deployment config (the allowlist is the source of
+    # truth) — adding/removing emails takes effect on next sign-in.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), server_default=func.now(), nullable=False
     )

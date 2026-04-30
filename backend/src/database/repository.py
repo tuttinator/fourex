@@ -398,25 +398,45 @@ class GameRepository:
         await self.session.flush()
         return row
 
-    async def upsert_user_identity_by_email(self, email: str) -> UserIdentity:
+    async def upsert_user_identity_by_email(
+        self, email: str, *, admin_emails: list[str] | None = None
+    ) -> UserIdentity:
         """Return the UserIdentity for an email, creating it if missing.
 
         Idempotent: successive calls with the same normalised email return the
         same row. Email is trimmed and lowercased so that ``Foo@Bar`` and
         ``foo@bar`` resolve to a single identity.
+
+        When ``admin_emails`` is provided the row's ``is_admin`` flag is
+        re-synced to ``email in admin_emails`` (case-insensitive). Phase 3 of
+        the map system overhaul uses this on every Auth.js verify so the DB
+        flag mirrors the env-var allowlist — removing an email demotes the
+        user on their next sign-in without a redeploy.
         """
         normalised = email.strip().lower()
         if not normalised:
             raise ValueError("email is required")
+
+        admin_set: set[str] | None = None
+        if admin_emails is not None:
+            admin_set = {a.strip().lower() for a in admin_emails if a and a.strip()}
 
         result = await self.session.execute(
             select(UserIdentity).where(UserIdentity.email == normalised)
         )
         existing = result.scalar_one_or_none()
         if existing is not None:
+            if admin_set is not None:
+                desired = normalised in admin_set
+                if existing.is_admin != desired:
+                    existing.is_admin = desired
+                    await self.session.flush()
             return existing
 
-        identity = UserIdentity(email=normalised)
+        identity = UserIdentity(
+            email=normalised,
+            is_admin=(admin_set is not None and normalised in admin_set),
+        )
         self.session.add(identity)
         await self.session.flush()
         return identity
