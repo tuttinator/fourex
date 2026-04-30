@@ -17,7 +17,7 @@ from backend.src.game.models import Coord, GameState, Terrain, UnitType
 from backend.src.game.rules import (
     STARTING_STOCKPILE,
     STARTING_WORKER_HP,
-    generate_map,
+    generate_random_tiles,
     place_starting_units,
 )
 from backend.src.mcp_server.server import create_mcp_server
@@ -31,7 +31,7 @@ from backend.src.mcp_server.server import create_mcp_server
 def _fresh_state(width: int = 20, height: int = 20, seed: int = 42) -> GameState:
     return GameState(
         rng_state=seed,
-        tiles=generate_map(width, height, seed),
+        tiles=generate_random_tiles(width, height, seed),
         players=[],
         map_width=width,
         map_height=height,
@@ -83,7 +83,7 @@ def test_starting_scout_on_passable_terrain():
     scout = next(u for u in state.units.values() if u.type == UnitType.SCOUT)
     tile = state.get_tile(scout.loc)
     assert tile is not None
-    assert tile.terrain in (Terrain.PLAINS, Terrain.FOREST)
+    assert tile.terrain in (Terrain.GRASS, Terrain.FOREST)
 
 
 def test_starting_units_register_on_tile_unit_ids():
@@ -118,7 +118,7 @@ def test_fallback_to_wider_search_when_cardinals_blocked():
     worker_loc = Coord(x=10, y=10)
     worker_tile = state.get_tile(worker_loc)
     assert worker_tile is not None
-    worker_tile.terrain = Terrain.PLAINS
+    worker_tile.terrain = Terrain.GRASS
 
     # Force the four cardinal neighbours to be mountains (impassable).
     for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
@@ -129,7 +129,7 @@ def test_fallback_to_wider_search_when_cardinals_blocked():
     # Ensure at least one distance-2 plains tile exists.
     ring2 = state.get_tile(Coord(x=12, y=10))
     assert ring2 is not None
-    ring2.terrain = Terrain.PLAINS
+    ring2.terrain = Terrain.GRASS
     ring2.unit_ids = []
 
     scout_loc = _find_scout_placement(state, worker_loc)

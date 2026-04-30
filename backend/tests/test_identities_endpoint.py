@@ -172,6 +172,7 @@ class TestUpsertIdentityEndpoint:
         assert lookup.json() == {
             "id": identity_id,
             "email": "dan@identitytest.example.com",
+            "is_admin": False,
         }
 
     def test_by_id_requires_secret(self, client: TestClient) -> None:
@@ -263,3 +264,117 @@ class TestUpsertIdentityEndpoint:
         assert mixed.status_code == 200
         assert canonical.json()["id"] == mixed.json()["id"]
         assert canonical.json()["email"] == "carol@identitytest.example.com"
+
+
+class TestAdminAllowlistSync:
+    """Phase 3 (map system overhaul): is_admin re-syncs from env allowlist."""
+
+    def test_upsert_sets_is_admin_when_email_in_allowlist(
+        self,
+        client: TestClient,
+        service_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            settings, "admin_email_allowlist", ["admin@identitytest.example.com"]
+        )
+        resp = client.post(
+            "/api/v1/identities/upsert",
+            json={"email": "admin@identitytest.example.com"},
+            headers=service_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["is_admin"] is True
+
+    def test_upsert_leaves_non_admin_when_email_absent(
+        self,
+        client: TestClient,
+        service_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            settings, "admin_email_allowlist", ["someone-else@identitytest.example.com"]
+        )
+        resp = client.post(
+            "/api/v1/identities/upsert",
+            json={"email": "regular@identitytest.example.com"},
+            headers=service_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["is_admin"] is False
+
+    def test_removing_email_from_allowlist_demotes_on_next_upsert(
+        self,
+        client: TestClient,
+        service_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # First sign-in: in allowlist, becomes admin.
+        monkeypatch.setattr(
+            settings, "admin_email_allowlist", ["churn@identitytest.example.com"]
+        )
+        first = client.post(
+            "/api/v1/identities/upsert",
+            json={"email": "churn@identitytest.example.com"},
+            headers=service_headers,
+        )
+        assert first.json()["is_admin"] is True
+
+        # Second sign-in: allowlist no longer includes the email.
+        monkeypatch.setattr(settings, "admin_email_allowlist", [])
+        second = client.post(
+            "/api/v1/identities/upsert",
+            json={"email": "churn@identitytest.example.com"},
+            headers=service_headers,
+        )
+        assert second.json()["id"] == first.json()["id"]
+        assert second.json()["is_admin"] is False
+
+    def test_consume_verification_token_resyncs_is_admin(
+        self,
+        client: TestClient,
+        service_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Pre-create the identity as non-admin.
+        client.post(
+            "/api/v1/identities/upsert",
+            json={"email": "verify@identitytest.example.com"},
+            headers=service_headers,
+        )
+
+        # Add the email to the allowlist, then run a magic-link verify.
+        monkeypatch.setattr(
+            settings, "admin_email_allowlist", ["verify@identitytest.example.com"]
+        )
+        expires = (
+            datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=15)
+        ).isoformat()
+        create = client.post(
+            "/api/v1/identities/verification-tokens",
+            json={
+                "identifier": "verify@identitytest.example.com",
+                "token": "tok-1",
+                "expires": expires,
+            },
+            headers=service_headers,
+        )
+        assert create.status_code == 200
+        consume = client.post(
+            "/api/v1/identities/verification-tokens/consume",
+            json={
+                "identifier": "verify@identitytest.example.com",
+                "token": "tok-1",
+            },
+            headers=service_headers,
+        )
+        assert consume.status_code == 200
+
+        # Identity should now be admin.
+        lookup = client.get(
+            "/api/v1/identities/by-email",
+            params={"email": "verify@identitytest.example.com"},
+            headers=service_headers,
+        )
+        assert lookup.status_code == 200
+        assert lookup.json()["is_admin"] is True

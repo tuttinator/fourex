@@ -23,11 +23,13 @@ from ..config import settings
 from ..database.connection import get_database_session
 from ..database.repository import GameRepository
 from ..game.models import (
+    CITY_ELIGIBLE_TERRAIN,
     FREE_TEXT_CLAUSE_MAX_LENGTH,
     MESSAGE_BODY_MAX_LENGTH,
     MESSAGES_PER_TURN_LIMIT,
     PEACE_CLAUSE_MAX_DURATION,
     TECH_TREE,
+    TERRAIN_ENTRY_COST,
     Action,
     CancelTreatyAction,
     CreateGameRequest,
@@ -40,10 +42,12 @@ from ..game.models import (
     ProposeTreatyAction,
     RecurringTributeClause,
     ResearchState,
+    Resource,
     ResourceBag,
     ResourceSwapClause,
     RespondToTreatyAction,
     SendMessageAction,
+    Terrain,
     WithdrawTreatyAction,
 )
 from ..game.rules import (
@@ -227,6 +231,472 @@ async def require_creator_auth(
     )
 
 
+class MeResponse(BaseModel):
+    """Identity metadata for the JWT-authenticated caller."""
+
+    id: int
+    email: str | None
+    is_admin: bool
+
+
+@router.get("/me", tags=["identity"], response_model=MeResponse)
+async def get_me(
+    identity: UserIdentityContext = Depends(require_user_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> MeResponse:
+    """Return the authenticated user's identity, including ``is_admin``.
+
+    Phase 3 of the map system overhaul: the frontend reads this on every
+    page load to decide whether to render the admin-only ``Maps`` link
+    in the navbar and to pass the route guard on ``/maps``. The flag is
+    re-synced from the env-var allowlist on each Auth.js verify, so this
+    endpoint is a pure read.
+    """
+    repo = GameRepository(session)
+    row = await repo.get_user_identity_by_id(identity.user_identity_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="identity not found")
+    return MeResponse(id=row.id, email=row.email, is_admin=row.is_admin)
+
+
+async def require_admin_identity(
+    identity: UserIdentityContext = Depends(require_user_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> UserIdentityContext:
+    """Dependency: require the caller's UserIdentity to have ``is_admin``.
+
+    Phase 4 (map system overhaul): the saved-map authoring endpoints
+    (``POST``/``PATCH``/``DELETE`` /api/v1/maps) are admin-only. The
+    flag is sourced from the env-var allowlist on each Auth.js verify
+    (see ``Phase 3`` in repository.upsert_user_identity_by_email), so
+    this lookup is a cheap single-row read.
+    """
+    repo = GameRepository(session)
+    row = await repo.get_user_identity_by_id(identity.user_identity_id)
+    if row is None or not row.is_admin:
+        raise HTTPException(status_code=403, detail="admin role required")
+    return identity
+
+
+_VALID_TERRAINS: frozenset[str] = frozenset(t.value for t in Terrain)
+_VALID_RESOURCES: frozenset[str] = frozenset(r.value for r in Resource)
+_PASSABLE_TERRAINS: frozenset[Terrain] = frozenset(
+    t for t, cost in TERRAIN_ENTRY_COST.items() if cost is not None
+)
+_SPAWN_ELIGIBLE_TERRAINS: frozenset[Terrain] = frozenset(
+    t for t in CITY_ELIGIBLE_TERRAIN if TERRAIN_ENTRY_COST.get(t) is not None
+)
+_SAVED_MAP_MIN_DIM = 10
+_SAVED_MAP_MAX_DIM = 100
+_SAVED_MAP_MIN_SPAWN_ZONES = 2
+
+
+class SavedMapTilePayload(BaseModel):
+    """One tile in a saved-map definition."""
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    terrain: str = Field(min_length=1, max_length=32)
+    resource: str | None = Field(default=None, max_length=32)
+
+
+class SavedMapSpawnZonePayload(BaseModel):
+    """A spawn-zone marker on a saved map."""
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+
+
+class SavedMapCreateRequest(BaseModel):
+    """Body for ``POST /api/v1/maps`` (admin only)."""
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    width: int = Field(ge=_SAVED_MAP_MIN_DIM, le=_SAVED_MAP_MAX_DIM)
+    height: int = Field(ge=_SAVED_MAP_MIN_DIM, le=_SAVED_MAP_MAX_DIM)
+    tiles: list[SavedMapTilePayload]
+    spawn_zones: list[SavedMapSpawnZonePayload]
+
+
+class SavedMapUpdateRequest(BaseModel):
+    """Body for ``PATCH /api/v1/maps/{id}`` (admin only).
+
+    Every field is optional; omitted fields keep their current value.
+    Sending ``tiles`` or ``spawn_zones`` requires the full new array
+    (no partial diffs) — saved maps are small enough that whole-map
+    writes keep the contract simple.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    width: int | None = Field(
+        default=None, ge=_SAVED_MAP_MIN_DIM, le=_SAVED_MAP_MAX_DIM
+    )
+    height: int | None = Field(
+        default=None, ge=_SAVED_MAP_MIN_DIM, le=_SAVED_MAP_MAX_DIM
+    )
+    tiles: list[SavedMapTilePayload] | None = None
+    spawn_zones: list[SavedMapSpawnZonePayload] | None = None
+
+
+class SavedMapResponse(BaseModel):
+    """Wire-format saved map row.
+
+    ``tiles`` and ``spawn_zones`` are returned in the same shape they
+    were submitted; ``creator_email`` is included so the list view can
+    display authorship without an extra lookup.
+    """
+
+    id: int
+    name: str
+    description: str | None
+    width: int
+    height: int
+    tiles: list[SavedMapTilePayload]
+    spawn_zones: list[SavedMapSpawnZonePayload]
+    created_by: int | None
+    creator_email: str | None
+    created_at: str
+    updated_at: str
+
+
+class SavedMapSummaryResponse(BaseModel):
+    """Lightweight saved-map summary for the lobby drop-down + list view.
+
+    Excludes ``tiles`` to keep the list cheap — admins fetch the full
+    body via ``GET /api/v1/maps/{id}`` when they open the editor.
+    """
+
+    id: int
+    name: str
+    description: str | None
+    width: int
+    height: int
+    spawn_zone_count: int
+    creator_email: str | None
+    created_at: str
+    updated_at: str
+
+
+def _validate_saved_map_payload(
+    *,
+    width: int,
+    height: int,
+    tiles: list[SavedMapTilePayload],
+    spawn_zones: list[SavedMapSpawnZonePayload],
+) -> None:
+    """Server-side validation for saved-map create/update payloads.
+
+    Every coordinate must lie inside the declared dimensions; every
+    tile must use a known terrain and (if set) a known resource;
+    mountains and water never carry resources (mirrors the engine's
+    invariant); each (x, y) must appear exactly once; spawn zones
+    must land on passable + city-eligible terrain; at least
+    ``_SAVED_MAP_MIN_SPAWN_ZONES`` are required so a 2-player lobby
+    can always seat. Errors are 400 with field-specific detail so the
+    editor UI can surface them inline.
+    """
+    by_loc: dict[tuple[int, int], SavedMapTilePayload] = {}
+    expected_count = width * height
+    if len(tiles) != expected_count:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"tiles must contain exactly width × height entries "
+                f"({expected_count}); got {len(tiles)}"
+            ),
+        )
+
+    for tile in tiles:
+        if not (0 <= tile.x < width and 0 <= tile.y < height):
+            raise HTTPException(
+                status_code=400,
+                detail=f"tile ({tile.x},{tile.y}) is outside the map dimensions",
+            )
+        if tile.terrain not in _VALID_TERRAINS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown terrain '{tile.terrain}' on tile ({tile.x},{tile.y})",
+            )
+        if tile.resource is not None:
+            if tile.resource not in _VALID_RESOURCES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"unknown resource '{tile.resource}' on tile "
+                        f"({tile.x},{tile.y})"
+                    ),
+                )
+            terrain_enum = Terrain(tile.terrain)
+            if terrain_enum in (Terrain.MOUNTAIN, Terrain.WATER):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"resource '{tile.resource}' on impassable terrain "
+                        f"({tile.x},{tile.y}); mountains and water cannot "
+                        f"carry resources"
+                    ),
+                )
+        key = (tile.x, tile.y)
+        if key in by_loc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"duplicate tile at ({tile.x},{tile.y})",
+            )
+        by_loc[key] = tile
+
+    if len(spawn_zones) < _SAVED_MAP_MIN_SPAWN_ZONES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"saved maps need at least {_SAVED_MAP_MIN_SPAWN_ZONES} "
+                f"spawn zones; got {len(spawn_zones)}"
+            ),
+        )
+
+    seen_zones: set[tuple[int, int]] = set()
+    for zone in spawn_zones:
+        if not (0 <= zone.x < width and 0 <= zone.y < height):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spawn zone ({zone.x},{zone.y}) is outside the map " f"dimensions"
+                ),
+            )
+        key = (zone.x, zone.y)
+        if key in seen_zones:
+            raise HTTPException(
+                status_code=400,
+                detail=f"duplicate spawn zone at ({zone.x},{zone.y})",
+            )
+        seen_zones.add(key)
+        tile = by_loc.get(key)
+        if tile is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"spawn zone ({zone.x},{zone.y}) has no matching tile",
+            )
+        terrain_enum = Terrain(tile.terrain)
+        if terrain_enum not in _SPAWN_ELIGIBLE_TERRAINS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spawn zone ({zone.x},{zone.y}) is on '{tile.terrain}' "
+                    f"— spawn zones must be on passable, city-eligible terrain"
+                ),
+            )
+
+
+def _serialise_saved_map_full(row: Any, creator_email: str | None) -> SavedMapResponse:
+    return SavedMapResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        width=row.width,
+        height=row.height,
+        tiles=[SavedMapTilePayload(**t) for t in (row.tiles or [])],
+        spawn_zones=[SavedMapSpawnZonePayload(**z) for z in (row.spawn_zones or [])],
+        created_by=row.created_by,
+        creator_email=creator_email,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
+def _serialise_saved_map_summary(
+    row: Any, creator_email: str | None
+) -> SavedMapSummaryResponse:
+    return SavedMapSummaryResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        width=row.width,
+        height=row.height,
+        spawn_zone_count=len(row.spawn_zones or []),
+        creator_email=creator_email,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
+async def _resolve_creator_email(
+    repo: GameRepository, identity_id: int | None
+) -> str | None:
+    """Look up the email behind a saved-map ``created_by`` row, or None."""
+    if identity_id is None:
+        return None
+    row = await repo.get_user_identity_by_id(identity_id)
+    return row.email if row else None
+
+
+@router.get("/maps", tags=["maps"], response_model=list[SavedMapSummaryResponse])
+async def list_saved_maps(
+    identity: UserIdentityContext = Depends(require_user_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> list[SavedMapSummaryResponse]:
+    """List saved maps. Open to any authenticated user.
+
+    Used by the lobby drop-down (game creators see saved maps next to
+    the parametric templates) and by the ``/maps`` admin list view.
+    Tiles are excluded from the summary; clients open a specific map
+    via ``GET /api/v1/maps/{id}`` to fetch the full payload.
+    """
+    repo = GameRepository(session)
+    rows = await repo.list_saved_maps()
+    summaries: list[SavedMapSummaryResponse] = []
+    cache: dict[int | None, str | None] = {}
+    for row in rows:
+        creator_id: int | None = row.created_by
+        if creator_id in cache:
+            email = cache[creator_id]
+        else:
+            email = await _resolve_creator_email(repo, creator_id)
+            cache[creator_id] = email
+        summaries.append(_serialise_saved_map_summary(row, email))
+    return summaries
+
+
+@router.get("/maps/{saved_map_id}", tags=["maps"], response_model=SavedMapResponse)
+async def get_saved_map(
+    saved_map_id: int,
+    identity: UserIdentityContext = Depends(require_user_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> SavedMapResponse:
+    """Fetch a single saved map's full body. Open to any authenticated user."""
+    repo = GameRepository(session)
+    row = await repo.get_saved_map(saved_map_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="saved map not found")
+    email = await _resolve_creator_email(repo, row.created_by)
+    return _serialise_saved_map_full(row, email)
+
+
+@router.post("/maps", tags=["maps"], response_model=SavedMapResponse)
+async def create_saved_map(
+    request: SavedMapCreateRequest,
+    identity: UserIdentityContext = Depends(require_admin_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> SavedMapResponse:
+    """Create a new saved map. Admin only.
+
+    Validation is server-side (see ``_validate_saved_map_payload``):
+    at least 2 spawn zones, every spawn zone on passable + city-eligible
+    terrain, dimensions in [10, 100], unique tile coordinates, valid
+    terrain / resource enums, and no resources on impassable terrain.
+    """
+    _validate_saved_map_payload(
+        width=request.width,
+        height=request.height,
+        tiles=request.tiles,
+        spawn_zones=request.spawn_zones,
+    )
+    repo = GameRepository(session)
+    existing = await repo.get_saved_map_by_name(request.name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail=f"saved map name '{request.name}' is already in use"
+        )
+
+    row = await repo.create_saved_map(
+        name=request.name,
+        description=request.description,
+        width=request.width,
+        height=request.height,
+        tiles=[t.model_dump() for t in request.tiles],
+        spawn_zones=[z.model_dump() for z in request.spawn_zones],
+        created_by=identity.user_identity_id,
+    )
+    await session.commit()
+    email = await _resolve_creator_email(repo, row.created_by)
+    return _serialise_saved_map_full(row, email)
+
+
+@router.patch("/maps/{saved_map_id}", tags=["maps"], response_model=SavedMapResponse)
+async def update_saved_map(
+    saved_map_id: int,
+    request: SavedMapUpdateRequest,
+    identity: UserIdentityContext = Depends(require_admin_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> SavedMapResponse:
+    """Partial update of a saved map. Admin only.
+
+    Tile/spawn-zone arrays are replaced wholesale when supplied.
+    Whatever the merged width/height/tiles/spawn_zones look like
+    after the patch is validated against the same rules as create —
+    so you can't, for example, shrink a map without also resizing
+    its tile list.
+    """
+    repo = GameRepository(session)
+    row = await repo.get_saved_map(saved_map_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="saved map not found")
+
+    if request.name is not None and request.name != row.name:
+        clash = await repo.get_saved_map_by_name(request.name)
+        if clash is not None and clash.id != saved_map_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"saved map name '{request.name}' is already in use",
+            )
+
+    new_width = request.width if request.width is not None else row.width
+    new_height = request.height if request.height is not None else row.height
+    new_tiles = (
+        request.tiles
+        if request.tiles is not None
+        else [SavedMapTilePayload(**t) for t in (row.tiles or [])]
+    )
+    new_zones = (
+        request.spawn_zones
+        if request.spawn_zones is not None
+        else [SavedMapSpawnZonePayload(**z) for z in (row.spawn_zones or [])]
+    )
+    _validate_saved_map_payload(
+        width=new_width,
+        height=new_height,
+        tiles=new_tiles,
+        spawn_zones=new_zones,
+    )
+
+    updated = await repo.update_saved_map(
+        saved_map_id,
+        name=request.name,
+        description=request.description if request.description is not None else None,
+        width=request.width,
+        height=request.height,
+        tiles=(
+            [t.model_dump() for t in request.tiles]
+            if request.tiles is not None
+            else None
+        ),
+        spawn_zones=(
+            [z.model_dump() for z in request.spawn_zones]
+            if request.spawn_zones is not None
+            else None
+        ),
+    )
+    await session.commit()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="saved map not found")
+    email = await _resolve_creator_email(repo, updated.created_by)
+    return _serialise_saved_map_full(updated, email)
+
+
+@router.delete("/maps/{saved_map_id}", tags=["maps"])
+async def delete_saved_map(
+    saved_map_id: int,
+    identity: UserIdentityContext = Depends(require_admin_identity),
+    session: AsyncSession = Depends(get_database_session),
+) -> dict[str, Any]:
+    """Delete a saved map. Admin only."""
+    repo = GameRepository(session)
+    deleted = await repo.delete_saved_map(saved_map_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="saved map not found")
+    await session.commit()
+    return {"deleted": saved_map_id}
+
+
 @router.get("/rules", tags=["rules"])
 async def get_rules_reference() -> dict[str, Any]:
     """Return the canonical rules reference payload.
@@ -244,18 +714,36 @@ async def get_rules_reference() -> dict[str, Any]:
 @router.get("/state", tags=["state"])
 async def get_game_state(
     game_id: str = "default",
+    as_player: PlayerId | None = None,
     current_player: PlayerId | None = Depends(get_current_player_optional),
     session: AsyncSession = Depends(get_database_session),
 ) -> GameState:
     """
     Get the current game state with optional fog-of-war applied for the requesting player.
     If no authentication token is provided, returns the full game state without fog-of-war.
+
+    The ``as_player`` query param lets a god-mode observer (e.g. an
+    unseated lobby creator watching two Agents play) request the
+    fog-of-war view of a chosen player. It's strictly less information
+    than the unauthenticated god-mode response, so no extra auth is
+    required — anyone who could see the full board can also ask to see
+    a redacted slice of it.
     """
     try:
         controller = get_persistent_game_controller(session)
         state = await controller.get_game_state(game_id)
         if not state:
             raise HTTPException(status_code=404, detail="Game not found")
+
+        # Explicit perspective request wins over the caller's own seat —
+        # observers (creators, spectators) use this to switch views.
+        if as_player is not None:
+            if as_player not in state.players:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"as_player {as_player!r} is not a player in this game",
+                )
+            return redact_state(state, as_player)
 
         # Apply fog-of-war only if player is authenticated
         if current_player:
@@ -903,6 +1391,15 @@ class CreateLobbyRequest(BaseModel):
     map_width: int = Field(default=20, ge=10, le=100, description="Map width")
     map_height: int = Field(default=20, ge=10, le=100, description="Map height")
     seed: int = Field(default=42, description="Random seed for map generation")
+    map_template: str = Field(
+        default="random",
+        max_length=64,
+        description=(
+            "Parametric map template name. One of random, continent, "
+            "islands, river, lakes, archipelago. Future namespaces "
+            "(saved:<id>, scenario:<id>) are accepted as bare strings."
+        ),
+    )
     creator_seated: bool = Field(
         default=True,
         description=(
@@ -959,6 +1456,7 @@ class GameDetailResponse(BaseModel):
     map_width: int
     map_height: int
     seed: int
+    map_template: str = "random"
     status: str
     winner: str | None
     victory_type: str | None
@@ -1151,6 +1649,7 @@ async def create_lobby(
             creator=request.player_id if request.creator_seated else None,
             creator_user_identity_id=identity.user_identity_id,
             slot_configs=slot_configs,
+            map_template=request.map_template,
         )
 
         # Seat the creator immediately so the lobby isn't empty (when
@@ -1827,6 +2326,7 @@ def _game_detail_response(
         map_width=game.map_width,
         map_height=game.map_height,
         seed=game.seed,
+        map_template=getattr(game, "map_template", "random") or "random",
         status=game.status,
         winner=game.winner,
         victory_type=game.victory_type,

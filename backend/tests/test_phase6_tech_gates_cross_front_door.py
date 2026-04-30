@@ -151,7 +151,7 @@ async def _seed_fixture(game_id: str) -> None:
             for x in range(10):
                 new_tiles.append(
                     Tile(
-                        id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS
+                        id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS
                     )
                 )
                 tile_id += 1

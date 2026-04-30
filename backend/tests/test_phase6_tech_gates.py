@@ -49,7 +49,7 @@ def _plains_grid(width: int = 10, height: int = 10) -> GameState:
     for y in range(height):
         for x in range(width):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     return state

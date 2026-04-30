@@ -111,6 +111,55 @@ class TestGameEndpoints:
         assert "tiles" in data
 
     @pytest.mark.asyncio
+    async def test_get_game_state_as_player_redacts(self, client, _init_db):
+        """``?as_player=`` redacts the response for an unauthenticated observer.
+
+        Covers the spectator perspective switcher: a god-mode caller (or
+        an unseated lobby creator) asks for ``as_player=alice`` and gets
+        a fog-of-war view filtered to alice's units/cities. With only
+        starter units on a fresh map, the redacted tile count must be
+        strictly less than the full ``map_width * map_height`` god-mode
+        response.
+        """
+        game_id = self._game_id("test_game")
+        client.post(
+            f"/api/v1/games/{game_id}/start",
+            json={"players": ["alice", "bob"], "seed": 42},
+        )
+
+        god_resp = client.get(f"/api/v1/state?game_id={game_id}")
+        assert god_resp.status_code == 200
+        god_data = god_resp.json()
+        full_tile_count = god_data["map_width"] * god_data["map_height"]
+        assert len(god_data["tiles"]) == full_tile_count
+
+        alice_resp = client.get(
+            f"/api/v1/state?game_id={game_id}&as_player=alice"
+        )
+        assert alice_resp.status_code == 200
+        alice_data = alice_resp.json()
+        assert len(alice_data["tiles"]) < full_tile_count
+        # Every visible unit is alice's (bob's units are out of sight on
+        # turn 0 with default starter spacing).
+        for unit in alice_data["units"].values():
+            assert unit["owner"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_get_game_state_as_player_unknown_rejected(
+        self, client, _init_db
+    ):
+        """Unknown ``as_player`` is a 400, not a silent god-mode fallthrough."""
+        game_id = self._game_id("test_game")
+        client.post(
+            f"/api/v1/games/{game_id}/start",
+            json={"players": ["alice", "bob"], "seed": 42},
+        )
+        resp = client.get(
+            f"/api/v1/state?game_id={game_id}&as_player=mallory"
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
     async def test_submit_actions(self, client, _init_db):
         game_id = self._game_id("test_game")
         client.post(

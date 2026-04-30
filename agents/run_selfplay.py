@@ -68,6 +68,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--map-width", type=int, default=12)
     parser.add_argument("--map-height", type=int, default=12)
     parser.add_argument(
+        "--map-template",
+        type=str,
+        default=None,
+        help=(
+            "Map template name. One of random/continent/islands/river/lakes/"
+            "archipelago, or saved:<id>. Defaults to the engine default (random)."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print the full reproduction report even on success.",
@@ -95,6 +104,7 @@ async def _run(args: argparse.Namespace) -> int:
         max_turn_cap=args.turn_cap,
         map_width=args.map_width,
         map_height=args.map_height,
+        map_template=args.map_template,
     )
 
     header = [

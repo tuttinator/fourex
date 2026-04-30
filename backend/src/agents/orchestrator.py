@@ -64,6 +64,7 @@ async def create_game(
     map_width: int = 20,
     map_height: int = 20,
     victory_conditions: list[str] | None = None,
+    map_template: str | None = None,
 ) -> OrchestratedGame:
     """Create a new game via MCP and return the player API keys."""
     args: dict[str, Any] = {
@@ -75,6 +76,8 @@ async def create_game(
     }
     if victory_conditions is not None:
         args["victory_conditions"] = victory_conditions
+    if map_template is not None:
+        args["map_template"] = map_template
     resp = await client.call_tool("create_game", args)
     if "error" in resp:
         raise RuntimeError(f"create_game failed: {resp['error']}")

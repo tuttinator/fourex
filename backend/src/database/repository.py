@@ -22,6 +22,7 @@ from .models import (
     PlayerAction,
     PlayerApiKey,
     PromptLog,
+    SavedMap,
     TurnAction,
     TurnSnapshot,
     UserIdentity,
@@ -51,6 +52,7 @@ class GameRepository:
         creator: str | None = None,
         creator_user_identity_id: int | None = None,
         status: str = "created",
+        map_template: str = "random",
     ) -> Game:
         """Create a new game record."""
         # Create initial game state
@@ -83,6 +85,7 @@ class GameRepository:
             creator=creator,
             creator_user_identity_id=creator_user_identity_id,
             status=status,
+            map_template=map_template,
         )
 
         self.session.add(game)
@@ -396,28 +399,143 @@ class GameRepository:
         await self.session.flush()
         return row
 
-    async def upsert_user_identity_by_email(self, email: str) -> UserIdentity:
+    async def upsert_user_identity_by_email(
+        self, email: str, *, admin_emails: list[str] | None = None
+    ) -> UserIdentity:
         """Return the UserIdentity for an email, creating it if missing.
 
         Idempotent: successive calls with the same normalised email return the
         same row. Email is trimmed and lowercased so that ``Foo@Bar`` and
         ``foo@bar`` resolve to a single identity.
+
+        When ``admin_emails`` is provided the row's ``is_admin`` flag is
+        re-synced to ``email in admin_emails`` (case-insensitive). Phase 3 of
+        the map system overhaul uses this on every Auth.js verify so the DB
+        flag mirrors the env-var allowlist — removing an email demotes the
+        user on their next sign-in without a redeploy.
         """
         normalised = email.strip().lower()
         if not normalised:
             raise ValueError("email is required")
+
+        admin_set: set[str] | None = None
+        if admin_emails is not None:
+            admin_set = {a.strip().lower() for a in admin_emails if a and a.strip()}
 
         result = await self.session.execute(
             select(UserIdentity).where(UserIdentity.email == normalised)
         )
         existing = result.scalar_one_or_none()
         if existing is not None:
+            if admin_set is not None:
+                desired = normalised in admin_set
+                if existing.is_admin != desired:
+                    existing.is_admin = desired
+                    await self.session.flush()
             return existing
 
-        identity = UserIdentity(email=normalised)
+        identity = UserIdentity(
+            email=normalised,
+            is_admin=(admin_set is not None and normalised in admin_set),
+        )
         self.session.add(identity)
         await self.session.flush()
         return identity
+
+    async def list_saved_maps(self) -> list[SavedMap]:
+        """Return every saved map ordered by ``updated_at`` desc.
+
+        Phase 4 (map system overhaul): backs ``GET /api/v1/maps`` and
+        the lobby drop-down population. Open to any authenticated user
+        — see the route guard in ``rest.py``.
+        """
+        result = await self.session.execute(
+            select(SavedMap).order_by(desc(SavedMap.updated_at))
+        )
+        return list(result.scalars().all())
+
+    async def get_saved_map(self, saved_map_id: int) -> SavedMap | None:
+        """Look up a SavedMap by primary key, or None."""
+        result = await self.session.execute(
+            select(SavedMap).where(SavedMap.id == saved_map_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_saved_map_by_name(self, name: str) -> SavedMap | None:
+        """Look up a SavedMap by its unique ``name`` field, or None."""
+        result = await self.session.execute(
+            select(SavedMap).where(SavedMap.name == name)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_saved_map(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        width: int,
+        height: int,
+        tiles: list[dict[str, Any]],
+        spawn_zones: list[dict[str, int]],
+        created_by: int | None,
+    ) -> SavedMap:
+        """Insert a SavedMap row. Caller has already validated payload."""
+        row = SavedMap(
+            name=name,
+            description=description,
+            width=width,
+            height=height,
+            tiles=tiles,
+            spawn_zones=spawn_zones,
+            created_by=created_by,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def update_saved_map(
+        self,
+        saved_map_id: int,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        tiles: list[dict[str, Any]] | None = None,
+        spawn_zones: list[dict[str, int]] | None = None,
+    ) -> SavedMap | None:
+        """Apply a partial update to a SavedMap row. Returns the row or None."""
+        row = await self.get_saved_map(saved_map_id)
+        if row is None:
+            return None
+        if name is not None:
+            row.name = name
+        if description is not None:
+            row.description = description
+        if width is not None:
+            row.width = width
+        if height is not None:
+            row.height = height
+        if tiles is not None:
+            row.tiles = tiles
+        if spawn_zones is not None:
+            row.spawn_zones = spawn_zones
+        await self.session.flush()
+        # ``onupdate=func.now()`` populates ``updated_at`` server-side, so
+        # SQLAlchemy expires the column after the UPDATE. Refresh
+        # eagerly so callers can read the new timestamp without
+        # triggering a lazy-load outside their async session scope.
+        await self.session.refresh(row)
+        return row
+
+    async def delete_saved_map(self, saved_map_id: int) -> bool:
+        """Delete a SavedMap row. Returns True iff a row was removed."""
+        row = await self.get_saved_map(saved_map_id)
+        if row is None:
+            return False
+        await self.session.delete(row)
+        await self.session.flush()
+        return True
 
     async def upsert_agent_memory(
         self, game_id: str, player_id: str, turn_number: int, scratchpad_text: str

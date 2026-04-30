@@ -15,7 +15,7 @@ export function createDemoGameState(width = 20, height = 20): GameState {
     if (v > 0.8) return 'mountain'
     if (v > 0.2) return 'forest'
     if (v < -0.8) return 'water'
-    return 'plains'
+    return 'grass'
   }
 
   // Resources placed deterministically

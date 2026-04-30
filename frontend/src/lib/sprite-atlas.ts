@@ -8,11 +8,16 @@ import type {
   UnitType,
 } from '@/types/game'
 
+// PNG tiles for the new biome-aware terrain set. The PNG art lives under
+// /sprites/tile-*.png; the legacy SVG terrain sprites are no longer used.
 const TERRAIN_SPRITE_URLS: Record<Terrain, string> = {
-  plains: '/sprites/terrain-plains.svg',
-  forest: '/sprites/terrain-forest.svg',
-  mountain: '/sprites/terrain-mountain.svg',
-  water: '/sprites/terrain-water.svg',
+  grass: '/sprites/tile-grass.png',
+  forest: '/sprites/tile-forest.png',
+  hills: '/sprites/tile-hills.png',
+  mountain: '/sprites/tile-mountain.png',
+  desert: '/sprites/tile-desert.png',
+  swamp: '/sprites/tile-swamp.png',
+  water: '/sprites/tile-water.png',
 }
 
 const RESOURCE_SPRITE_URLS: Record<Resource, string> = {

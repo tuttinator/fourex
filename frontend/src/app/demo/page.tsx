@@ -69,17 +69,21 @@ export default function DemoPage() {
 
           <h2 className="text-sm font-semibold mb-2">Terrain</h2>
           <div className="space-y-1 mb-4">
-            {(['plains', 'forest', 'mountain', 'water'] as const).map((t) => (
+            {(
+              [
+                ['grass', '#8fbc8f'],
+                ['forest', '#228b22'],
+                ['hills', '#a1887f'],
+                ['mountain', '#696969'],
+                ['desert', '#f4d58d'],
+                ['swamp', '#5d7a3a'],
+                ['water', '#4682b4'],
+              ] as const
+            ).map(([t, color]) => (
               <div key={t} className="flex items-center gap-2 text-xs">
                 <div
                   className="w-3 h-3 rounded"
-                  style={{
-                    backgroundColor:
-                      t === 'plains' ? '#8fbc8f'
-                        : t === 'forest' ? '#228b22'
-                          : t === 'mountain' ? '#696969'
-                            : '#4682b4',
-                  }}
+                  style={{ backgroundColor: color }}
                 />
                 <span className="capitalize">{t}</span>
               </div>

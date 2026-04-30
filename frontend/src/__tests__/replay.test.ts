@@ -66,7 +66,7 @@ const mockGameState: GameState = {
 	map_width: 20,
 	map_height: 20,
 	tiles: [
-		{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", owner: "alice", unit_ids: [] },
+		{ id: 0, loc: { x: 0, y: 0 }, terrain: "grass", owner: "alice", unit_ids: [] },
 		{ id: 1, loc: { x: 1, y: 0 }, terrain: "forest", unit_ids: [1] },
 	],
 	units: {

@@ -208,6 +208,7 @@ async def run_self_play(
     max_turn_cap: int | None = 20,
     map_width: int = 12,
     map_height: int = 12,
+    map_template: str | None = None,
 ) -> SelfPlayResult:
     """Run a complete self-play game and validate invariants after every turn.
 
@@ -229,6 +230,7 @@ async def run_self_play(
         max_turns=max_turns,
         map_width=map_width,
         map_height=map_height,
+        map_template=map_template,
     )
 
     agents: dict[str, MCPAgent] = {

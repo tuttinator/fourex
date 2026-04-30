@@ -18,6 +18,10 @@ import type {
 	MySubmissionResponse,
 	QueueableTilesResponse,
 	RulesReference,
+	SavedMap,
+	SavedMapCreateRequest,
+	SavedMapSummary,
+	SavedMapUpdateRequest,
 	TechTreeResponse,
 	TrainableUnitsResponse,
 	TreatyClause,
@@ -441,14 +445,18 @@ export const api = {
 
 	async getGameStateAsPlayer(
 		gameId: string,
-		// eslint-disable-next-line @typescript-eslint/no-unused-vars
-		_playerId: string,
+		playerId: string,
 	): Promise<GameState> {
-		// The legacy `player_<name>` bearer prefix has been retired. Observation
-		// perspective switching now only applies fog-of-war redaction if the
-		// caller holds the relevant per-game API key (i.e. they are that player).
-		// Otherwise the request falls through to god-mode observation.
-		return fetchApi(`/state?game_id=${gameId}`, { gameId });
+		// `as_player` asks the backend to redact the response as if the
+		// caller were ``playerId`` — used by observers (e.g. an unseated
+		// lobby creator) switching perspective in the spectator UI. Strictly
+		// less information than the unauthenticated god-mode response, so no
+		// extra auth is required.
+		const qs = new URLSearchParams({
+			game_id: gameId,
+			as_player: playerId,
+		});
+		return fetchApi(`/state?${qs.toString()}`, { gameId });
 	},
 
 	async listTurns(
@@ -606,6 +614,40 @@ export const api = {
 			},
 		);
 	},
+
+	// Phase 4 (map system overhaul): saved-map authoring + listing.
+	// All four verbs are routed through the BFF so the Auth.js JWT
+	// (HttpOnly cookie) reaches FastAPI server-side.
+	async listSavedMaps(): Promise<SavedMapSummary[]> {
+		return fetchBff<SavedMapSummary[]>("/api/maps", { method: "GET" });
+	},
+
+	async getSavedMap(id: number): Promise<SavedMap> {
+		return fetchBff<SavedMap>(`/api/maps/${id}`, { method: "GET" });
+	},
+
+	async createSavedMap(request: SavedMapCreateRequest): Promise<SavedMap> {
+		return fetchBff<SavedMap>("/api/maps", {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+	},
+
+	async updateSavedMap(
+		id: number,
+		request: SavedMapUpdateRequest,
+	): Promise<SavedMap> {
+		return fetchBff<SavedMap>(`/api/maps/${id}`, {
+			method: "PATCH",
+			body: JSON.stringify(request),
+		});
+	},
+
+	async deleteSavedMap(id: number): Promise<{ deleted: number }> {
+		return fetchBff<{ deleted: number }>(`/api/maps/${id}`, {
+			method: "DELETE",
+		});
+	},
 };
 
 // React Query keys
@@ -626,6 +668,8 @@ export const queryKeys = {
 	diplomacy: (gameId: string) => ["game", gameId, "diplomacy"] as const,
 	techTree: (gameId: string) => ["game", gameId, "techTree"] as const,
 	rulesReference: () => ["rulesReference"] as const,
+	savedMaps: () => ["savedMaps"] as const,
+	savedMap: (id: number) => ["savedMap", id] as const,
 };
 
 // Utility functions

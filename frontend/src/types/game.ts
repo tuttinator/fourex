@@ -1,6 +1,13 @@
 export type PlayerId = string;
 
-export type Terrain = "plains" | "forest" | "mountain" | "water";
+export type Terrain =
+	| "grass"
+	| "forest"
+	| "hills"
+	| "mountain"
+	| "desert"
+	| "swamp"
+	| "water";
 export type Resource = "food" | "wood" | "ore" | "crystal" | "science";
 export type UnitType = "scout" | "worker" | "soldier" | "archer";
 export type BuildingType =
@@ -249,6 +256,12 @@ export interface CreateLobbyRequest {
 	map_width?: number;
 	map_height?: number;
 	seed?: number;
+	/** Phase 2 (map system overhaul): parametric template name for
+	 * map generation. One of ``random`` | ``continent`` | ``islands`` |
+	 * ``river`` | ``lakes`` | ``archipelago``. Future namespaces
+	 * (``saved:<id>``, ``scenario:<id>``) are accepted as bare strings.
+	 * Defaults to ``random`` server-side. */
+	map_template?: MapTemplate | string;
 	/** Phase 3: false → owner-only / all-Agent game; the creator is
 	 * not seated in any slot and has no per-game API key. */
 	creator_seated?: boolean;
@@ -256,6 +269,116 @@ export interface CreateLobbyRequest {
 	 * ``player_slots``. Omit for the legacy all-Human, creator-in-slot-0
 	 * behaviour. */
 	slots?: SlotConfigRequest[];
+}
+
+/** Phase 2 (map system overhaul): canonical parametric template names
+ * surfaced in the lobby UI drop-down. Saved-map identifiers
+ * (``saved:<id>``) live in a separate namespace. */
+export type MapTemplate =
+	| "random"
+	| "continent"
+	| "islands"
+	| "river"
+	| "lakes"
+	| "archipelago";
+
+export const MAP_TEMPLATES: ReadonlyArray<{
+	value: MapTemplate;
+	label: string;
+	description: string;
+}> = [
+	{
+		value: "random",
+		label: "Random",
+		description: "Legacy unstructured noise — no continents.",
+	},
+	{
+		value: "continent",
+		label: "Continent",
+		description: "One large landmass with water margins.",
+	},
+	{
+		value: "islands",
+		label: "Islands",
+		description: "Distinct landmasses, one per player.",
+	},
+	{
+		value: "river",
+		label: "River",
+		description: "Continent split by a tile-aligned water strip.",
+	},
+	{
+		value: "lakes",
+		label: "Lakes",
+		description: "Mostly land with scattered inland water bodies.",
+	},
+	{
+		value: "archipelago",
+		label: "Archipelago",
+		description: "Mostly water with small island clusters.",
+	},
+];
+
+/** Phase 4 (map system overhaul): one tile in a SavedMap definition. */
+export interface SavedMapTile {
+	x: number;
+	y: number;
+	terrain: Terrain | string;
+	resource?: Resource | string | null;
+}
+
+/** Phase 4 (map system overhaul): a spawn-zone marker on a SavedMap. */
+export interface SavedMapSpawnZone {
+	x: number;
+	y: number;
+}
+
+/** Phase 4: lightweight summary returned by ``GET /api/v1/maps``. The
+ * lobby drop-down and the ``/maps`` list view consume this; the
+ * editor fetches the full body via ``GET /api/v1/maps/{id}``. */
+export interface SavedMapSummary {
+	id: number;
+	name: string;
+	description: string | null;
+	width: number;
+	height: number;
+	spawn_zone_count: number;
+	creator_email: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** Phase 4: full saved-map row used by the editor / GET-by-id. */
+export interface SavedMap {
+	id: number;
+	name: string;
+	description: string | null;
+	width: number;
+	height: number;
+	tiles: SavedMapTile[];
+	spawn_zones: SavedMapSpawnZone[];
+	created_by: number | null;
+	creator_email: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface SavedMapCreateRequest {
+	name: string;
+	description?: string | null;
+	width: number;
+	height: number;
+	tiles: SavedMapTile[];
+	spawn_zones: SavedMapSpawnZone[];
+}
+
+export interface SavedMapUpdateRequest {
+	name?: string;
+	description?: string | null;
+	width?: number;
+	height?: number;
+	tiles?: SavedMapTile[];
+	spawn_zones?: SavedMapSpawnZone[];
 }
 
 export interface JoinLobbyRequest {
@@ -317,6 +440,9 @@ export interface GameDetailResponse {
 	map_width: number;
 	map_height: number;
 	seed: number;
+	/** Phase 2 (map system overhaul): the parametric template that
+	 * generated the map. Defaults to "random" for legacy rows. */
+	map_template?: string;
 	status: "waiting" | "active" | "ended" | "created";
 	winner: string | null;
 	victory_type: string | null;
@@ -526,9 +652,12 @@ export const UNIT_COLORS: Record<UnitType, string> = {
 };
 
 export const TERRAIN_COLORS: Record<Terrain, string> = {
-	plains: "#8fbc8f",
+	grass: "#8fbc8f",
 	forest: "#228b22",
+	hills: "#a1887f",
 	mountain: "#696969",
+	desert: "#f4d58d",
+	swamp: "#5d7a3a",
 	water: "#4682b4",
 };
 

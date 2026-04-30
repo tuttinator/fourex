@@ -24,7 +24,7 @@ def _make_state(width: int = 7, height: int = 3) -> GameState:
     for y in range(height):
         for x in range(width):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     state.players.append("p1")

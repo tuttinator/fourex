@@ -85,27 +85,27 @@ def _make_test_state() -> tuple[GameState, GameState]:
     tid = 0
     terrains = [
         [
-            Terrain.PLAINS,
-            Terrain.PLAINS,
+            Terrain.GRASS,
+            Terrain.GRASS,
             Terrain.FOREST,
             Terrain.MOUNTAIN,
             Terrain.WATER,
         ],
-        [Terrain.PLAINS, Terrain.PLAINS, Terrain.PLAINS, Terrain.FOREST, Terrain.WATER],
+        [Terrain.GRASS, Terrain.GRASS, Terrain.GRASS, Terrain.FOREST, Terrain.WATER],
         [
             Terrain.FOREST,
-            Terrain.PLAINS,
-            Terrain.PLAINS,
-            Terrain.PLAINS,
+            Terrain.GRASS,
+            Terrain.GRASS,
+            Terrain.GRASS,
             Terrain.MOUNTAIN,
         ],
-        [Terrain.WATER, Terrain.FOREST, Terrain.PLAINS, Terrain.PLAINS, Terrain.PLAINS],
+        [Terrain.WATER, Terrain.FOREST, Terrain.GRASS, Terrain.GRASS, Terrain.GRASS],
         [
             Terrain.WATER,
             Terrain.WATER,
             Terrain.MOUNTAIN,
-            Terrain.PLAINS,
-            Terrain.PLAINS,
+            Terrain.GRASS,
+            Terrain.GRASS,
         ],
     ]
     for y in range(5):
@@ -206,7 +206,7 @@ class TestRenderAsciiPure:
         full, redacted = _make_test_state()
         output = render_ascii(full, redacted, "alice")
         assert "Legend:" in output
-        assert "plains" in output
+        assert "grass" in output
         assert "forest" in output
 
     def test_contains_turn_info(self):

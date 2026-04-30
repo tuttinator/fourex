@@ -33,7 +33,9 @@ class Settings(BaseSettings):
         "127.0.0.1",
     ]
 
-    @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
+    @field_validator(
+        "cors_origins", "mcp_allowed_hosts", "admin_email_allowlist", mode="before"
+    )
     @classmethod
     def _parse_string_list(cls, value: object) -> object:
         if not isinstance(value, str):
@@ -59,6 +61,14 @@ class Settings(BaseSettings):
     # server route calls on first magic-link verify. Kept distinct from
     # `auth_secret` (which signs user JWTs) so the two rotate independently.
     identity_service_secret: str = "dev-identity-service-secret-change-me"
+
+    # Phase 3 (map system overhaul): comma-separated list of emails granted
+    # the ``is_admin`` flag on Auth.js verify. The deployment env var is the
+    # single source of truth — the DB column is a cache that re-syncs on
+    # every successful sign-in, so removing an email here demotes the user
+    # at their next login. JSON list and bare comma-separated forms are
+    # both accepted via the shared ``_parse_string_list`` validator below.
+    admin_email_allowlist: Annotated[list[str], NoDecode] = []
 
     # Phase 5 (spectated-agents): auto-archive sweep. Thresholds measured
     # against ``created_at`` (waiting) and ``turn_started_at`` (active).

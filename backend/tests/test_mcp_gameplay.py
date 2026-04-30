@@ -238,7 +238,7 @@ async def test_submit_move_action(db_session, mcp):
         tile = tiles_by_loc.get((nx, ny))
         if (
             tile
-            and tile["terrain"] in ("plains", "forest")
+            and tile["terrain"] in ("grass", "forest")
             and tile.get("unit_id") is None
         ):
             target = {"x": nx, "y": ny}

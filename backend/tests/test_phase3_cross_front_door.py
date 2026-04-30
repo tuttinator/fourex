@@ -138,7 +138,7 @@ async def _seed_city_with_queued_scout(
         for y in range(10):
             for x in range(10):
                 new_tiles.append(
-                    Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                    Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
                 )
                 tile_id += 1
         state.tiles = new_tiles

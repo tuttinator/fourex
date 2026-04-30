@@ -28,7 +28,7 @@ def _make_state(width: int = 5, height: int = 5) -> GameState:
     for y in range(height):
         for x in range(width):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     state.players.append("p1")
@@ -88,7 +88,7 @@ class TestGetValidMoves:
         }
         assert {(r["x"], r["y"]) for r in results} == expected
         for r in results:
-            assert r["terrain"] == "plains"
+            assert r["terrain"] == "grass"
             assert r["has_resource"] is False
             assert r["resource_type"] is None
             assert r["has_improvement"] is False

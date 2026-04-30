@@ -142,9 +142,27 @@ def test_terrain_payload_marks_impassable_as_null() -> None:
     assert payload["terrain"][Terrain.MOUNTAIN.value]["passable"] is False
     assert payload["terrain"][Terrain.WATER.value]["entry_cost"] is None
     assert payload["terrain"][Terrain.WATER.value]["passable"] is False
-    # Plains stays cost 1; forest cost 2 per the PRD.
-    assert payload["terrain"][Terrain.PLAINS.value]["entry_cost"] == 1
+    # Grass cost 1; forest, hills cost 2; swamp cost 3 per the PRD.
+    assert payload["terrain"][Terrain.GRASS.value]["entry_cost"] == 1
     assert payload["terrain"][Terrain.FOREST.value]["entry_cost"] == 2
+    assert payload["terrain"][Terrain.HILLS.value]["entry_cost"] == 2
+    assert payload["terrain"][Terrain.SWAMP.value]["entry_cost"] == 3
+    assert payload["terrain"][Terrain.DESERT.value]["entry_cost"] == 1
+
+    # City eligibility surfaces in the payload.
+    assert payload["terrain"][Terrain.GRASS.value]["city_eligible"] is True
+    assert payload["terrain"][Terrain.HILLS.value]["city_eligible"] is True
+    assert payload["terrain"][Terrain.MOUNTAIN.value]["city_eligible"] is False
+    assert payload["terrain"][Terrain.SWAMP.value]["city_eligible"] is False
+    assert payload["terrain"][Terrain.WATER.value]["city_eligible"] is False
+
+    # Primary resource per terrain (mountain/water/swamp have none).
+    assert payload["terrain"][Terrain.GRASS.value]["primary_resource"] == "food"
+    assert payload["terrain"][Terrain.FOREST.value]["primary_resource"] == "wood"
+    assert payload["terrain"][Terrain.HILLS.value]["primary_resource"] == "ore"
+    assert payload["terrain"][Terrain.MOUNTAIN.value]["primary_resource"] is None
+    assert payload["terrain"][Terrain.DESERT.value]["primary_resource"] == "crystal"
+    assert payload["terrain"][Terrain.SWAMP.value]["primary_resource"] is None
 
 
 def test_tech_tree_payload_matches_static_tree() -> None:

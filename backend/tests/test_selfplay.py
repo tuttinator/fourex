@@ -101,7 +101,7 @@ def _mini_state() -> GameState:
     for y in range(3):
         for x in range(3):
             state.tiles.append(
-                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.PLAINS)
+                Tile(id=tile_id, loc=Coord(x=x, y=y), terrain=Terrain.GRASS)
             )
             tile_id += 1
     state.players = ["p1"]

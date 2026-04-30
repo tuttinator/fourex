@@ -25,16 +25,22 @@ from ...game.rules import redact_state
 # ---------------------------------------------------------------------------
 
 TERRAIN_ASCII: dict[Terrain, str] = {
-    Terrain.PLAINS: ".",
+    Terrain.GRASS: ".",
     Terrain.FOREST: "T",
+    Terrain.HILLS: "n",
     Terrain.MOUNTAIN: "^",
+    Terrain.DESERT: ":",
+    Terrain.SWAMP: "%",
     Terrain.WATER: "~",
 }
 
 TERRAIN_SVG_COLOUR: dict[Terrain, str] = {
-    Terrain.PLAINS: "#c8e6c9",
+    Terrain.GRASS: "#c8e6c9",
     Terrain.FOREST: "#388e3c",
+    Terrain.HILLS: "#a1887f",
     Terrain.MOUNTAIN: "#9e9e9e",
+    Terrain.DESERT: "#fff59d",
+    Terrain.SWAMP: "#6d8c4e",
     Terrain.WATER: "#42a5f5",
 }
 
@@ -176,7 +182,9 @@ def render_ascii(
     # Legend
     lines.append("")
     lines.append("Legend:")
-    lines.append("  . plains  T forest  ^ mountain  ~ water  ? fog")
+    lines.append(
+        "  . grass  T forest  n hills  ^ mountain  : desert  % swamp  ~ water  ? fog"
+    )
     lines.append("  C your city  c enemy city  * improvement")
     lines.append("  S soldier  A archer  s scout  w worker  (UPPER=yours)")
     lines.append(f"  Turn {full_state.turn} | You: {player_id}")

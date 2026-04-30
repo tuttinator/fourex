@@ -42,6 +42,13 @@ class Game(Base):
     map_width: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     map_height: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     rng_state: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Phase 2 (map system overhaul): the parametric template name that
+    # generated this game's map. Stored as a free string so future
+    # namespaces (``saved:<id>``, ``scenario:<id>``) are additive without a
+    # schema change. ``random`` reproduces the legacy noise generator.
+    map_template: Mapped[str] = mapped_column(
+        String(64), default="random", server_default="random", nullable=False
+    )
 
     # Lobby configuration
     player_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
@@ -391,15 +398,76 @@ class UserIdentity(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    # Phase 3 (map system overhaul): admin-only authoring surface gate.
+    # Re-synced from the env-var allowlist on each Auth.js verify, so the
+    # DB row mirrors deployment config (the allowlist is the source of
+    # truth) — adding/removing emails takes effect on next sign-in.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), server_default=func.now(), nullable=False
     )
 
     api_keys = relationship("PlayerApiKey", back_populates="user_identity")
+    saved_maps = relationship("SavedMap", back_populates="creator")
 
     __table_args__ = (
         UniqueConstraint("email", name="uq_user_identities_email"),
         Index("idx_user_identities_email", "email"),
+    )
+
+
+class SavedMap(Base):
+    """Admin-authored saved map definition.
+
+    Phase 4 of the map system overhaul: admins paint a grid of tiles
+    and drop spawn-zone markers in the ``/maps`` editor; the result
+    lands here. The lobby surfaces these alongside parametric
+    templates as ``saved:<id>`` entries — selecting one overrides the
+    lobby's ``map_width`` / ``map_height`` with the values baked into
+    the row, and the saved spawn zones replace the per-template
+    spawn-zone helper.
+    """
+
+    __tablename__ = "saved_maps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ``tiles`` is a JSON array of ``{x, y, terrain, resource}`` dicts.
+    # Stored as JSONB for cheap server-side filtering / future indexing
+    # (e.g. "find every map that uses desert"). Order is row-major
+    # (y, x) but readers should not rely on it — coordinates are the
+    # source of truth.
+    tiles: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    # ``spawn_zones`` is a JSON array of ``{x, y}`` dicts. The lobby
+    # picks a deterministic random subset when the map has more
+    # zones than the requested player count (``saved:<id>`` plus the
+    # lobby seed and player count uniquely determines the subset).
+    spawn_zones: Mapped[list[dict[str, int]]] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_identities.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    creator = relationship("UserIdentity", back_populates="saved_maps")
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_saved_maps_name"),
+        Index("idx_saved_maps_created_by", "created_by"),
+        Index("idx_saved_maps_updated_at", "updated_at"),
     )
 
 

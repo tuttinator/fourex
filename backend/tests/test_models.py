@@ -161,7 +161,7 @@ class TestGameState:
         tile = Tile(
             id=1,
             loc=Coord(x=5, y=5),
-            terrain=Terrain.PLAINS,
+            terrain=Terrain.GRASS,
         )
         state.tiles.append(tile)
 

@@ -77,7 +77,7 @@ vi.mock("@/components/pixi-map", () => ({
 					onTileClick?.({
 						id: 0,
 						loc: { x: 0, y: 0 },
-						terrain: "plains",
+						terrain: "grass",
 						unit_ids: [1],
 					})
 				}
@@ -90,7 +90,7 @@ vi.mock("@/components/pixi-map", () => ({
 					onTileClick?.({
 						id: 2,
 						loc: { x: 1, y: 0 },
-						terrain: "plains",
+						terrain: "grass",
 						unit_ids: [],
 					})
 				}
@@ -103,7 +103,7 @@ vi.mock("@/components/pixi-map", () => ({
 					onTileClick?.({
 						id: 3,
 						loc: { x: 2, y: 0 },
-						terrain: "plains",
+						terrain: "grass",
 						unit_ids: [99],
 					})
 				}
@@ -116,7 +116,7 @@ vi.mock("@/components/pixi-map", () => ({
 					onTileClick?.({
 						id: 4,
 						loc: { x: 3, y: 3 },
-						terrain: "plains",
+						terrain: "grass",
 						unit_ids: [],
 						city_id: 11,
 					})
@@ -131,7 +131,7 @@ vi.mock("@/components/pixi-map", () => ({
 						{
 							id: 5,
 							loc: { x: 4, y: 4 },
-							terrain: "plains",
+							terrain: "grass",
 							unit_ids: [2, 3],
 							city_id: 12,
 						},
@@ -153,14 +153,14 @@ const sampleState: GameState = {
 	map_width: 10,
 	map_height: 10,
 	tiles: [
-		{ id: 0, loc: { x: 0, y: 0 }, terrain: "plains", unit_ids: [1] },
-		{ id: 1, loc: { x: 1, y: 0 }, terrain: "plains", unit_ids: [] },
-		{ id: 2, loc: { x: 2, y: 0 }, terrain: "plains", unit_ids: [99] },
-		{ id: 3, loc: { x: 3, y: 3 }, terrain: "plains", unit_ids: [], city_id: 11 },
+		{ id: 0, loc: { x: 0, y: 0 }, terrain: "grass", unit_ids: [1] },
+		{ id: 1, loc: { x: 1, y: 0 }, terrain: "grass", unit_ids: [] },
+		{ id: 2, loc: { x: 2, y: 0 }, terrain: "grass", unit_ids: [99] },
+		{ id: 3, loc: { x: 3, y: 3 }, terrain: "grass", unit_ids: [], city_id: 11 },
 		// Phase 4 gameplay-improvements: a stacked tile with two friendly
 		// units and a friendly city — enough selectable entities to open
 		// the stack selector popover.
-		{ id: 5, loc: { x: 4, y: 4 }, terrain: "plains", unit_ids: [2, 3], city_id: 12 },
+		{ id: 5, loc: { x: 4, y: 4 }, terrain: "grass", unit_ids: [2, 3], city_id: 12 },
 	],
 	units: {
 		1: {
@@ -372,7 +372,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -412,7 +412,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -464,7 +464,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -513,7 +513,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -635,7 +635,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -699,7 +699,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
@@ -1784,7 +1784,7 @@ describe("GameplayView", () => {
 				{
 					x: 1,
 					y: 0,
-					terrain: "plains",
+					terrain: "grass",
 					cost: 1,
 					distance: 1,
 					path: [{ x: 1, y: 0 }],
