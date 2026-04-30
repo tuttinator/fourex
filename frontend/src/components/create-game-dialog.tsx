@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -15,11 +15,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { api } from '@/lib/api'
+import { api, queryKeys } from '@/lib/api'
 import { setGameCredentials } from '@/lib/game-auth'
 import { useToast } from '@/hooks/use-toast'
 import type { CreateLobbyRequest, MapTemplate, SlotConfigRequest } from '@/types/game'
 import { MAP_TEMPLATES } from '@/types/game'
+
+const SAVED_PREFIX = 'saved:'
 
 interface CreateGameDialogProps {
   open: boolean
@@ -72,11 +74,28 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
   const [mapWidth, setMapWidth] = useState('20')
   const [mapHeight, setMapHeight] = useState('20')
   const [seed, setSeed] = useState('42')
-  const [mapTemplate, setMapTemplate] = useState<MapTemplate>('random')
+  // ``mapTemplate`` carries either a parametric template name or
+  // ``saved:<id>`` for an admin-authored map (Phase 4). The drop-down
+  // surfaces both in one list with a separator between groups.
+  const [mapTemplate, setMapTemplate] = useState<string>('random')
 
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const router = useRouter()
+
+  const savedMapsQuery = useQuery({
+    queryKey: queryKeys.savedMaps(),
+    queryFn: () => api.listSavedMaps(),
+    enabled: open,
+  })
+
+  const isSavedMapSelected = mapTemplate.startsWith(SAVED_PREFIX)
+  const selectedSavedMap = useMemo(() => {
+    if (!isSavedMapSelected) return null
+    const id = parseInt(mapTemplate.slice(SAVED_PREFIX.length))
+    if (Number.isNaN(id)) return null
+    return savedMapsQuery.data?.find((m) => m.id === id) ?? null
+  }, [isSavedMapSelected, mapTemplate, savedMapsQuery.data])
 
   // Slot rows are derived state — computed from playerSlots / creatorSeated
   // / playerId plus per-slot user overrides. Keeping this as a memo avoids
@@ -183,8 +202,15 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
       return
     }
 
-    const width = parseInt(mapWidth)
-    if (isNaN(width) || width < 10 || width > 100) {
+    // Saved-map lobbies override dimensions server-side with the
+    // saved row's width/height; the inputs are disabled in the UI but
+    // we still send something safe (the saved-map's own dims when
+    // available, otherwise 20×20) so the request body validates
+    // against the legacy 10-100 bounds.
+    const width = isSavedMapSelected
+      ? selectedSavedMap?.width ?? 20
+      : parseInt(mapWidth)
+    if (!isSavedMapSelected && (isNaN(width) || width < 10 || width > 100)) {
       toast({
         title: 'Invalid map width',
         description: 'Map width must be between 10 and 100.',
@@ -193,8 +219,10 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
       return
     }
 
-    const height = parseInt(mapHeight)
-    if (isNaN(height) || height < 10 || height > 100) {
+    const height = isSavedMapSelected
+      ? selectedSavedMap?.height ?? 20
+      : parseInt(mapHeight)
+    if (!isSavedMapSelected && (isNaN(height) || height < 10 || height > 100)) {
       toast({
         title: 'Invalid map height',
         description: 'Map height must be between 10 and 100.',
@@ -214,7 +242,10 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
       map_width: width,
       map_height: height,
       seed: parseInt(seed) || 42,
-      map_template: mapTemplate,
+      // Bare parametric names land in the MapTemplate union; saved
+      // maps carry the ``saved:<id>`` namespace as a free string,
+      // which the field's union with ``string`` accepts.
+      map_template: mapTemplate as MapTemplate | string,
       creator_seated: creatorSeated,
       slots: slotConfigs,
     }
@@ -346,27 +377,39 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
               <Label htmlFor="mapWidth">Map Width</Label>
               <Input
                 id="mapWidth"
-                value={mapWidth}
+                value={isSavedMapSelected && selectedSavedMap ? String(selectedSavedMap.width) : mapWidth}
                 onChange={(e) => setMapWidth(e.target.value)}
                 type="number"
                 min={10}
                 max={100}
                 className="mt-1"
+                disabled={isSavedMapSelected}
+                data-testid="create-map-width"
               />
-              <p className="text-xs text-muted-foreground mt-1">10-100 tiles</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isSavedMapSelected
+                  ? 'Locked to saved-map dimensions'
+                  : '10-100 tiles'}
+              </p>
             </div>
             <div>
               <Label htmlFor="mapHeight">Map Height</Label>
               <Input
                 id="mapHeight"
-                value={mapHeight}
+                value={isSavedMapSelected && selectedSavedMap ? String(selectedSavedMap.height) : mapHeight}
                 onChange={(e) => setMapHeight(e.target.value)}
                 type="number"
                 min={10}
                 max={100}
                 className="mt-1"
+                disabled={isSavedMapSelected}
+                data-testid="create-map-height"
               />
-              <p className="text-xs text-muted-foreground mt-1">10-100 tiles</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isSavedMapSelected
+                  ? 'Locked to saved-map dimensions'
+                  : '10-100 tiles'}
+              </p>
             </div>
           </div>
 
@@ -375,18 +418,32 @@ export function CreateGameDialog({ open, onOpenChange }: CreateGameDialogProps) 
             <select
               id="mapTemplate"
               value={mapTemplate}
-              onChange={(e) => setMapTemplate(e.target.value as MapTemplate)}
+              onChange={(e) => setMapTemplate(e.target.value)}
               className="mt-1 w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
               data-testid="create-map-template"
             >
-              {MAP_TEMPLATES.map((tpl) => (
-                <option key={tpl.value} value={tpl.value}>
-                  {tpl.label}
-                </option>
-              ))}
+              <optgroup label="Parametric">
+                {MAP_TEMPLATES.map((tpl) => (
+                  <option key={tpl.value} value={tpl.value}>
+                    {tpl.label}
+                  </option>
+                ))}
+              </optgroup>
+              {savedMapsQuery.data && savedMapsQuery.data.length > 0 && (
+                <optgroup label="Saved Maps">
+                  {savedMapsQuery.data.map((m) => (
+                    <option key={m.id} value={`${SAVED_PREFIX}${m.id}`}>
+                      {m.name} ({m.width}×{m.height})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <p className="text-xs text-muted-foreground mt-1">
-              {MAP_TEMPLATES.find((t) => t.value === mapTemplate)?.description}
+              {isSavedMapSelected
+                ? selectedSavedMap?.description ??
+                  'Saved map — dimensions are locked to the values baked into the map.'
+                : MAP_TEMPLATES.find((t) => t.value === mapTemplate)?.description}
             </p>
           </div>
 

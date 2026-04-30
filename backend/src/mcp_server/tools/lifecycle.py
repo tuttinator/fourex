@@ -96,15 +96,36 @@ def register(mcp: FastMCP) -> None:
             if existing:
                 game_id = f"game_{secrets.token_hex(4)}"
 
-            # Generate map (Phase 2: registry-driven dispatch)
+            # Generate map (Phase 2: registry-driven dispatch). Phase 4
+            # adds the ``saved:<id>`` namespace for admin-authored maps;
+            # the lobby's ``map_width`` / ``map_height`` are overridden
+            # with the saved-map dimensions to match the lobby flow.
+            from ...api.persistent_game_controller import (
+                _saved_map_id_from_template,
+                _saved_map_spawn_zones,
+                _saved_map_to_tiles,
+                _select_saved_spawn_subset,
+            )
+
+            saved_map_id = _saved_map_id_from_template(map_template)
             try:
-                tiles, spawn_zones = generate_map(
-                    map_template,
-                    map_width,
-                    map_height,
-                    seed,
-                    player_count=len(players),
-                )
+                if saved_map_id is not None:
+                    saved_map = await repo.get_saved_map(saved_map_id)
+                    if saved_map is None:
+                        return {"error": f"Saved map {saved_map_id} not found"}
+                    tiles = _saved_map_to_tiles(saved_map)
+                    zones = _saved_map_spawn_zones(saved_map)
+                    spawn_zones = _select_saved_spawn_subset(zones, len(players), seed)
+                    map_width = saved_map.width
+                    map_height = saved_map.height
+                else:
+                    tiles, spawn_zones = generate_map(
+                        map_template,
+                        map_width,
+                        map_height,
+                        seed,
+                        player_count=len(players),
+                    )
             except ValueError as exc:
                 return {"error": str(exc)}
 

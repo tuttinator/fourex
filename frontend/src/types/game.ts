@@ -319,6 +319,68 @@ export const MAP_TEMPLATES: ReadonlyArray<{
 	},
 ];
 
+/** Phase 4 (map system overhaul): one tile in a SavedMap definition. */
+export interface SavedMapTile {
+	x: number;
+	y: number;
+	terrain: Terrain | string;
+	resource?: Resource | string | null;
+}
+
+/** Phase 4 (map system overhaul): a spawn-zone marker on a SavedMap. */
+export interface SavedMapSpawnZone {
+	x: number;
+	y: number;
+}
+
+/** Phase 4: lightweight summary returned by ``GET /api/v1/maps``. The
+ * lobby drop-down and the ``/maps`` list view consume this; the
+ * editor fetches the full body via ``GET /api/v1/maps/{id}``. */
+export interface SavedMapSummary {
+	id: number;
+	name: string;
+	description: string | null;
+	width: number;
+	height: number;
+	spawn_zone_count: number;
+	creator_email: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** Phase 4: full saved-map row used by the editor / GET-by-id. */
+export interface SavedMap {
+	id: number;
+	name: string;
+	description: string | null;
+	width: number;
+	height: number;
+	tiles: SavedMapTile[];
+	spawn_zones: SavedMapSpawnZone[];
+	created_by: number | null;
+	creator_email: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface SavedMapCreateRequest {
+	name: string;
+	description?: string | null;
+	width: number;
+	height: number;
+	tiles: SavedMapTile[];
+	spawn_zones: SavedMapSpawnZone[];
+}
+
+export interface SavedMapUpdateRequest {
+	name?: string;
+	description?: string | null;
+	width?: number;
+	height?: number;
+	tiles?: SavedMapTile[];
+	spawn_zones?: SavedMapSpawnZone[];
+}
+
 export interface JoinLobbyRequest {
 	player_id: string;
 	/** Phase 5: invite token redemption. When supplied, the backend

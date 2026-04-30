@@ -9,12 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import create_player_key
 from ..database.models import Game as DBGame
+from ..database.models import SavedMap
 from ..database.repository import GameRepository
 from ..game.models import (
     Action,
+    Coord,
     GameState,
     PlayerId,
     PromptLog,
+    Resource,
+    Terrain,
+    Tile,
 )
 from ..game.rules import (
     STARTING_STOCKPILE,
@@ -43,6 +48,103 @@ from .websocket import (
     broadcast_lobby_started,
     broadcast_turn_submitted,
 )
+
+SAVED_MAP_PREFIX = "saved:"
+
+
+def _saved_map_id_from_template(template: str) -> int | None:
+    """Return the int id encoded in a ``saved:<id>`` template, or ``None``.
+
+    Phase 4 (map system overhaul): the lobby's ``map_template`` field is
+    a free string so future namespaces (``scenario:<id>``) stay
+    additive. The lobby resolver checks for the ``saved:`` prefix; a
+    well-formed integer is required, otherwise the caller treats the
+    string as a parametric template name and lets the engine raise.
+    """
+    if not template.startswith(SAVED_MAP_PREFIX):
+        return None
+    suffix = template[len(SAVED_MAP_PREFIX) :]
+    try:
+        return int(suffix)
+    except ValueError:
+        return None
+
+
+def _saved_map_to_tiles(saved_map: SavedMap) -> list[Tile]:
+    """Materialise a ``SavedMap`` row's tile JSON into engine ``Tile``s.
+
+    Tile ids are reassigned in row-major (y, x) order so the engine's
+    ``state.tiles`` list stays index-addressable regardless of the
+    order admins painted them in. Unknown coordinates / terrains are
+    rejected at create/update time, so this helper trusts the row.
+    """
+    by_loc: dict[tuple[int, int], dict[str, Any]] = {
+        (int(t["x"]), int(t["y"])): t for t in (saved_map.tiles or [])
+    }
+    tiles: list[Tile] = []
+    tile_id = 0
+    for y in range(saved_map.height):
+        for x in range(saved_map.width):
+            row = by_loc.get((x, y))
+            if row is None:
+                # Saved-map validation guarantees full coverage, but
+                # fall back to grass so a partial row never crashes
+                # the lobby flow.
+                terrain = Terrain.GRASS
+                resource: Resource | None = None
+            else:
+                terrain = Terrain(row["terrain"])
+                raw_resource = row.get("resource")
+                resource = Resource(raw_resource) if raw_resource else None
+            tiles.append(
+                Tile(
+                    id=tile_id,
+                    loc=Coord(x=x, y=y),
+                    terrain=terrain,
+                    resource=resource,
+                )
+            )
+            tile_id += 1
+    return tiles
+
+
+def _saved_map_spawn_zones(saved_map: SavedMap) -> list[Coord]:
+    """Project the saved-map JSON spawn zones into ``Coord`` rows."""
+    return [Coord(x=int(z["x"]), y=int(z["y"])) for z in (saved_map.spawn_zones or [])]
+
+
+def _select_saved_spawn_subset(
+    spawn_zones: list[Coord],
+    player_count: int,
+    seed: int,
+) -> list[Coord]:
+    """Deterministic seeded subset selection for saved-map lobbies.
+
+    The PRD calls for a deterministic random subset when a saved map
+    has more spawn zones than the lobby has players. ``seed`` and
+    ``player_count`` together fully determine the subset, so the
+    same lobby seed with the same map and player count always picks
+    the same opening tiles.
+    """
+    if player_count > len(spawn_zones):
+        raise ValueError(
+            f"saved map provides {len(spawn_zones)} spawn zone(s) but the "
+            f"lobby needs {player_count}; pick a smaller player count or "
+            f"add more spawn zones to the map"
+        )
+    if player_count == len(spawn_zones):
+        return list(spawn_zones)
+    # Mix seed + player_count + len(spawn_zones) deterministically.
+    # ``random.Random`` accepts tuples but hash()-based seeding is
+    # process-randomised unless PYTHONHASHSEED=0; explicit integer
+    # mixing keeps the determinism contract independent of the
+    # interpreter's hash randomisation setting.
+    mixed_seed = (seed * 1_000_003) ^ (player_count * 31) ^ (len(spawn_zones) * 17)
+    rng = random.Random(mixed_seed)
+    indices = list(range(len(spawn_zones)))
+    rng.shuffle(indices)
+    chosen = sorted(indices[:player_count])
+    return [spawn_zones[i] for i in chosen]
 
 
 class PersistentGameController:
@@ -94,10 +196,31 @@ class PersistentGameController:
         if existing_game:
             raise ValueError(f"Game {game_id} already exists")
 
-        # Generate map at creation time
-        tiles, _spawn_zones = generate_map(
-            map_template, map_width, map_height, seed, player_count=player_slots
-        )
+        saved_map_id = _saved_map_id_from_template(map_template)
+        if saved_map_id is not None:
+            # Phase 4 (map system overhaul): saved-map lobbies pull
+            # tiles + spawn zones from the row and override the
+            # caller's dimensions with whatever the saved map was
+            # authored at. The lobby-creation request's ``map_width``
+            # / ``map_height`` are intentionally ignored (the UI
+            # disables the inputs once a saved map is selected — see
+            # the create-game dialog).
+            saved_map = await self.repo.get_saved_map(saved_map_id)
+            if saved_map is None:
+                raise ValueError(f"Saved map {saved_map_id} not found")
+            tiles = _saved_map_to_tiles(saved_map)
+            zones = _saved_map_spawn_zones(saved_map)
+            # Validate up-front so create-lobby fails fast if the map
+            # can't seat the requested player count, rather than
+            # surfacing the error at start time.
+            _select_saved_spawn_subset(zones, player_slots, seed)
+            map_width = saved_map.width
+            map_height = saved_map.height
+        else:
+            # Generate map at creation time
+            tiles, _spawn_zones = generate_map(
+                map_template, map_width, map_height, seed, player_count=player_slots
+            )
 
         # Create game state with no players yet (they join via /join)
         state = GameState(
@@ -517,12 +640,12 @@ class PersistentGameController:
             # rolling random placement. Position in the zone list maps
             # to the joiner's slot index (the player just appended at
             # ``len(players) - 1``).
-            _tiles, spawn_zones = generate_map(
+            spawn_zones = await self._resolve_spawn_zones(
                 db_game.map_template,
                 db_game.map_width,
                 db_game.map_height,
                 db_game.seed,
-                player_count=db_game.player_slots,
+                db_game.player_slots,
             )
             zone_idx = len(players) - 1
             zone = spawn_zones[zone_idx] if 0 <= zone_idx < len(spawn_zones) else None
@@ -642,12 +765,12 @@ class PersistentGameController:
         # matches what the per-template generator picked at create_lobby
         # time. Tiles are already in ``state``; we only need the zone
         # list, so the recomputed tiles are discarded.
-        _tiles, spawn_zones = generate_map(
+        spawn_zones = await self._resolve_spawn_zones(
             db_game.map_template,
             db_game.map_width,
             db_game.map_height,
             db_game.seed,
-            player_count=db_game.player_slots,
+            db_game.player_slots,
         )
         self._place_starting_units(state, players, db_game.seed, spawn_zones)
 
@@ -760,6 +883,38 @@ class PersistentGameController:
                 updated.append(dict(slot))
         await self.repo.update_lobby_slots(game_id, updated)
 
+    async def _resolve_spawn_zones(
+        self,
+        map_template: str,
+        map_width: int,
+        map_height: int,
+        seed: int,
+        player_count: int,
+    ) -> list[Coord]:
+        """Return the deterministic spawn zones for a lobby's template.
+
+        Phase 4 (map system overhaul): saved-map lobbies look the row
+        up and pick a deterministic subset of the saved spawn zones
+        when there are more zones than players. Parametric templates
+        delegate to ``generate_map`` so the legacy registry behaviour
+        is unchanged.
+        """
+        saved_map_id = _saved_map_id_from_template(map_template)
+        if saved_map_id is not None:
+            saved_map = await self.repo.get_saved_map(saved_map_id)
+            if saved_map is None:
+                raise ValueError(f"Saved map {saved_map_id} no longer exists")
+            zones = _saved_map_spawn_zones(saved_map)
+            return _select_saved_spawn_subset(zones, player_count, seed)
+        _tiles, zones = generate_map(
+            map_template,
+            map_width,
+            map_height,
+            seed,
+            player_count=player_count,
+        )
+        return zones
+
     @staticmethod
     def _place_starting_units(
         state: GameState,
@@ -799,16 +954,30 @@ class PersistentGameController:
         if existing_game:
             raise ValueError(f"Game {game_id} already exists")
 
-        # Generate map
-        tiles, spawn_zones = generate_map(
-            map_template, 20, 20, seed, player_count=len(players)
-        )
+        saved_map_id = _saved_map_id_from_template(map_template)
+        if saved_map_id is not None:
+            saved_map = await self.repo.get_saved_map(saved_map_id)
+            if saved_map is None:
+                raise ValueError(f"Saved map {saved_map_id} not found")
+            tiles = _saved_map_to_tiles(saved_map)
+            zones = _saved_map_spawn_zones(saved_map)
+            spawn_zones = _select_saved_spawn_subset(zones, len(players), seed)
+            map_width = saved_map.width
+            map_height = saved_map.height
+        else:
+            map_width = 20
+            map_height = 20
+            tiles, spawn_zones = generate_map(
+                map_template, map_width, map_height, seed, player_count=len(players)
+            )
 
         # Create initial game state
         state = GameState(
             rng_state=seed,
             tiles=tiles,
             players=players.copy(),
+            map_width=map_width,
+            map_height=map_height,
         )
 
         # Initialize player stockpiles
@@ -827,8 +996,8 @@ class PersistentGameController:
             game_id=game_id,
             players=players,
             seed=seed,
-            map_width=20,
-            map_height=20,
+            map_width=map_width,
+            map_height=map_height,
             max_turns=100,
             player_slots=len(players),
             map_template=map_template,
