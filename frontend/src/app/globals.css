@@ -2,67 +2,148 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Parley design tokens.
+ *
+ * The palette is parchment-tinted neutrals with a single garnet accent
+ * (heraldic, not corporate). Variables are stored as full CSS color
+ * values (oklch) and consumed directly via var(--name) — Tailwind is
+ * configured to read them straight (no hsl() wrapper). */
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    /* shadcn-compatible aliases (light mode) */
+    --background: oklch(0.985 0.008 80);
+    --foreground: oklch(0.205 0.018 60);
 
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.205 0.018 60);
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
+    --popover: oklch(0.98 0.02 78);
+    --popover-foreground: oklch(0.205 0.018 60);
 
-    --primary: 240 9% 17%;
-    --primary-foreground: 0 0% 98%;
+    --primary: oklch(0.52 0.14 25);
+    --primary-foreground: oklch(0.985 0.008 80);
 
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
+    --secondary: oklch(0.965 0.011 80);
+    --secondary-foreground: oklch(0.205 0.018 60);
 
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
+    --muted: oklch(0.965 0.011 80);
+    --muted-foreground: oklch(0.56 0.012 60);
 
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    --accent: oklch(0.52 0.14 25);
+    --accent-foreground: oklch(0.985 0.008 80);
+    --accent-soft: oklch(0.945 0.03 25);
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: oklch(0.52 0.18 28);
+    --destructive-foreground: oklch(0.985 0.008 80);
 
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 10% 3.9%;
+    --success: oklch(0.52 0.115 145);
+    --warning: oklch(0.64 0.13 75);
+
+    --border: oklch(0.9 0.012 70);
+    --border-strong: oklch(0.82 0.016 65);
+    --input: oklch(0.9 0.012 70);
+    --ring: oklch(0.52 0.14 25);
+
+    /* Parley extended palette */
+    --bg: oklch(0.985 0.008 80);
+    --bg-subtle: oklch(0.965 0.011 80);
+    --surface: oklch(1 0 0);
+    --surface-alt: oklch(0.975 0.01 80);
+    --parchment: oklch(0.955 0.02 78);
+    --parchment-edge: oklch(0.895 0.028 70);
+
+    --ink: oklch(0.205 0.018 60);
+    --ink-soft: oklch(0.38 0.015 60);
+    --ink-muted: oklch(0.56 0.012 60);
+    --ink-faint: oklch(0.72 0.01 60);
+
+    --accent-hover: oklch(0.47 0.15 25);
+    --accent-ink: oklch(0.985 0.008 80);
+
+    --map-void: oklch(0.215 0.018 60);
+    --tooltip-bg: oklch(0.98 0.02 78);
+    --tooltip-ink: oklch(0.205 0.018 60);
+
+    /* Map highlight rings — kept as hex so the Pixi renderer can
+     * resolve them without an oklch parser. The four canonical ring
+     * tones cover selection / valid-move / queued-order / valid-attack
+     * (plus a destructive variant for hostile cues). */
+    --ring-accent: #fbbf24;
+    --ring-success: #22c55e;
+    --ring-warning: #f59e0b;
+    --ring-info: #3b82f6;
+    --ring-destructive: #ef4444;
+
+    /* Type system */
+    --font-display:
+      "Roboto Slab", "DM Serif Display", Georgia, serif;
+    --font-ui:
+      "Inter Tight", Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono:
+      "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
+    --background: oklch(0.18 0.01 60);
+    --foreground: oklch(0.965 0.01 80);
 
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
+    --card: oklch(0.235 0.014 60);
+    --card-foreground: oklch(0.965 0.01 80);
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
+    --popover: oklch(0.255 0.016 65);
+    --popover-foreground: oklch(0.965 0.01 80);
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    --primary: oklch(0.665 0.155 28);
+    --primary-foreground: oklch(0.165 0.018 60);
 
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: oklch(0.265 0.014 60);
+    --secondary-foreground: oklch(0.965 0.01 80);
 
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: oklch(0.265 0.014 60);
+    --muted-foreground: oklch(0.62 0.014 70);
 
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --accent: oklch(0.665 0.155 28);
+    --accent-foreground: oklch(0.165 0.018 60);
+    --accent-soft: oklch(0.295 0.06 25);
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: oklch(0.66 0.19 28);
+    --destructive-foreground: oklch(0.965 0.01 80);
 
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --success: oklch(0.7 0.14 145);
+    --warning: oklch(0.77 0.15 80);
+
+    --border: oklch(0.31 0.014 60);
+    --border-strong: oklch(0.38 0.016 60);
+    --input: oklch(0.31 0.014 60);
+    --ring: oklch(0.68 0.15 30);
+
+    --bg: oklch(0.18 0.01 60);
+    --bg-subtle: oklch(0.215 0.012 60);
+    --surface: oklch(0.235 0.014 60);
+    --surface-alt: oklch(0.265 0.014 60);
+    --parchment: oklch(0.31 0.018 65);
+    --parchment-edge: oklch(0.38 0.02 65);
+
+    --ink: oklch(0.965 0.01 80);
+    --ink-soft: oklch(0.8 0.012 75);
+    --ink-muted: oklch(0.62 0.014 70);
+    --ink-faint: oklch(0.46 0.014 65);
+
+    --accent-hover: oklch(0.72 0.155 28);
+    --accent-ink: oklch(0.165 0.018 60);
+
+    --map-void: oklch(0.115 0.012 60);
+    --tooltip-bg: oklch(0.255 0.016 65);
+    --tooltip-ink: oklch(0.965 0.01 80);
+
+    --ring-accent: #fbbf24;
+    --ring-success: #4ade80;
+    --ring-warning: #fb923c;
+    --ring-info: #60a5fa;
+    --ring-destructive: #f87171;
   }
 }
 
@@ -71,7 +152,17 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  code, kbd, pre, samp {
+    font-family: var(--font-mono);
   }
 }
 
@@ -79,9 +170,22 @@
   .text-balance {
     text-wrap: balance;
   }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-ui {
+    font-family: var(--font-ui);
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
 }
 
-/* Custom game styles */
+/* ───── Map + game-specific styles ───── */
+
 .map-grid {
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
@@ -89,28 +193,33 @@
 }
 
 .unit-tooltip {
-  @apply absolute z-50 rounded-md border bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md;
+  position: absolute;
+  z-index: 50;
+  border-radius: 6px;
+  border: 1px solid var(--parchment-edge);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-ink);
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.4);
   transform: translate(-50%, -100%);
   margin-top: -8px;
 }
 
 .diff-highlight {
-  @apply ring-2 ring-yellow-400 ring-opacity-75;
-  animation: pulse 1s ease-in-out infinite alternate;
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  animation: parley-pulse 1.6s ease-in-out infinite;
 }
 
-.terrain-plains {
-  @apply bg-terrain-plains;
+@keyframes parley-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
-.terrain-forest {
-  @apply bg-terrain-forest;
-}
-
-.terrain-mountain {
-  @apply bg-terrain-mountain;
-}
-
-.terrain-water {
-  @apply bg-terrain-water;
-}
+.terrain-plains   { background-color: theme('colors.terrain.plains'); }
+.terrain-forest   { background-color: theme('colors.terrain.forest'); }
+.terrain-mountain { background-color: theme('colors.terrain.mountain'); }
+.terrain-water    { background-color: theme('colors.terrain.water'); }

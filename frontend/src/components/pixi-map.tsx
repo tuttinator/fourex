@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import type { MapCanvasProps, Tile } from '@/types/game'
+import type { MapCanvasProps, Tile, ViewportRect } from '@/types/game'
 import { TERRAIN_COLORS, PLAYER_COLORS } from '@/types/game'
 import { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
 import {
@@ -9,6 +9,8 @@ import {
   loadSpriteAtlas,
   type SpriteAtlas,
 } from '@/lib/sprite-atlas'
+import { MapFrame } from '@/components/ui/map-frame'
+import { resolveRingPalette, type RingPalette } from '@/lib/map-rings'
 
 const TILE_SIZE = 32
 const RESOURCE_SPRITE_SIZE = 14
@@ -54,6 +56,10 @@ export function PixiMap({
   queuedOrderPath,
   queuedOrderDestination,
   focusTile,
+  frameVariant = 'inset',
+  tooltipMode = 'parchment',
+  onViewportRectChange,
+  panToTile,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
@@ -61,8 +67,32 @@ export function PixiMap({
   const atlasRef = useRef<SpriteAtlas | null>(null)
   const isPanningRef = useRef(false)
   const lastPointerRef = useRef({ x: 0, y: 0 })
+  const onViewportRectChangeRef = useRef(onViewportRectChange)
   const [hover, setHover] = useState<HoverData | null>(null)
   const [pixiReady, setPixiReady] = useState(0)
+
+  // Keep the latest viewport-change callback in a ref so the resize /
+  // pan / zoom handlers don't need to re-register every render.
+  useEffect(() => {
+    onViewportRectChangeRef.current = onViewportRectChange
+  }, [onViewportRectChange])
+
+  const emitViewportRect = useCallback(() => {
+    const cb = onViewportRectChangeRef.current
+    if (!cb) return
+    const world = worldRef.current
+    const container = containerRef.current
+    if (!world || !container) return
+    const rect = container.getBoundingClientRect()
+    const scale = world.scale.x || 1
+    const rectOut: ViewportRect = {
+      x: -world.x / scale / TILE_SIZE,
+      y: -world.y / scale / TILE_SIZE,
+      width: rect.width / scale / TILE_SIZE,
+      height: rect.height / scale / TILE_SIZE,
+    }
+    cb(rectOut)
+  }, [])
 
   // Initialise Pixi application
   useEffect(() => {
@@ -91,7 +121,7 @@ export function PixiMap({
     const init = async () => {
       try {
         await app.init({
-          background: 0x1a1a2e,
+          backgroundAlpha: 0,
           resizeTo: container,
           antialias: true,
           resolution: window.devicePixelRatio || 1,
@@ -151,6 +181,11 @@ export function PixiMap({
 
     world.removeChildren()
 
+    // Resolve highlight rings here (rather than as state) so each
+    // re-render reads the current CSS-var values — covers SSR -> client
+    // first paint and theme toggles without an extra setState.
+    const rings: RingPalette = resolveRingPalette()
+
     const { map_width, map_height, tiles, units, cities, players } = gameState
     const tileLookup = buildTileLookup(tiles)
 
@@ -160,16 +195,33 @@ export function PixiMap({
     const atlas = atlasRef.current
 
     if (fogOfWarEnabled) {
+      // Parchment-tinted fog: a dark warm tint with a low-opacity
+      // cross-hatch pattern overlaid on top so unexplored tiles still
+      // feel like part of the map rather than flat void.
       const fogGfx = new Graphics()
+      const hatchGfx = new Graphics()
       for (let gy = 0; gy < map_height; gy++) {
         for (let gx = 0; gx < map_width; gx++) {
           if (!tileLookup.has(`${gx},${gy}`)) {
-            fogGfx.rect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            fogGfx.fill(0x0a0a14)
+            const x = gx * TILE_SIZE
+            const y = gy * TILE_SIZE
+            fogGfx.rect(x, y, TILE_SIZE, TILE_SIZE)
+            fogGfx.fill({ color: 0x2a2218, alpha: 0.92 })
+            hatchGfx.setStrokeStyle({
+              width: 1,
+              color: 0x4a3a28,
+              alpha: 0.18,
+            })
+            for (let d = -TILE_SIZE; d <= TILE_SIZE; d += 4) {
+              hatchGfx.moveTo(x + d, y)
+              hatchGfx.lineTo(x + d + TILE_SIZE, y + TILE_SIZE)
+              hatchGfx.stroke()
+            }
           }
         }
       }
       world.addChild(fogGfx)
+      world.addChild(hatchGfx)
     }
 
     for (const tile of tiles) {
@@ -316,8 +368,8 @@ export function PixiMap({
         const hx = coord.x * TILE_SIZE
         const hy = coord.y * TILE_SIZE
         highlightGfx.rect(hx, hy, TILE_SIZE, TILE_SIZE)
-        highlightGfx.fill({ color: 0xfbbf24, alpha: 0.35 })
-        highlightGfx.setStrokeStyle({ width: 2, color: 0xfbbf24, alpha: 0.9 })
+        highlightGfx.fill({ color: rings.success, alpha: 0.3 })
+        highlightGfx.setStrokeStyle({ width: 2, color: rings.success, alpha: 0.9 })
         highlightGfx.rect(hx + 1, hy + 1, TILE_SIZE - 2, TILE_SIZE - 2)
         highlightGfx.stroke()
       }
@@ -336,7 +388,7 @@ export function PixiMap({
         for (const step of path) {
           const px = step.x * TILE_SIZE
           const py = step.y * TILE_SIZE
-          pathGfx.setStrokeStyle({ width: 3, color: 0xf59e0b, alpha: 1 })
+          pathGfx.setStrokeStyle({ width: 3, color: rings.success, alpha: 1 })
           pathGfx.rect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6)
           pathGfx.stroke()
         }
@@ -345,16 +397,17 @@ export function PixiMap({
     }
 
     // Queueable-destination overlay (Phase 5 queued orders) — tiles
-    // reachable beyond this turn's movement budget. Rendered in blue so
-    // it's visually distinct from the yellow "move this turn" set.
+    // reachable beyond this turn's movement budget. Rendered with the
+    // info ring tone so it's distinct from the success "move this turn"
+    // set.
     if (queueableTiles && queueableTiles.length > 0) {
       const queueGfx = new Graphics()
       for (const coord of queueableTiles) {
         const hx = coord.x * TILE_SIZE
         const hy = coord.y * TILE_SIZE
         queueGfx.rect(hx + 3, hy + 3, TILE_SIZE - 6, TILE_SIZE - 6)
-        queueGfx.fill({ color: 0x60a5fa, alpha: 0.2 })
-        queueGfx.setStrokeStyle({ width: 1.5, color: 0x60a5fa, alpha: 0.7 })
+        queueGfx.fill({ color: rings.info, alpha: 0.2 })
+        queueGfx.setStrokeStyle({ width: 1.5, color: rings.info, alpha: 0.7 })
         queueGfx.rect(hx + 3, hy + 3, TILE_SIZE - 6, TILE_SIZE - 6)
         queueGfx.stroke()
       }
@@ -372,7 +425,7 @@ export function PixiMap({
         for (const step of path) {
           const px = step.x * TILE_SIZE
           const py = step.y * TILE_SIZE
-          pathGfx.setStrokeStyle({ width: 3, color: 0x3b82f6, alpha: 1 })
+          pathGfx.setStrokeStyle({ width: 3, color: rings.info, alpha: 1 })
           pathGfx.rect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6)
           pathGfx.stroke()
         }
@@ -382,12 +435,13 @@ export function PixiMap({
 
     // Persistent queued-order path for the selected unit — drawn so the
     // player can see their committed multi-turn route at a glance.
+    // Uses the warning ring tone per the prototype's "active queue" cue.
     if (queuedOrderPath && queuedOrderPath.length > 0) {
       const committedGfx = new Graphics()
       for (const step of queuedOrderPath) {
         const px = step.x * TILE_SIZE
         const py = step.y * TILE_SIZE
-        committedGfx.setStrokeStyle({ width: 3, color: 0x2563eb, alpha: 0.95 })
+        committedGfx.setStrokeStyle({ width: 3, color: rings.warning, alpha: 0.95 })
         committedGfx.rect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4)
         committedGfx.stroke()
       }
@@ -399,22 +453,22 @@ export function PixiMap({
       const fx = queuedOrderDestination.x * TILE_SIZE
       const fy = queuedOrderDestination.y * TILE_SIZE
       flagGfx.rect(fx + 4, fy + 4, TILE_SIZE - 8, TILE_SIZE - 8)
-      flagGfx.fill({ color: 0x2563eb, alpha: 0.35 })
-      flagGfx.setStrokeStyle({ width: 2.5, color: 0x1d4ed8, alpha: 1 })
+      flagGfx.fill({ color: rings.warning, alpha: 0.32 })
+      flagGfx.setStrokeStyle({ width: 2.5, color: rings.warning, alpha: 1 })
       flagGfx.rect(fx + 4, fy + 4, TILE_SIZE - 8, TILE_SIZE - 8)
       flagGfx.stroke()
       world.addChild(flagGfx)
     }
 
-    // Attack-target overlay (Phase 5) — red tile for each hostile in range.
+    // Attack-target overlay (Phase 5) — destructive ring for hostiles in range.
     if (attackTiles && attackTiles.length > 0) {
       const attackGfx = new Graphics()
       for (const coord of attackTiles) {
         const hx = coord.x * TILE_SIZE
         const hy = coord.y * TILE_SIZE
         attackGfx.rect(hx, hy, TILE_SIZE, TILE_SIZE)
-        attackGfx.fill({ color: 0xef4444, alpha: 0.35 })
-        attackGfx.setStrokeStyle({ width: 2, color: 0xef4444, alpha: 0.95 })
+        attackGfx.fill({ color: rings.destructive, alpha: 0.32 })
+        attackGfx.setStrokeStyle({ width: 2, color: rings.destructive, alpha: 0.95 })
         attackGfx.rect(hx + 1, hy + 1, TILE_SIZE - 2, TILE_SIZE - 2)
         attackGfx.stroke()
       }
@@ -426,7 +480,7 @@ export function PixiMap({
       const city = cities[selectedCityId]
       if (city) {
         const ring = new Graphics()
-        ring.setStrokeStyle({ width: 2.5, color: 0xfbbf24, alpha: 1 })
+        ring.setStrokeStyle({ width: 2.5, color: rings.accent, alpha: 1 })
         const cx = city.loc.x * TILE_SIZE + TILE_SIZE / 2
         const cy = city.loc.y * TILE_SIZE + TILE_SIZE / 2
         ring.circle(cx, cy, 15)
@@ -473,7 +527,7 @@ export function PixiMap({
 
       if (selectedUnitId != null && unit.id === selectedUnitId) {
         const ring = new Graphics()
-        ring.setStrokeStyle({ width: 2.5, color: 0xfbbf24, alpha: 1 })
+        ring.setStrokeStyle({ width: 2.5, color: rings.accent, alpha: 1 })
         ring.roundRect(ux + 3, uy + 3, TILE_SIZE - 6, TILE_SIZE - 6, 4)
         ring.stroke()
         world.addChild(ring)
@@ -489,7 +543,7 @@ export function PixiMap({
         const cx = ux + TILE_SIZE - 6
         const cy = uy + TILE_SIZE - 6
         dot.circle(cx, cy, 3)
-        dot.fill({ color: 0xfbbf24, alpha: 1 })
+        dot.fill({ color: rings.accent, alpha: 1 })
         dot.setStrokeStyle({ width: 1, color: 0x111827, alpha: 1 })
         dot.circle(cx, cy, 3)
         dot.stroke()
@@ -509,7 +563,7 @@ export function PixiMap({
       const badge = new Graphics()
       badge.circle(badgeCx, badgeCy, STACK_BADGE_RADIUS)
       badge.fill({ color: 0x111827, alpha: 0.9 })
-      badge.setStrokeStyle({ width: 1, color: 0xfbbf24, alpha: 1 })
+      badge.setStrokeStyle({ width: 1, color: rings.accent, alpha: 1 })
       badge.circle(badgeCx, badgeCy, STACK_BADGE_RADIUS)
       badge.stroke()
       world.addChild(badge)
@@ -520,7 +574,7 @@ export function PixiMap({
           fontFamily: 'sans-serif',
           fontSize: 10,
           fontWeight: 'bold',
-          fill: 0xfbbf24,
+          fill: rings.accent,
           align: 'center',
         },
       })
@@ -609,7 +663,35 @@ export function PixiMap({
     const tileCentreWorldY = (focusTile.y + 0.5) * TILE_SIZE
     world.x = centreX - tileCentreWorldX * scale
     world.y = centreY - tileCentreWorldY * scale
-  }, [focusTile, pixiReady])
+    emitViewportRect()
+  }, [focusTile, pixiReady, emitViewportRect])
+
+  // Phase 3 prototype-rollout: external pan request (used by MiniMap
+  // click-to-pan). Behaves like ``focusTile`` but is a separate prop
+  // so the gameplay focus-cycler doesn't fight a mini-map jump.
+  useEffect(() => {
+    if (!panToTile) return
+    const world = worldRef.current
+    const container = containerRef.current
+    if (!world || !container) return
+    const rect = container.getBoundingClientRect()
+    const centreX = rect.width / 2
+    const centreY = rect.height / 2
+    const scale = world.scale.x
+    const tileCentreWorldX = (panToTile.x + 0.5) * TILE_SIZE
+    const tileCentreWorldY = (panToTile.y + 0.5) * TILE_SIZE
+    world.x = centreX - tileCentreWorldX * scale
+    world.y = centreY - tileCentreWorldY * scale
+    emitViewportRect()
+  }, [panToTile, pixiReady, emitViewportRect])
+
+  // Emit an initial viewport rect once Pixi is up so the MiniMap can
+  // paint a viewport rectangle on first render without waiting for a
+  // user gesture.
+  useEffect(() => {
+    if (!pixiReady) return
+    emitViewportRect()
+  }, [pixiReady, emitViewportRect])
 
   // Zoom handler
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -634,7 +716,8 @@ export function PixiMap({
 
     world.x += (worldAfter.x - worldBefore.x) * newScale
     world.y += (worldAfter.y - worldBefore.y) * newScale
-  }, [])
+    emitViewportRect()
+  }, [emitViewportRect])
 
   // Pan handlers
   const handlePointerDown = useCallback((e: PointerEvent) => {
@@ -658,8 +741,9 @@ export function PixiMap({
       world.x += dx
       world.y += dy
       lastPointerRef.current = { x: e.clientX, y: e.clientY }
+      emitViewportRect()
     }
-  }, [])
+  }, [emitViewportRect])
 
   const handlePointerUp = useCallback(() => {
     isPanningRef.current = false
@@ -693,51 +777,82 @@ export function PixiMap({
   }, [handleWheel, handlePointerDown, handlePointerMove, handlePointerUp, handleMouseLeave])
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-gray-900">
-      <div ref={containerRef} className="w-full h-full" />
+    <MapFrame
+      variant={frameVariant}
+      className="h-full w-full"
+      style={{ background: 'var(--map-void)' }}
+    >
+      <div ref={containerRef} className="h-full w-full" />
 
-      {/* Tooltip */}
-      {hover && (
+      {hover && tooltipMode === 'parchment' && (
         <div
-          className="absolute pointer-events-none z-50 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-white shadow-lg"
+          className="pointer-events-none absolute z-50"
           style={{
-            left: hover.screenX + 12,
-            top: hover.screenY + 12,
+            left: hover.screenX,
+            top: hover.screenY - 14,
+            transform: 'translate(-50%, -100%)',
           }}
         >
-          <div className="space-y-0.5">
-            <div className="font-semibold capitalize">{hover.tile.terrain}</div>
-            <div className="text-gray-400">
-              ({hover.tile.loc.x}, {hover.tile.loc.y})
+          <div
+            className="rounded-md border bg-[var(--tooltip-bg)] px-2.5 py-1.5"
+            style={{
+              borderColor: 'var(--parchment-edge)',
+              color: 'var(--tooltip-ink)',
+              boxShadow: '0 8px 24px -10px rgba(0,0,0,0.4)',
+              minWidth: 140,
+            }}
+          >
+            <div
+              className="font-mono uppercase text-ink-muted"
+              style={{ fontSize: 10.5, letterSpacing: '0.08em' }}
+            >
+              tile · ({hover.tile.loc.x}, {hover.tile.loc.y})
             </div>
-            {hover.tile.resource && (
-              <div>
-                Resource: <span className="text-yellow-400 capitalize">{hover.tile.resource}</span>
+            <div
+              className="font-ui font-semibold text-ink"
+              style={{ fontSize: 12.5 }}
+            >
+              <span className="capitalize">{hover.tile.terrain}</span>
+              {hover.tile.resource && (
+                <span className="ml-1.5 font-mono text-accent" style={{ fontSize: 11 }}>
+                  · {hover.tile.resource}
+                </span>
+              )}
+            </div>
+            {hover.tile.improvement && (
+              <div
+                className="font-mono text-ink-muted"
+                style={{ fontSize: 11 }}
+              >
+                <span className="capitalize">{hover.tile.improvement}</span>
               </div>
             )}
             {hover.tile.owner && (
-              <div>
-                Owner: <span className="text-blue-300">{hover.tile.owner}</span>
-              </div>
-            )}
-            {hover.tile.improvement && (
-              <div>
-                Improvement: <span className="text-gray-300 capitalize">{hover.tile.improvement}</span>
+              <div
+                className="font-mono text-ink-soft"
+                style={{ fontSize: 11 }}
+              >
+                owner · {hover.tile.owner}
               </div>
             )}
             {hover.unit && (
-              <div className="border-t border-gray-600 pt-0.5 mt-0.5">
-                <span className="capitalize">{hover.unit.type}</span>{' '}
-                <span className="text-gray-400">
-                  HP:{hover.unit.hp} Mv:{hover.unit.moves_left}
-                </span>
+              <div
+                className="mt-1 border-t pt-1 font-mono text-ink-soft"
+                style={{ borderColor: 'var(--border)', fontSize: 11 }}
+              >
+                <span className="capitalize">{hover.unit.type}</span> ·{' '}
+                <span>HP {hover.unit.hp}</span> ·{' '}
+                <span>Mv {hover.unit.moves_left}</span>
               </div>
             )}
             {hover.city && (
-              <div className="border-t border-gray-600 pt-0.5 mt-0.5">
-                City HP:{hover.city.hp}
+              <div
+                className="mt-1 border-t pt-1 font-mono text-ink-soft"
+                style={{ borderColor: 'var(--border)', fontSize: 11 }}
+              >
+                city · HP {hover.city.hp}
                 {hover.city.buildings.length > 0 && (
-                  <div className="text-gray-400">
+                  <div className="text-ink-muted">
                     {hover.city.buildings.join(', ')}
                   </div>
                 )}
@@ -746,6 +861,6 @@ export function PixiMap({
           </div>
         </div>
       )}
-    </div>
+    </MapFrame>
   )
 }

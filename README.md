@@ -1,4 +1,4 @@
-# 4X — AI Agent Sandbox
+# Parley — AI Agent Sandbox
 
 A deterministic, turn-based 4X ("eXplore, eXpand, eXploit, eXterminate")
 strategy sandbox designed for AI-agent research. Same seed + same
@@ -42,20 +42,69 @@ mise install
 # 2. Install Python deps via uv
 mise run install
 
-# 3. Bring up Postgres (optional if you already have one running locally)
+# 3. Configure env files for the backend and frontend
+#    (see "Environment variables" below for the full list)
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
+$EDITOR backend/.env frontend/.env.local   # set the shared secrets + Resend key
+
+# 4. Bring up Postgres (optional if you already have one running locally)
 docker compose up -d postgres
 
-# 4. Create the database schema
+# 5. Create the database schema
 mise run db-reset
 
-# 5. Run the backend (FastAPI on :8010)
+# 6. Run the backend (FastAPI on :8010)
 mise run backend
 
-# 6. In another shell, run the frontend (Next.js on :3000)
+# 7. In another shell, run the frontend (Next.js on :3000)
 mise run frontend
 ```
 
-Open http://localhost:3000 and sign in to create or join a game.
+Open <http://localhost:3000> and sign in to create or join a game.
+
+## Environment variables
+
+The backend reads `backend/.env` (via `pydantic-settings`); the frontend
+reads `frontend/.env.local` (via Next.js). Both files are gitignored.
+Without them you will see `MissingSecret` from Auth.js and
+`NEXT_PUBLIC_API_URL is not set` from the client bundle on first boot.
+
+`AUTH_SECRET` and `IDENTITY_SERVICE_SECRET` are **shared** between the
+two services — set the same value on both sides. Generate fresh values
+with `openssl rand -hex 32`.
+
+### Backend (`backend/.env`)
+
+Copy `backend/.env.example` and edit. Defaults match
+`docker compose up postgres`, so for a vanilla local setup the only
+values you must change are the two shared secrets.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Postgres DSN. Default targets the docker-compose Postgres. |
+| `AUTH_SECRET` | yes | HS256 secret used to verify Auth.js JWTs. **Must match the frontend.** |
+| `IDENTITY_SERVICE_SECRET` | yes | Shared secret gating `/api/v1/identities/*`. **Must match the frontend.** |
+| `API_HOST`, `API_PORT`, `DEBUG` | no | FastAPI bind address (defaults `0.0.0.0:8010`). |
+| `CORS_ORIGINS` | no | JSON array or comma-separated list. Must include the frontend origin. |
+| `RESEND_API_KEY`, `INVITE_EMAIL_FROM`, `FRONTEND_BASE_URL` | no | Lobby invite emails. `RESEND_API_KEY` mirrors the frontend's `AUTH_RESEND_KEY`. |
+| `LOGFIRE_TOKEN`, `LOGFIRE_ENABLED` | no | Send traces to Logfire. |
+| `OPENAI_API_KEY`, `REPLICATE_API_TOKEN`, `HF_TOKEN` | no | Only needed if you build an LLM-driven agent (see below). |
+
+### Frontend (`frontend/.env.local`)
+
+Copy `frontend/.env.example` to `frontend/.env.local` and edit. Next.js
+loads `.env.local` automatically for both `npm run dev` and
+`npm run build`.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | yes | Public FastAPI base URL (with `/api/v1`). Inlined at build time — `next build` fails without it. |
+| `AUTH_SECRET` | yes | HS256 secret. **Must match the backend.** |
+| `IDENTITY_SERVICE_SECRET` | yes | Shared secret for the identity adapter. **Must match the backend.** |
+| `AUTH_RESEND_KEY` | yes | Resend API key for magic-link email. |
+| `AUTH_EMAIL_FROM` | no | Verified Resend sender. Defaults to `onboarding@resend.dev`. |
+| `INTERNAL_API_URL` | no | Server-side FastAPI base for the auth adapter. Defaults to `http://localhost:8010`. |
 
 ## mise tasks
 

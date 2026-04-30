@@ -5,11 +5,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, queryKeys, getPlayerColor } from '@/lib/api'
-import { ObservationView } from '@/components/observation-view'
+import { ObservationSurface } from '@/components/observation-surface'
 import { GameplayView } from '@/components/gameplay-view'
+import { TopBar } from '@/components/top-bar'
+import { useSessionEmail } from '@/components/session-email-provider'
+import { signOutAction } from '@/lib/auth-actions'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Panel } from '@/components/ui/panel'
+import { Tag } from '@/components/ui/tag'
+import { StatPair } from '@/components/ui/stat'
+import { Identity } from '@/components/brand/identity'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -20,9 +25,6 @@ import {
   Users,
   LogIn,
   LogOut,
-  Map,
-  Hash,
-  Clock,
   Link as LinkIcon,
   Check,
   Bot,
@@ -45,15 +47,6 @@ import {
   setGameCredentials,
 } from '@/lib/game-auth'
 
-function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case 'active': return 'default'
-    case 'waiting': return 'secondary'
-    case 'ended': return 'outline'
-    default: return 'secondary'
-  }
-}
-
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     month: 'short',
@@ -65,6 +58,7 @@ function formatDate(iso: string): string {
 
 export default function GameDetailPage() {
   const { id: gameId } = useParams<{ id: string }>()
+  const email = useSessionEmail()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [joinPlayerId, setJoinPlayerId] = useState('')
@@ -398,42 +392,42 @@ export default function GameDetailPage() {
   // Active or ended: show observation view with header
   if (game.status === 'active' || game.status === 'ended') {
     return (
-      <div className="h-full flex flex-col">
-        {/* Header */}
-        <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/games">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back
-                </Link>
-              </Button>
-              <h1 className="text-xl font-semibold">{game.game_id}</h1>
-              <Badge variant={statusVariant(game.status)}>{game.status}</Badge>
-              {game.winner && (
-                <span className="text-sm text-muted-foreground">
-                  Winner: {game.winner}
-                  {game.victory_type && ` (${game.victory_type})`}
-                </span>
+      <div className="h-full flex flex-col bg-bg text-ink font-ui">
+        <TopBar
+          email={email}
+          signOutAction={signOutAction}
+          game={{
+            name: game.game_id,
+            state: game.status === 'active' ? 'live' : 'ended',
+          }}
+        >
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/games">
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Back
+            </Link>
+          </Button>
+          {game.winner && (
+            <span className="font-mono text-ink-muted" style={{ fontSize: 12 }}>
+              winner · <span className="text-ink">{game.winner}</span>
+              {game.victory_type && (
+                <span className="text-ink-muted"> ({game.victory_type})</span>
               )}
-            </div>
-            <div className="flex items-center gap-3">
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/games/${game.game_id}/diplomacy`}>
-                  <Users className="h-4 w-4 mr-2" />
-                  Diplomacy
-                </Link>
-              </Button>
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/games/${game.game_id}/replay`}>
-                  <Play className="h-4 w-4 mr-2" />
-                  Replay
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
+            </span>
+          )}
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/games/${game.game_id}/diplomacy`}>
+              <Users className="h-4 w-4 mr-1.5" />
+              Diplomacy
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/games/${game.game_id}/replay`}>
+              <Play className="h-4 w-4 mr-1.5" />
+              Replay
+            </Link>
+          </Button>
+        </TopBar>
 
         {/* Seated players in an active game get the gameplay controls;
             observers and spectators on ended games drop to the read-only
@@ -444,7 +438,10 @@ export default function GameDetailPage() {
           game.players.includes(currentPlayer) ? (
             <GameplayView gameId={gameId} currentPlayer={currentPlayer} />
           ) : (
-            <ObservationView gameId={gameId} />
+            <ObservationSurface
+              gameId={gameId}
+              mode={game.status === 'ended' ? 'replay' : 'live'}
+            />
           )}
         </div>
       </div>
@@ -517,13 +514,14 @@ export default function GameDetailPage() {
 
       <div className="space-y-6">
         {redeemNeedsSignIn && inviteToken && (
-          <Card data-testid="invite-signin-cta" className="border-amber-300">
-            <CardContent className="pt-6 space-y-2">
-              <p className="text-sm font-medium flex items-center gap-2">
-                <Mail className="h-4 w-4" />
-                You&apos;ve been invited to this lobby
-              </p>
-              <p className="text-xs text-muted-foreground">
+          <Panel
+            data-testid="invite-signin-cta"
+            kicker="invite"
+            title="You've been invited to this lobby"
+          >
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm">
+                <Mail className="h-4 w-4 text-accent" />
                 Sign in with the same email the invite was sent to and your
                 seat will be claimed automatically.
               </p>
@@ -535,41 +533,29 @@ export default function GameDetailPage() {
                   Sign in to claim your slot
                 </Link>
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </Panel>
         )}
 
         {/* Game Header */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-2xl">{game.game_id}</CardTitle>
-              <Badge variant="secondary">Waiting for players</Badge>
-            </div>
-            {game.creator && (
-              <p className="text-sm text-muted-foreground">
-                Created by {game.creator}
-              </p>
-            )}
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
-              <div className="flex items-center gap-2">
-                <Map className="h-4 w-4 text-muted-foreground" />
-                <span>{game.map_width}x{game.map_height}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Hash className="h-4 w-4 text-muted-foreground" />
-                <span>Seed: {game.seed}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <span>{game.player_slots} slots</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span>{formatDate(game.created_at)}</span>
-              </div>
+        <Panel
+          title={game.game_id}
+          kicker={game.creator ? `created by ${game.creator}` : 'lobby'}
+          action={
+            <Tag tone="warning" mono>
+              waiting
+            </Tag>
+          }
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-4">
+              <StatPair
+                label="map"
+                value={`${game.map_width}×${game.map_height}`}
+              />
+              <StatPair label="seed" value={game.seed} />
+              <StatPair label="slots" value={game.player_slots} />
+              <StatPair label="created" value={formatDate(game.created_at)} />
             </div>
             <Button
               variant="outline"
@@ -584,20 +570,18 @@ export default function GameDetailPage() {
               )}
               {copied ? 'Copied!' : 'Copy invite link'}
             </Button>
-
-          </CardContent>
-        </Card>
+          </div>
+        </Panel>
 
         {agentSlotsWithKeys.length > 0 && (
-          <Card data-testid="per-slot-agent-keys-panel">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bot className="h-4 w-4" />
-                Agent slot API keys
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
+          <Panel
+            data-testid="per-slot-agent-keys-panel"
+            kicker="agent keys"
+            title="Agent slot API keys"
+            action={<Bot className="h-4 w-4 text-ink-muted" />}
+          >
+            <div className="space-y-3">
+              <p className="text-xs text-ink-muted">
                 Hand each Agent slot&apos;s key to its agent. Keys disappear from
                 this page the instant you press Start — copy them now or hit
                 <span className="font-medium"> Regenerate</span> to mint a fresh
@@ -606,15 +590,18 @@ export default function GameDetailPage() {
               {agentSlotsWithKeys.map((slot) => (
                 <div
                   key={slot.slot_index}
-                  className="rounded-lg border p-3 space-y-2"
+                  className="space-y-2 rounded-md border border-border bg-surface p-3"
                   data-testid={`agent-slot-key-${slot.slot_index}`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col gap-0.5">
+                      <span
+                        className="font-mono uppercase text-ink-muted"
+                        style={{ fontSize: 10, letterSpacing: '0.08em' }}
+                      >
                         Slot {slot.slot_index} · Agent
                       </span>
-                      <p className="font-medium text-sm">{slot.name}</p>
+                      <p className="text-sm font-medium text-ink">{slot.name}</p>
                     </div>
                     {confirmRegenSlot === slot.slot_index ? (
                       <div className="flex items-center gap-1">
@@ -671,42 +658,41 @@ export default function GameDetailPage() {
                   </div>
                 </div>
               ))}
-            </CardContent>
-          </Card>
+            </div>
+          </Panel>
         )}
 
         {showMcpConfigHint && (
-          <Card data-testid="mcp-config-hint-panel">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Wrench className="h-4 w-4" />
-                Configure your MCP client
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
+          <Panel
+            data-testid="mcp-config-hint-panel"
+            kicker="configure your mcp client"
+            title="MCP client setup"
+            action={<Wrench className="h-4 w-4 text-ink-muted" />}
+          >
+            <div className="space-y-3">
+              <p className="text-xs text-ink-muted">
                 Before an agent can use the keys above, its MCP client needs
                 to know about{' '}
-                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                <code className="rounded bg-bg-subtle px-1 py-0.5 text-ink">
                   https://mcp.parley.quest/
                 </code>
                 . For Claude Code, drop this into{' '}
-                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                <code className="rounded bg-bg-subtle px-1 py-0.5 text-ink">
                   ~/.claude.json
                 </code>{' '}
                 (or a project{' '}
-                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                <code className="rounded bg-bg-subtle px-1 py-0.5 text-ink">
                   .mcp.json
                 </code>
                 ) and restart the client. The{' '}
-                <code className="px-1 py-0.5 rounded bg-muted text-foreground">
+                <code className="rounded bg-bg-subtle px-1 py-0.5 text-ink">
                   /play-parley
                 </code>{' '}
                 skill walks through the rest of the handshake.
               </p>
               <div className="relative">
                 <pre
-                  className="rounded-md border bg-muted/50 p-3 text-xs font-mono overflow-x-auto"
+                  className="overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-xs"
                   data-testid="mcp-config-hint-snippet"
                 >
                   {mcpConfigSnippet}
@@ -728,8 +714,8 @@ export default function GameDetailPage() {
                   </span>
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </Panel>
         )}
 
         {(() => {
@@ -746,78 +732,80 @@ export default function GameDetailPage() {
           const apiKey = game.api_key || localKey || null
           if (!apiKey) return null
           return (
-          <Card data-testid="agent-api-key-panel">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bot className="h-4 w-4" />
-                Hand off to an MCP agent
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Point your agent at the live MCP endpoint (
-                <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">
-                  https://mcp.parley.quest/
-                </code>
-                , streamable-http) and paste this game URL plus the API key
-                below. In Claude Code, the
-                <code className="mx-1 px-1 py-0.5 rounded bg-muted text-foreground">
-                  /play-parley
-                </code>
-                skill walks through the handshake.
-              </p>
-              <div>
-                <Label htmlFor="agent-api-key" className="text-xs flex items-center gap-1">
-                  <KeyRound className="h-3 w-3" />
-                  Per-game API key
-                </Label>
-                <div className="mt-1 flex gap-2">
-                  <Input
-                    id="agent-api-key"
-                    value={apiKey}
-                    readOnly
-                    onFocus={(e) => e.currentTarget.select()}
-                    className="font-mono text-xs"
-                    data-testid="agent-api-key-input"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copyApiKey(apiKey)}
-                    data-testid="agent-api-key-copy"
+            <Panel
+              data-testid="agent-api-key-panel"
+              kicker="hand off"
+              title="MCP agent setup"
+              action={<Bot className="h-4 w-4 text-ink-muted" />}
+            >
+              <div className="space-y-3">
+                <p className="text-xs text-ink-muted">
+                  Point your agent at the live MCP endpoint (
+                  <code className="mx-1 rounded bg-bg-subtle px-1 py-0.5 text-ink">
+                    https://mcp.parley.quest/
+                  </code>
+                  , streamable-http) and paste this game URL plus the API key
+                  below. In Claude Code, the
+                  <code className="mx-1 rounded bg-bg-subtle px-1 py-0.5 text-ink">
+                    /play-parley
+                  </code>
+                  skill walks through the handshake.
+                </p>
+                <div>
+                  <Label
+                    htmlFor="agent-api-key"
+                    className="flex items-center gap-1 text-xs"
                   >
-                    {apiKeyCopied ? (
-                      <Check className="h-4 w-4" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                    <span className="ml-2">{apiKeyCopied ? 'Copied' : 'Copy'}</span>
-                  </Button>
+                    <KeyRound className="h-3 w-3" />
+                    Per-game API key
+                  </Label>
+                  <div className="mt-1 flex gap-2">
+                    <Input
+                      id="agent-api-key"
+                      value={apiKey}
+                      readOnly
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="font-mono text-xs"
+                      data-testid="agent-api-key-input"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyApiKey(apiKey)}
+                      data-testid="agent-api-key-copy"
+                    >
+                      {apiKeyCopied ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                      <span className="ml-2">
+                        {apiKeyCopied ? 'Copied' : 'Copy'}
+                      </span>
+                    </Button>
+                  </div>
                 </div>
+                <p className="flex items-start gap-1 text-xs">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
+                  <span className="text-ink-muted">
+                    Copy the key now — once the game starts it disappears from
+                    this page. If you lose it, you can mint a fresh lobby
+                    instead.
+                  </span>
+                </p>
               </div>
-              <p className="text-xs text-amber-600 dark:text-amber-500 flex items-start gap-1">
-                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-                <span>
-                  Copy the key now — once the game starts it disappears from this
-                  page. If you lose it, you can mint a fresh lobby instead.
-                </span>
-              </p>
-            </CardContent>
-          </Card>
+            </Panel>
           )
         })()}
 
         {/* Player Slots */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Players ({game.players.length}/{game.player_slots})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {(() => {
+        <Panel
+          title={`Players · ${game.players.length}/${game.player_slots}`}
+          kicker="seats"
+          action={<Users className="h-4 w-4 text-ink-muted" />}
+        >
+          <div className="space-y-2">
+            {(() => {
                 // Prefer the Phase 2 ``slots`` array — it's the canonical
                 // shape and also lets us render type badges. When the
                 // response predates the column (legacy server, null
@@ -1054,36 +1042,59 @@ export default function GameDetailPage() {
                   return (
                     <div
                       key={i}
-                      className="flex items-center justify-between p-3 rounded-lg border"
+                      className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface p-3"
                       data-testid={`lobby-slot-${i}`}
                     >
                       <div className="flex items-center gap-3">
-                        <div
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: player ? getPlayerColor(i) : '#6b7280' }}
-                        />
+                        <span
+                          className="font-mono uppercase text-ink-muted"
+                          style={{
+                            fontSize: 10,
+                            letterSpacing: '0.08em',
+                            minWidth: 40,
+                          }}
+                        >
+                          slot {i}
+                        </span>
                         {player ? (
-                          <span className="font-medium">{player}</span>
+                          <Identity
+                            kind={slot.type === 'agent' ? 'agent' : 'human'}
+                            name={player}
+                            id={player}
+                            color={getPlayerColor(i)}
+                            size={22}
+                          />
                         ) : isReservedHuman ? (
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm">
-                              Reserved
-                            </span>
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              {reservedEmail}
-                            </span>
+                          <div className="flex items-center gap-2">
+                            <Identity
+                              kind="human"
+                              name="?"
+                              id={reservedEmail ?? `slot-${i}`}
+                              color="#6b7280"
+                              size={22}
+                            />
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium">Reserved</span>
+                              <span className="flex items-center gap-1 text-xs text-ink-muted">
+                                <Mail className="h-3 w-3" />
+                                {reservedEmail}
+                              </span>
+                            </div>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground italic">Empty slot</span>
+                          <span className="text-sm italic text-ink-muted">
+                            Empty slot
+                          </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs capitalize">
+                      <div className="flex items-center gap-1.5">
+                        <Tag tone={slot.type === 'agent' ? 'accent' : 'neutral'} mono>
                           {slot.type}
-                        </Badge>
+                        </Tag>
                         {player && i === 0 && game.creator === player && (
-                          <Badge variant="outline" className="text-xs">Creator</Badge>
+                          <Tag tone="accent" mono>
+                            creator
+                          </Tag>
                         )}
                         {canEdit && isOpenHuman && (
                           <Button
@@ -1141,13 +1152,12 @@ export default function GameDetailPage() {
                   )
                 })
               })()}
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Panel>
 
         {/* Actions */}
-        <Card>
-          <CardContent className="pt-6 space-y-4">
+        <Panel title="Actions" kicker="lobby">
+          <div className="space-y-4">
             {!isInGame && !isFull && (
               <div className="space-y-3">
                 <div>
@@ -1239,12 +1249,12 @@ export default function GameDetailPage() {
             )}
 
             {!isInGame && !isCreator && isFull && (
-              <p className="text-sm text-muted-foreground text-center">
+              <p className="text-center text-sm text-ink-muted">
                 This lobby is full.
               </p>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </Panel>
       </div>
     </div>
   )

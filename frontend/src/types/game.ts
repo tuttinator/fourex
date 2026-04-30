@@ -477,6 +477,31 @@ export interface MapCanvasProps {
 	 * fresh object reference each time the cycler fires so repeated
 	 * requests to focus the same tile still trigger a recentre. */
 	focusTile?: Coord | null;
+	/** Phase 3 prototype-rollout: surrounding chrome variant. */
+	frameVariant?:
+		| "inset"
+		| "parchment"
+		| "cartographic"
+		| "floating";
+	/** Phase 3 prototype-rollout: tile-hover tooltip rendering mode. */
+	tooltipMode?: "parchment" | "off";
+	/** Phase 3 prototype-rollout: emits a viewport rect (in tile coords)
+	 *  whenever the user pans / zooms, so a MiniMap satellite can render
+	 *  a viewport-rectangle overlay. */
+	onViewportRectChange?: (rect: ViewportRect) => void;
+	/** Phase 3 prototype-rollout: caller-driven re-centre. The PixiMap
+	 *  pans (without changing zoom) so this tile coord lands at the
+	 *  centre of the viewport. Wrapped fresh per request, like
+	 *  ``focusTile``. */
+	panToTile?: Coord | null;
+}
+
+/** Viewport rect in tile coords (top-left + width/height in tiles). */
+export interface ViewportRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }
 
 export interface PlayerListProps {
@@ -507,15 +532,19 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
 	water: "#4682b4",
 };
 
+// 8-player heraldic palette — picked for max discriminability on
+// green/blue/gray/sand terrain and pairwise CB safety. See
+// `components/brand/palette.ts` for the typed source of truth and
+// the design brief for the rationale.
 export const PLAYER_COLORS: Record<number, string> = {
-	0: "#ff6b6b",
-	1: "#4ecdc4",
-	2: "#45b7d1",
-	3: "#96ceb4",
-	4: "#ffeaa7",
-	5: "#dda0dd",
-	6: "#98d8c8",
-	7: "#f7dc6f",
+	0: "#B5302E", // crimson
+	1: "#3D3F8F", // indigo
+	2: "#C49A2C", // ochre
+	3: "#2E6E4D", // forest
+	4: "#7E2D52", // plum
+	5: "#1F6F87", // teal
+	6: "#4A5568", // slate
+	7: "#C7541C", // ember
 };
 
 // Diplomacy types (Phase 1)
