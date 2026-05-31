@@ -25,6 +25,7 @@ from typing import Any
 
 from .agent_runtime import MCPAgent, TelemetryConfig, TurnTrace
 from .mcp_client import MCPClient
+from .planner import PlannerFn
 from .profiles import BALANCED, AgentProfile, get_profile
 
 
@@ -101,6 +102,7 @@ class MCPGameOrchestrator:
         profiles: dict[str, AgentProfile] | None = None,
         *,
         telemetry: dict[str, TelemetryConfig] | None = None,
+        planners: dict[str, PlannerFn] | None = None,
     ):
         self._client = client
         self._game = game
@@ -113,6 +115,7 @@ class MCPGameOrchestrator:
                 api_key=game.api_keys[player],
                 profile=profile,
                 player_id=player,
+                planner=(planners or {}).get(player),
                 telemetry=(telemetry or {}).get(player),
             )
 
@@ -180,8 +183,13 @@ async def run_orchestrated_game(
     max_turn_cap: int | None = None,
     map_width: int = 20,
     map_height: int = 20,
+    planners: dict[str, PlannerFn] | None = None,
 ) -> GameRunResult:
-    """End-to-end helper: create a game, wire up agents, run to completion."""
+    """End-to-end helper: create a game, wire up agents, run to completion.
+
+    ``planners`` optionally maps a player to a custom planner (e.g. an LLM
+    planner); players without one fall back to the heuristic planner.
+    """
     game = await create_game(
         client,
         players,
@@ -194,5 +202,5 @@ async def run_orchestrated_game(
     for player in players:
         name = (personalities or {}).get(player, "balanced")
         profiles[player] = get_profile(name)
-    orch = MCPGameOrchestrator(client, game, profiles=profiles)
+    orch = MCPGameOrchestrator(client, game, profiles=profiles, planners=planners)
     return await orch.run(max_turn_cap=max_turn_cap)

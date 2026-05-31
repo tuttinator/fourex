@@ -313,6 +313,11 @@ class MCPAgent:
             trace.analysis_results,
             turn_number,
         )
+        # The heuristic planner returns a plain list; an LLM planner may be
+        # async and return a coroutine. Await it transparently so both shapes
+        # plug into the same runtime without the planner having to be sync.
+        if inspect.isawaitable(proposed):
+            proposed = await proposed
         trace.proposed_actions = list(proposed)
 
         # 5. Validate — drop any rejected actions so we don't tank the
