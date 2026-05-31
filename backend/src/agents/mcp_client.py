@@ -187,7 +187,9 @@ class OfficialStreamableHTTPMCPClient:
 
     async def connect(self) -> "OfficialStreamableHTTPMCPClient":
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import (  # pyrefly: ignore[import-error]
+            streamablehttp_client,
+        )
 
         self._stack = AsyncExitStack()
         read, write, _get_session_id = await self._stack.enter_async_context(
