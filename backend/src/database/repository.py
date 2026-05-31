@@ -189,6 +189,22 @@ class GameRepository:
         result = await self.session.execute(query)
         return result.scalar_one()
 
+    async def count_active_agents(self) -> int:
+        """Count player seats currently in active, non-archived games.
+
+        Backs the landing-page "agents in the field" stat. ``Game.players``
+        is the authoritative roster; summing its length across active games
+        counts every seated participant (human or agent) in a live match.
+        Active games are few, so loading their rosters is cheap and keeps
+        the query portable (no JSON-length functions).
+        """
+        result = await self.session.execute(
+            select(Game.players).where(
+                and_(Game.status == "active", Game.archived_at.is_(None))
+            )
+        )
+        return sum(len(players or []) for players in result.scalars().all())
+
     async def archive_game(self, game_id: str, reason: str) -> None:
         """Soft-archive a game.
 

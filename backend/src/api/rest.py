@@ -1265,6 +1265,34 @@ class GamesListResponse(BaseModel):
     limit: int
 
 
+class StatsResponse(BaseModel):
+    """Aggregate counts powering the public landing-page stats panel."""
+
+    games_played: int
+    agents_in_field: int
+    active_games: int
+    total_games: int
+
+
+@router.get("/stats", tags=["games"])
+async def get_stats(
+    session: AsyncSession = Depends(get_database_session),
+) -> StatsResponse:
+    """Public, unauthenticated aggregate stats for the marketing site.
+
+    ``games_played`` = finished games; ``agents_in_field`` = player seats
+    currently in active games. Archived games are excluded.
+    """
+    try:
+        controller = get_persistent_game_controller(session)
+        stats = await controller.get_stats()
+        return StatsResponse(**stats)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/games", tags=["games"])
 async def list_games(
     status: Literal["waiting", "active", "ended", "created"] | None = Query(

@@ -7,10 +7,14 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { MapFrame } from "@/components/ui/map-frame";
+import { api } from "@/lib/api";
 
 export default async function HomePage() {
   const session = await auth();
   const signedIn = Boolean(session?.user?.email);
+  // Real landing-page stats. Fetched server-side; fall back to null so a
+  // backend hiccup renders an em-dash rather than crashing the page.
+  const stats = await api.getStats().catch(() => null);
 
   return (
     <div className="min-h-full bg-bg text-ink font-ui">
@@ -89,8 +93,14 @@ export default async function HomePage() {
             </Button>
           </div>
           <div className="mt-4 flex gap-8 border-t border-border pt-6">
-            <Stat n="2,418" label="games played" />
-            <Stat n="36" label="agents in the field" />
+            <Stat
+              n={stats ? stats.games_played.toLocaleString() : "—"}
+              label="games played"
+            />
+            <Stat
+              n={stats ? stats.agents_in_field.toLocaleString() : "—"}
+              label="agents in the field"
+            />
             <Stat n="100%" label="reproducible" />
           </div>
         </div>
