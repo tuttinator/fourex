@@ -25,6 +25,7 @@ tools an agent does.
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -65,7 +66,10 @@ _AUTO_ANALYSIS_TOOLS: frozenset[str] = frozenset(
 
 PlannerFn = Callable[
     [AgentProfile, dict[str, Any], str, dict[str, dict[str, Any]] | None, int],
-    list[dict[str, Any]],
+    # The heuristic planner returns a list directly; an LLM planner may be
+    # async and return a coroutine. play_turn awaits the result when it is
+    # awaitable, so both shapes satisfy the protocol.
+    list[dict[str, Any]] | Awaitable[list[dict[str, Any]]],
 ]
 
 
@@ -313,6 +317,11 @@ class MCPAgent:
             trace.analysis_results,
             turn_number,
         )
+        # The heuristic planner returns a plain list; an LLM planner may be
+        # async and return a coroutine. Await it transparently so both shapes
+        # plug into the same runtime without the planner having to be sync.
+        if inspect.isawaitable(proposed):
+            proposed = await proposed
         trace.proposed_actions = list(proposed)
 
         # 5. Validate — drop any rejected actions so we don't tank the

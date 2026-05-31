@@ -156,7 +156,18 @@ async function fetchBff<T>(path: string, init: RequestInit): Promise<T> {
 	return response.json();
 }
 
+export interface StatsResponse {
+	games_played: number;
+	agents_in_field: number;
+	active_games: number;
+	total_games: number;
+}
+
 export const api = {
+	async getStats(): Promise<StatsResponse> {
+		return fetchApi<StatsResponse>("/stats");
+	},
+
 	async listGames(
 		params: GamesListParams = {},
 	): Promise<GamesListResponse> {
@@ -670,6 +681,7 @@ export const queryKeys = {
 	rulesReference: () => ["rulesReference"] as const,
 	savedMaps: () => ["savedMaps"] as const,
 	savedMap: (id: number) => ["savedMap", id] as const,
+	stats: () => ["stats"] as const,
 };
 
 // Utility functions

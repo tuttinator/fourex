@@ -1240,6 +1240,25 @@ class PersistentGameController:
         games = await self.repo.list_games(status=status)
         return [game.id for game in games]
 
+    async def get_stats(self) -> dict[str, int]:
+        """Aggregate counts for the public landing-page stats panel.
+
+        ``games_played`` counts finished games (``status='ended'``);
+        ``agents_in_field`` counts player seats currently in active games.
+        Archived games are excluded from both, matching the games-list
+        default.
+        """
+        games_played = await self.repo.count_games(status="ended")
+        active_games = await self.repo.count_games(status="active")
+        total_games = await self.repo.count_games()
+        agents_in_field = await self.repo.count_active_agents()
+        return {
+            "games_played": games_played,
+            "agents_in_field": agents_in_field,
+            "active_games": active_games,
+            "total_games": total_games,
+        }
+
     async def list_games_with_metadata(
         self,
         status: str | None = None,
