@@ -42,6 +42,11 @@ DEFAULT_MCP_URL = os.getenv("PARLEY_MCP_URL", "https://mcp.parley.quest/")
 _PROFILE_POOL = ("aggressive", "economic", "explorer", "balanced")
 
 
+def _default_map_templates() -> list[str | None]:
+    """Default map-template pool — ``None`` means the server's default map."""
+    return [None]
+
+
 @dataclass(frozen=True)
 class ModelEndpoint:
     """A Modal-hosted vLLM model the runner can seat into a game."""
@@ -63,7 +68,7 @@ class MatchConfig:
     players_per_game: int = 2
     max_turns: int = 60
     max_turn_cap: int | None = 60
-    map_templates: list[str | None] = field(default_factory=lambda: [None])
+    map_templates: list[str | None] = field(default_factory=_default_map_templates)
     concurrency: int = 2
     max_games: int = 10
     per_game_timeout_s: float = 1800.0

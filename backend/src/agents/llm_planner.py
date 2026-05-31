@@ -179,7 +179,10 @@ def make_llm_planner(
                 },
             ]
             resp = await asyncio.wait_for(
-                client.chat.completions.create(
+                # Plain dicts are valid at runtime; the SDK's overloads are
+                # typed against TypedDict message params, which pyrefly can't
+                # match against a built list of dicts.
+                client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,

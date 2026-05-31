@@ -185,7 +185,7 @@ class OfficialStreamableHTTPMCPClient:
         self._stack: AsyncExitStack | None = None
         self._session: Any = None
 
-    async def connect(self) -> "OfficialStreamableHTTPMCPClient":
+    async def connect(self) -> OfficialStreamableHTTPMCPClient:
         from mcp import ClientSession
         from mcp.client.streamable_http import (  # pyrefly: ignore[import-error]
             streamablehttp_client,
@@ -206,7 +206,7 @@ class OfficialStreamableHTTPMCPClient:
             self._stack = None
             self._session = None
 
-    async def __aenter__(self) -> "OfficialStreamableHTTPMCPClient":
+    async def __aenter__(self) -> OfficialStreamableHTTPMCPClient:
         return await self.connect()
 
     async def __aexit__(self, *exc: object) -> None:
