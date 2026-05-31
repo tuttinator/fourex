@@ -23,9 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .agent_runtime import MCPAgent, TelemetryConfig, TurnTrace
+from .agent_runtime import MCPAgent, PlannerFn, TelemetryConfig, TurnTrace
 from .mcp_client import MCPClient
-from .planner import PlannerFn
 from .profiles import BALANCED, AgentProfile, get_profile
 
 

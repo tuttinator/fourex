@@ -31,13 +31,8 @@ from typing import Any
 
 from agents.src.llm_providers import extract_thinking_tokens
 
-from .planner import (
-    PlannerFn,
-    _enemy_units,
-    _owned_cities,
-    _owned_units,
-    plan_actions,
-)
+from .agent_runtime import PlannerFn
+from .planner import _owned_units_and_cities, plan_actions
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +69,16 @@ def _summarise_state(
     turn_number: int,
 ) -> dict[str, Any]:
     """Build a compact, token-light snapshot for the prompt."""
+    owned_units, owned_cities = _owned_units_and_cities(state, player_id)
     my_units = [
         {"id": u.get("id"), "type": u.get("type"), "loc": _coord(u)}
-        for u in _owned_units(state, player_id)
+        for u in owned_units
     ]
-    my_cities = [
-        {"id": c.get("id"), "loc": _coord(c)} for c in _owned_cities(state, player_id)
-    ]
+    my_cities = [{"id": c.get("id"), "loc": _coord(c)} for c in owned_cities]
     enemies = [
         {"type": u.get("type"), "owner": u.get("owner"), "loc": _coord(u)}
-        for u in _enemy_units(state, player_id)
+        for u in (state.get("units") or {}).values()
+        if u.get("owner") != player_id
     ]
     stockpile = (state.get("stockpiles") or {}).get(player_id, {})
     summary: dict[str, Any] = {

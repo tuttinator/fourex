@@ -115,22 +115,13 @@ _secrets = [
 def _build_server_class(entry: dict):
     """Create one Modal class serving ``entry``'s model on a vLLM /v1 endpoint.
 
-    Returns the class so the caller can register it under a module global —
-    ``modal deploy`` only discovers classes bound at module scope.
+    Returns ``(class_name, decorated_class)``; the caller binds it to a module
+    global so ``modal deploy`` discovers it. Each class is given a distinct
+    name so the four models don't collide on the shared app.
     """
     label = entry["label"]
     hf_repo = entry["hf_repo"]
 
-    @app.cls(
-        name=f"parley-vllm-{label}",
-        image=vllm_image,
-        gpu=entry["gpu"],
-        volumes={HF_CACHE_DIR: hf_cache},
-        secrets=_secrets,
-        timeout=60 * 60,
-        scaledown_window=entry.get("scaledown_window", 120),
-        min_containers=entry.get("min_containers", 0),
-    )
     class VLLMServer:
         @modal.enter()
         def start(self):
@@ -177,11 +168,27 @@ def _build_server_class(entry: dict):
             # vLLM is already listening on VLLM_PORT; nothing to do here.
             return
 
-    return VLLMServer
+    # Each model needs a DISTINCT class identity, otherwise Modal registers
+    # four classes all named "VLLMServer" on the same app and they collide.
+    # Rename before decorating so the deployed entity + endpoint URL are unique
+    # per model (e.g. VLLM_qwen, VLLM_glm_flash).
+    cls_name = f"VLLM_{label.replace('-', '_')}"
+    VLLMServer.__name__ = cls_name
+    VLLMServer.__qualname__ = cls_name
+    decorated = app.cls(
+        image=vllm_image,
+        gpu=entry["gpu"],
+        volumes={HF_CACHE_DIR: hf_cache},
+        secrets=_secrets,
+        timeout=60 * 60,
+        scaledown_window=entry.get("scaledown_window", 120),
+        min_containers=entry.get("min_containers", 0),
+    )(VLLMServer)
+    return cls_name, decorated
 
 
-# Register one discoverable class per registry entry.
-_SERVERS = {entry["label"]: _build_server_class(entry) for entry in MODEL_REGISTRY}
-# Bind to module globals under CapWords names so `modal deploy` finds them.
-for _label, _cls in _SERVERS.items():
-    globals()[f"VLLM_{_label.replace('-', '_')}"] = _cls
+# Register one discoverable class per registry entry, binding each to a module
+# global under its distinct name so `modal deploy` discovers it.
+for _entry in MODEL_REGISTRY:
+    _name, _cls = _build_server_class(_entry)
+    globals()[_name] = _cls
