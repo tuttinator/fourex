@@ -66,7 +66,10 @@ _AUTO_ANALYSIS_TOOLS: frozenset[str] = frozenset(
 
 PlannerFn = Callable[
     [AgentProfile, dict[str, Any], str, dict[str, dict[str, Any]] | None, int],
-    list[dict[str, Any]],
+    # The heuristic planner returns a list directly; an LLM planner may be
+    # async and return a coroutine. play_turn awaits the result when it is
+    # awaitable, so both shapes satisfy the protocol.
+    list[dict[str, Any]] | Awaitable[list[dict[str, Any]]],
 ]
 
 
