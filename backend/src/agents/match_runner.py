@@ -31,7 +31,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .llm_planner import make_llm_planner
+from .llm_planner import ReasoningSink, make_llm_planner
 from .mcp_client import OfficialStreamableHTTPMCPClient
 from .orchestrator import MCPGameOrchestrator, create_game
 from .profiles import get_profile
@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_URL = os.getenv("PARLEY_MCP_URL", "https://mcp.parley.quest/")
 _PROFILE_POOL = ("aggressive", "economic", "explorer", "balanced")
+# write_turn_notes caps notes at 4,000 chars (SCRATCHPAD_MAX_CHARS); stay under.
+_TURN_NOTE_MAX_CHARS = 4000
 
 
 def _default_map_templates() -> list[str | None]:
@@ -74,6 +76,11 @@ class MatchConfig:
     per_game_timeout_s: float = 1800.0
     kill_switch_path: str | None = None
     results_path: str | None = "logs/match_results.jsonl"
+    reasoning_path: str | None = "logs/reasoning.jsonl"
+    # Mirror each turn's reasoning into the game's turn notes (visible in-product
+    # via the API / live site). Best-effort and bounded by turn_notes_timeout_s.
+    write_turn_notes: bool = True
+    turn_notes_timeout_s: float = 15.0
     schedule_seed: int = 12345
 
 
@@ -127,6 +134,52 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                 max_turns=cfg.max_turns,
                 map_template=map_template,
             )
+
+            def _make_sink(pid: str, model_label: str, seat_key: str) -> ReasoningSink:
+                async def _sink(
+                    player_id: str,
+                    turn_number: int,
+                    reasoning: str,
+                    raw: str,
+                    actions: list[dict],
+                ) -> None:
+                    # Durable, full-fidelity log.
+                    _record_reasoning(
+                        cfg,
+                        {
+                            "game_id": game.game_id,
+                            "player_id": pid,
+                            "model": model_label,
+                            "profile": profile_names.get(pid),
+                            "turn": turn_number,
+                            "reasoning": reasoning,
+                            "actions": actions,
+                        },
+                    )
+                    # Also surface it in-product as this seat's turn notes, so
+                    # the reasoning shows up on the live game. Best-effort and
+                    # bounded — never let it stall or break the turn loop.
+                    if not (cfg.write_turn_notes and reasoning):
+                        return
+                    note = f"[{model_label}] {reasoning}"[:_TURN_NOTE_MAX_CHARS]
+                    try:
+                        await asyncio.wait_for(
+                            client.call_tool(
+                                "write_turn_notes",
+                                {"api_key": seat_key, "notes": note},
+                            ),
+                            timeout=cfg.turn_notes_timeout_s,
+                        )
+                    except Exception:  # noqa: BLE001 — best-effort persistence
+                        logger.warning(
+                            "write_turn_notes failed for %s turn %s",
+                            pid,
+                            turn_number,
+                            exc_info=True,
+                        )
+
+                return _sink
+
             planners = {
                 pid: make_llm_planner(
                     base_url=ep.base_url,
@@ -134,6 +187,8 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                     api_key=ep.api_key,
                     max_tokens=ep.max_tokens,
                     timeout_s=ep.timeout_s,
+                    enable_thinking=True,
+                    on_reasoning=_make_sink(pid, ep.label, game.api_keys[pid]),
                 )
                 for pid, ep in endpoints.items()
             }
@@ -183,6 +238,20 @@ def _record(cfg: MatchConfig, outcome: GameOutcome) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(outcome.__dict__) + "\n")
+
+
+def _record_reasoning(cfg: MatchConfig, record: dict) -> None:
+    """Append one turn's reasoning trace to the reasoning log.
+
+    Every seat reasons and we keep every trace, so this is the durable store of
+    *why* each model made its moves. Best-effort: never raise into the turn loop.
+    """
+    if not cfg.reasoning_path:
+        return
+    path = Path(cfg.reasoning_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
 
 
 def _kill_switch_tripped(cfg: MatchConfig) -> bool:
