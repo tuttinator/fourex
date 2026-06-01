@@ -31,7 +31,9 @@ from .match_runner import MatchConfig, ModelEndpoint, run_forever
 _KNOWN_LABELS = ("qwen36-a3b", "gemma4-31b", "magistral-small")
 
 
-def _endpoints_from_args(specs: list[str]) -> list[ModelEndpoint]:
+def _endpoints_from_args(
+    specs: list[str], *, timeout_s: float, max_tokens: int
+) -> list[ModelEndpoint]:
     eps: list[ModelEndpoint] = []
     for spec in specs:
         label, _, rest = spec.partition("=")
@@ -47,12 +49,14 @@ def _endpoints_from_args(specs: list[str]) -> list[ModelEndpoint]:
                 base_url=base_url,
                 model=model or label,
                 api_key=os.getenv("VLLM_API_KEY", "not-needed"),
+                timeout_s=timeout_s,
+                max_tokens=max_tokens,
             )
         )
     return eps
 
 
-def _endpoints_from_env() -> list[ModelEndpoint]:
+def _endpoints_from_env(*, timeout_s: float, max_tokens: int) -> list[ModelEndpoint]:
     eps: list[ModelEndpoint] = []
     for label in _KNOWN_LABELS:
         env_key = f"PARLEY_VLLM_{label.replace('-', '_').upper()}_URL"
@@ -64,6 +68,8 @@ def _endpoints_from_env() -> list[ModelEndpoint]:
                     base_url=url,
                     model=label,
                     api_key=os.getenv("VLLM_API_KEY", "not-needed"),
+                    timeout_s=timeout_s,
+                    max_tokens=max_tokens,
                 )
             )
     return eps
@@ -84,6 +90,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--max-games", type=int, default=10)
     parser.add_argument("--per-game-timeout", type=float, default=1800.0)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=45.0,
+        help="Per-LLM-call timeout (s). Raise above the cold-start time "
+        "(~180-240s for a scale-to-zero vLLM endpoint) so the first turn "
+        "isn't forced into the heuristic fallback.",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Per-call generation cap. Reasoning traces eat into this.",
+    )
     parser.add_argument("--kill-switch", default=None, help="Stop if this file exists.")
     parser.add_argument("--results", default="logs/match_results.jsonl")
     args = parser.parse_args(argv)
@@ -93,7 +113,11 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     endpoints = (
-        _endpoints_from_args(args.endpoint) if args.endpoint else _endpoints_from_env()
+        _endpoints_from_args(
+            args.endpoint, timeout_s=args.timeout, max_tokens=args.max_tokens
+        )
+        if args.endpoint
+        else _endpoints_from_env(timeout_s=args.timeout, max_tokens=args.max_tokens)
     )
     if not endpoints:
         raise SystemExit(
