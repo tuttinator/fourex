@@ -139,6 +139,41 @@ MODEL_REGISTRY: list[dict] = [
         "scaledown_window": 600,
         "max_inputs": 32,
     },
+    {
+        # Small + fast reasoning distill (R1 chain-of-thought into Qwen3-8B).
+        # Dense, Qwen3 arch (native in vLLM, no trust-remote-code) → no MoE
+        # kernel pain, serves at high throughput on a cheap A10G. Ungated.
+        "label": "deepseek-r1-qwen3-8b",
+        "hf_repo": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+        "gpu": "A10G",
+        "tensor_parallel": 1,
+        "max_model_len": 16384,
+        "reasoning_parser": "deepseek_r1",
+        "extra_args": [],
+        "env": {},
+        "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        "min_containers": 0,
+        "scaledown_window": 600,
+        "max_inputs": 32,
+    },
+    {
+        # Tiny 4B dense reasoner — reasons by default. vLLM has no built-in
+        # Nemotron-3 reasoning parser, so serve parser-less and let the planner
+        # capture the inline <think> trace. May be gated (needs HF license
+        # acceptance on the NVIDIA repo with the token's account).
+        "label": "nemotron-nano-4b",
+        "hf_repo": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        "gpu": "A10G",
+        "tensor_parallel": 1,
+        "max_model_len": 16384,
+        "reasoning_parser": None,
+        "extra_args": ["--trust-remote-code"],
+        "env": {},
+        "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        "min_containers": 0,
+        "scaledown_window": 600,
+        "max_inputs": 32,
+    },
 ]
 
 VLLM_VERSION = "0.20.1"

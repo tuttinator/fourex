@@ -28,7 +28,13 @@ from .match_runner import MatchConfig, ModelEndpoint, run_forever
 
 # Labels mirror MODEL_REGISTRY in agents/deploy/modal_vllm.py (and the
 # --served-model-name each vLLM endpoint serves under).
-_KNOWN_LABELS = ("qwen36-a3b", "gemma4-31b", "magistral-small")
+_KNOWN_LABELS = (
+    "qwen36-a3b",
+    "gemma4-31b",
+    "magistral-small",
+    "deepseek-r1-qwen3-8b",
+    "nemotron-nano-4b",
+)
 
 
 def _endpoints_from_args(
