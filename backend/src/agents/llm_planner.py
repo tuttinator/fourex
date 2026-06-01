@@ -241,6 +241,9 @@ def make_llm_planner(
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
+    # Sticky flag: once a model rejects chat_template kwargs (Mistral tokenizer
+    # 400s), stop sending them so every subsequent turn isn't a wasted 400+retry.
+    template_ok = [True]
 
     async def llm_plan(
         profile: Any,
@@ -287,14 +290,21 @@ def make_llm_planner(
             # enable_thinking is honoured by templates that gate thinking (e.g.
             # Qwen3.x). Mistral-tokenizer models (Magistral) reject ANY
             # chat_template kwargs with a 400 — they reason by default via their
-            # own template — so retry once without it. Every seat reasons.
+            # own template. Try with kwargs until the model rejects them once,
+            # then skip them for the rest of the game. Every seat reasons.
             think_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
-            try:
-                resp = await asyncio.wait_for(_create(think_body), timeout=timeout_s)
-            except Exception as exc:  # noqa: BLE001
-                if "chat_template" not in str(exc).lower():
-                    raise
+            if not template_ok[0]:
                 resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
+            else:
+                try:
+                    resp = await asyncio.wait_for(
+                        _create(think_body), timeout=timeout_s
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if "chat_template" not in str(exc).lower():
+                        raise
+                    template_ok[0] = False
+                    resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
             message = resp.choices[0].message if resp.choices else None
             raw = (getattr(message, "content", None) or "") if message else ""
             # Prefer the server-separated trace (set when vLLM ran with
