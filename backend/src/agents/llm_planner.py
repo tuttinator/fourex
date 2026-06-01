@@ -93,10 +93,12 @@ def _split_reasoning(content: str) -> tuple[str, str]:
 # The legal action shapes, embedded in the system prompt so the model knows
 # exactly what to emit. Mirrors the play-parley skill's payload contract.
 _ACTION_CONTRACT = """\
-You control one player in a turn-based 4X strategy game. First REASON about your
-position — your units, cities, resources, visible threats and opportunities, and
-how this turn advances your strategy. Then give your FINAL ANSWER as a JSON array
-of action objects. Each object has a "type" and the fields for that type:
+You control one player in a turn-based 4X strategy game. First REASON BRIEFLY
+about your position — your units, cities, resources, visible threats and
+opportunities, and how this turn advances your strategy. Keep your reasoning to
+a few decisive sentences; do NOT deliberate at length. Then give your FINAL
+ANSWER as a JSON array of action objects. Each object has a "type" and the
+fields for that type:
 
 - {"type": "MOVE", "unit_id": <int>, "to": {"x": <int>, "y": <int>}}
 - {"type": "ATTACK", "attacker_id": <int>, "target_id": <int>, "target_type": "unit"}

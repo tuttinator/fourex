@@ -152,6 +152,10 @@ MODEL_REGISTRY: list[dict] = [
         "extra_args": [],
         "env": {},
         "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        # NOTE: R1-distill over-reasons (11k+ char traces) and rarely finishes
+        # the JSON answer within a sane token budget → always falls back. Keep
+        # at 0; only useful with a hard reasoning-token bound. Magistral is the
+        # better balance (concise reasoning + actual actions).
         "min_containers": 0,
         "scaledown_window": 600,
         "max_inputs": 32,
@@ -170,6 +174,8 @@ MODEL_REGISTRY: list[dict] = [
         "extra_args": ["--trust-remote-code"],
         "env": {},
         "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        # NOTE: only ~3.7 tok/s on vLLM 0.20.1 (unoptimized trust-remote-code
+        # path for the Nemotron-3 arch) — effectively unusable. Keep at 0.
         "min_containers": 0,
         "scaledown_window": 600,
         "max_inputs": 32,
