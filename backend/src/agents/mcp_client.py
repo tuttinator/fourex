@@ -25,6 +25,7 @@ code does not have to care whether the tool ran in-process or remotely.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import AsyncExitStack
 from typing import Any, Protocol
@@ -180,8 +181,14 @@ class OfficialStreamableHTTPMCPClient:
             resp = await client.call_tool("create_game", {...})
     """
 
-    def __init__(self, url: str = "https://mcp.parley.quest/"):
+    def __init__(
+        self, url: str = "https://mcp.parley.quest/", *, call_timeout_s: float = 90.0
+    ):
         self._url = url
+        # Per-call timeout so a stalled tool call can't hang a whole game for
+        # hours (a long agent run otherwise wedged until per_game_timeout, and
+        # even that didn't cancel the MCP read stream cleanly).
+        self._call_timeout_s = call_timeout_s
         self._stack: AsyncExitStack | None = None
         self._session: Any = None
 
@@ -218,5 +225,7 @@ class OfficialStreamableHTTPMCPClient:
                 "OfficialStreamableHTTPMCPClient is not connected — use "
                 "`async with` or call connect() first"
             )
-        result = await self._session.call_tool(name, arguments)
+        result = await asyncio.wait_for(
+            self._session.call_tool(name, arguments), timeout=self._call_timeout_s
+        )
         return _unwrap_call_tool_result(result)
