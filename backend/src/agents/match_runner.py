@@ -188,11 +188,13 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                                 turn_number,
                                 exc_info=True,
                             )
-                    # Mirror into prompt_logs so it shows in the replay UI.
+                    # Mirror into prompt_logs so it shows in the replay UI. Wrap
+                    # the trace in <think>…</think> and follow with the actions:
+                    # the replay accordion routes the think block to its
+                    # REASONING section and the rest to ACTION.
                     if cfg.log_prompts:
-                        chosen = (
-                            ", ".join(a.get("type", "?") for a in actions) or "pass"
-                        )
+                        action_text = json.dumps(actions) if actions else "[]  (pass)"
+                        response_text = f"<think>\n{reasoning}\n</think>\n{action_text}"
                         try:
                             await _post_prompt_log(
                                 cfg,
@@ -201,8 +203,8 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                                 player=pid,
                                 turn_number=turn_number,
                                 model=model_label,
-                                prompt=f"turn {turn_number} — chose: {chosen}",
-                                response=reasoning,
+                                prompt=f"turn {turn_number}",
+                                response=response_text,
                                 tokens_out=len(reasoning) // 4,
                             )
                         except Exception:  # noqa: BLE001 — best-effort
