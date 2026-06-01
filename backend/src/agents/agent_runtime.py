@@ -63,6 +63,11 @@ _AUTO_ANALYSIS_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# Action "types" the planner may emit that are NOT game-engine actions: they are
+# routed to their own diplomacy MCP tools instead of submit_actions. Kept
+# separate so a chat action never tanks the game-action submission.
+_CHAT_ACTION_TYPES: frozenset[str] = frozenset({"SEND_MESSAGE"})
+
 
 PlannerFn = Callable[
     [AgentProfile, dict[str, Any], str, dict[str, dict[str, Any]] | None, int],
@@ -129,6 +134,7 @@ class TurnTrace:
     memory_reads: dict[str, dict[str, Any]] = field(default_factory=dict)
     memory_writes: list[str] = field(default_factory=list)
     proposed_actions: list[dict[str, Any]] = field(default_factory=list)
+    chat_actions: list[dict[str, Any]] = field(default_factory=list)
     submitted_actions: list[dict[str, Any]] = field(default_factory=list)
     validation_results: list[dict[str, Any]] = field(default_factory=list)
     submit_result: dict[str, Any] = field(default_factory=dict)
@@ -215,6 +221,7 @@ class MCPAgent:
         player_id: str | None = None,
         planner: PlannerFn | None = None,
         telemetry: TelemetryConfig | None = None,
+        chat_enabled: bool = False,
     ):
         self._client = client
         self._api_key = api_key
@@ -222,6 +229,9 @@ class MCPAgent:
         self._player_id = player_id
         self._planner: PlannerFn = planner or plan_actions
         self._telemetry = telemetry
+        # When True, the agent reads inbound messages before planning and
+        # dispatches the planner's SEND_MESSAGE actions via the diplomacy tool.
+        self._chat_enabled = chat_enabled
         self._history: TurnHistory | None = None
         if telemetry is not None:
             self._history = TurnHistory(
@@ -309,6 +319,16 @@ class MCPAgent:
             resp = await self._call(trace, tool, {"api_key": self._api_key})
             trace.analysis_results[tool] = resp
 
+        # 3b. Chat — read recent inbound messages so the planner can react to
+        # what other players said. Only when chat is enabled (A/B baseline off).
+        if self._chat_enabled:
+            messages = await self._call(
+                trace,
+                "get_messages",
+                {"api_key": self._api_key, "since_turn": max(0, turn_number - 3)},
+            )
+            trace.analysis_results["incoming_messages"] = messages
+
         # 4. Plan
         proposed = self._planner(
             self._profile,
@@ -322,7 +342,24 @@ class MCPAgent:
         # plug into the same runtime without the planner having to be sync.
         if inspect.isawaitable(proposed):
             proposed = await proposed
+        proposed = list(proposed)
         trace.proposed_actions = list(proposed)
+
+        # 4b. Split chat/diplomacy actions out of the game-action list and
+        # dispatch them via their own tools. The split happens regardless of the
+        # flag so a stray SEND_MESSAGE never reaches submit_actions; we only
+        # actually send when chat is enabled.
+        chat_actions = [
+            a
+            for a in proposed
+            if isinstance(a, dict) and a.get("type") in _CHAT_ACTION_TYPES
+        ]
+        if chat_actions:
+            proposed = [a for a in proposed if a not in chat_actions]
+            trace.chat_actions = chat_actions
+            if self._chat_enabled:
+                for action in chat_actions:
+                    await self._dispatch_chat_action(trace, action)
 
         # 5. Validate — drop any rejected actions so we don't tank the
         # whole submission on one bad plan item.
@@ -362,6 +399,24 @@ class MCPAgent:
         )
 
         return trace
+
+    async def _dispatch_chat_action(
+        self, trace: TurnTrace, action: dict[str, Any]
+    ) -> None:
+        """Route a non-game (chat/diplomacy) action to its MCP tool."""
+        if action.get("type") == "SEND_MESSAGE":
+            recipient = action.get("recipient")
+            body = action.get("body")
+            if recipient and body:
+                await self._call(
+                    trace,
+                    "send_message",
+                    {
+                        "api_key": self._api_key,
+                        "recipient": str(recipient),
+                        "body": str(body),
+                    },
+                )
 
     async def _memorise(
         self,

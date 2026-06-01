@@ -1,14 +1,21 @@
 # Modal deployment: OpenAI-compatible vLLM servers for Parley agents.
 #
 # Serves one vLLM `/v1` endpoint per model in MODEL_REGISTRY, each as its own
-# Modal class with its own GPU, persistent HF cache, and public URL. Agents
-# (see backend/src/agents/llm_planner.py) point an AsyncOpenAI client at these
-# endpoints to choose game actions.
+# Modal web function with its own GPU, prefetched weights, persistent caches,
+# and public URL. Agents (backend/src/agents/llm_planner.py) point an
+# AsyncOpenAI client at these endpoints to choose game actions.
 #
-# Every model in the roster is a REASONING model and is launched with a
-# `--reasoning-parser`, so the OpenAI response carries the thinking trace in a
-# separate `reasoning_content` field. The planner stores that trace per turn —
-# we keep the reasoning, we don't throw it away.
+# Structure mirrors the proven voicescript qwen36_inference.py:
+#   - weights are PREFETCHED into the image at build time (snapshot_download in
+#     a run_function), so cold starts don't wait on a 72 GB download;
+#   - a persistent flashinfer-cache volume + a 60-minute startup_timeout let the
+#     FlashInfer CUTLASS MoE ninja JIT build complete once and persist, instead
+#     of being SIGINT'd mid-warmup on every cold start (the crash we hit before);
+#   - @modal.concurrent batches multiple game requests onto one warm container.
+#
+# Every model is a REASONING model, launched with a `--reasoning-parser` so the
+# OpenAI response carries the thinking trace in `reasoning_content`; the planner
+# stores that per turn. We keep the reasoning, we don't throw it away.
 #
 # IMPORTANT: deploy under the `tuttinator` Modal profile, e.g.
 #   MODAL_PROFILE=tuttinator uv run modal deploy agents/deploy/modal_vllm.py
@@ -18,8 +25,8 @@
 #   MODAL_PROFILE=tuttinator uv run modal secret create parley-vllm VLLM_API_KEY=<random>
 #
 # After deploy, each model is reachable at:
-#   https://<workspace>--parley-vllm-<label>-serve.modal.run/v1
-# (find exact URLs in `modal app list` / the dashboard).
+#   https://<workspace>--parley-vllm-serve-<label>.modal.run/v1
+# (find exact URLs in the deploy output / `modal app list`).
 
 from __future__ import annotations
 
@@ -31,27 +38,27 @@ import modal
 # --- Model registry --------------------------------------------------------
 #
 # Single source of truth for which models we host. Each entry:
-#   label             short id used in the Modal class name + endpoint URL +
+#   label             short id used in the function name + endpoint URL +
 #                     OpenAI `model` field (matches --served-model-name)
 #   hf_repo           Hugging Face repo id vLLM loads
 #   gpu               Modal GPU spec ("H200" / "A100-80GB" / "H100" / "L40S")
 #   tensor_parallel   number of GPUs (match gpu, e.g. "H200:2" + tp 2)
-#   max_model_len     context cap — game state is tiny, but reasoning traces
-#                     can be long, so leave generous headroom
-#   reasoning_parser  vLLM --reasoning-parser value (separates the thinking
-#                     trace into `reasoning_content`). None => trace stays
-#                     inline in `content` and the planner extracts it.
+#   max_model_len     context cap (game state is tiny; reasoning traces aren't)
+#   reasoning_parser  vLLM --reasoning-parser value (separates the trace into
+#                     reasoning_content). None => trace stays inline in content.
 #   extra_args        extra `vllm serve` flags this model needs
-#   env               per-model env vars set before launch (e.g. MoE backend)
+#   env               per-model env vars set before launch
+#   ignore_patterns   files snapshot_download skips during prefetch (keep the
+#                     format the launch flags load: HF safetensors vs mistral)
+#   max_inputs        @modal.concurrent batch cap per container
 #
-# All three are single-GPU, vLLM-native, reasoning models spanning three
-# lineages (Qwen MoE / Google dense / Mistral dense). The giant MoEs
-# (Kimi-K2 1T, GLM-5.x 754B, GLM-4.7 358B) are intentionally excluded: they are
-# multi-GPU even quantized and add no value for choosing a JSON action list.
+# All three are single-GPU, vLLM-native reasoning models across three lineages
+# (Qwen MoE / Google dense / Mistral dense). Giant MoEs (Kimi-K2 1T, GLM-5.x
+# 754B, GLM-4.7 358B) are excluded: multi-GPU even quantized, no gameplay gain.
 MODEL_REGISTRY: list[dict] = [
     {
-        # Anchor: MoE 35B total / 3B active — frontier-ish quality at ~7B
-        # speed/cost. Proven single-H200 BF16 (cf. voicescript qwen36 config).
+        # Anchor: MoE 35B total / 3B active. Single-H200 BF16, proven in
+        # voicescript qwen36_inference.py.
         "label": "qwen36-a3b",
         "hf_repo": "Qwen/Qwen3.6-35B-A3B",
         "gpu": "H200",
@@ -65,37 +72,53 @@ MODEL_REGISTRY: list[dict] = [
             "--gdn-prefill-backend",
             "triton",
             "--trust-remote-code",
+            # THE fix: force the Triton fused-MoE kernel. Left on 'auto', vLLM
+            # picks FlashInfer CUTLASS, whose ninja JIT build (run_ninja →
+            # subprocess) hangs/dies during EngineCore warmup on H200. Triton
+            # needs no build. (KernelConfig.moe_backend exists in 0.20.1.)
+            # NB: we do NOT use --enforce-eager — it disables CUDA graphs and
+            # tanks throughput to ~16 tok/s, far too slow for thinking-mode
+            # traces. With Triton MoE (no ninja build) and no vllm-cache volume
+            # (no 9P AOT-reload hang), a fresh in-container torch.compile is
+            # safe and gives ~10x the throughput.
+            "--moe-backend",
+            "triton",
         ],
-        # Force the Triton MoE backend: the FlashInfer CUTLASS path JIT-builds
-        # trtllm_utils via ninja on first profile, which can blow past Modal's
-        # startup window and SIGINT EngineCore mid-warmup.
-        "env": {
-            "VLLM_FUSED_MOE_BACKEND": "TRITON",
-            "FLASHINFER_AUTOTUNER_DISABLE": "1",
-        },
+        # vLLM 0.20.1 ignores VLLM_FUSED_MOE_BACKEND (logs "unknown env var"),
+        # so we can't force the Triton MoE kernel; the engine auto-selects the
+        # FlashInfer CUTLASS unquantized MoE backend. This disables the
+        # autotuner's JIT build; the flashinfer-cache volume + 60-min startup
+        # timeout let the remaining build complete once and persist.
+        "env": {"FLASHINFER_AUTOTUNER_DISABLE": "1"},
+        "ignore_patterns": ["*.gguf", "*.pth", "consolidated*", "original/*"],
+        # Scale to zero when idle. Flip to 1 to keep a container warm during an
+        # active match run (cold starts are ~2.5 min and 303 at Modal's edge).
         "min_containers": 0,
-        "scaledown_window": 300,
+        "scaledown_window": 600,
+        "max_inputs": 32,
     },
     {
-        # Dense 31B, different lineage. Gated repo — needs HF_TOKEN + license
-        # acceptance on the HF model page with the token's account.
+        # Dense 31B, different lineage. Gated — needs HF_TOKEN + license
+        # acceptance on the HF page with the token's account.
         "label": "gemma4-31b",
         "hf_repo": "google/gemma-4-31B-it",
         "gpu": "A100-80GB",
         "tensor_parallel": 1,
         "max_model_len": 32768,
         # No stable vLLM reasoning-parser name for Gemma-4 here; the planner
-        # captures the trace inline (and always falls back to storing the raw
-        # completion, so nothing is lost).
+        # captures the trace inline (and always stores the raw completion as a
+        # fallback, so nothing is lost).
         "reasoning_parser": None,
         "extra_args": [],
         "env": {},
+        "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
         "min_containers": 0,
         "scaledown_window": 300,
+        "max_inputs": 32,
     },
     {
-        # Dense 24B Mistral reasoning model — emits [THINK]...[/THINK]. Needs
-        # the mistral tokenizer/config/load formats.
+        # Dense 24B Mistral reasoning model — emits [THINK]...[/THINK]. Needs the
+        # mistral tokenizer/config/load formats, so keep the consolidated files.
         "label": "magistral-small",
         "hf_repo": "mistralai/Magistral-Small-2509",
         "gpu": "A100-80GB",
@@ -111,8 +134,51 @@ MODEL_REGISTRY: list[dict] = [
             "mistral",
         ],
         "env": {},
+        "ignore_patterns": ["*.gguf"],
         "min_containers": 0,
-        "scaledown_window": 300,
+        "scaledown_window": 600,
+        "max_inputs": 32,
+    },
+    {
+        # Small + fast reasoning distill (R1 chain-of-thought into Qwen3-8B).
+        # Dense, Qwen3 arch (native in vLLM, no trust-remote-code) → no MoE
+        # kernel pain, serves at high throughput on a cheap A10G. Ungated.
+        "label": "deepseek-r1-qwen3-8b",
+        "hf_repo": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+        "gpu": "A10G",
+        "tensor_parallel": 1,
+        "max_model_len": 16384,
+        "reasoning_parser": "deepseek_r1",
+        "extra_args": [],
+        "env": {},
+        "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        # NOTE: R1-distill over-reasons (11k+ char traces) and rarely finishes
+        # the JSON answer within a sane token budget → always falls back. Keep
+        # at 0; only useful with a hard reasoning-token bound. Magistral is the
+        # better balance (concise reasoning + actual actions).
+        "min_containers": 0,
+        "scaledown_window": 600,
+        "max_inputs": 32,
+    },
+    {
+        # Tiny 4B dense reasoner — reasons by default. vLLM has no built-in
+        # Nemotron-3 reasoning parser, so serve parser-less and let the planner
+        # capture the inline <think> trace. May be gated (needs HF license
+        # acceptance on the NVIDIA repo with the token's account).
+        "label": "nemotron-nano-4b",
+        "hf_repo": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        "gpu": "A10G",
+        "tensor_parallel": 1,
+        "max_model_len": 16384,
+        "reasoning_parser": None,
+        "extra_args": ["--trust-remote-code"],
+        "env": {},
+        "ignore_patterns": ["*.gguf", "*.pth", "original/*"],
+        # NOTE: only ~3.7 tok/s on vLLM 0.20.1 (unoptimized trust-remote-code
+        # path for the Nemotron-3 arch) — effectively unusable. Keep at 0.
+        "min_containers": 0,
+        "scaledown_window": 600,
+        "max_inputs": 32,
     },
 ]
 
@@ -121,9 +187,29 @@ VLLM_PORT = 8000
 HF_CACHE_DIR = "/root/.cache/huggingface"
 MINUTES = 60
 
-# Recent vLLM on a CUDA devel base (mirrors the proven voicescript image) so
-# the 2026 model architectures (Qwen3.6 GDN-MoE, Gemma-4, Magistral) load.
-vllm_image = (
+app = modal.App("parley-vllm")
+
+# Persistent caches: weights download once; flashinfer JIT modules persist
+# across cold starts (so ninja doesn't re-build trtllm/cutlass every boot).
+# NOTE: we deliberately do NOT persist vLLM's torch.compile cache — loading the
+# cached AOT artifact back off a Modal (9P) volume hangs the engine after
+# compile. With --enforce-eager we don't compile at all, so it's moot anyway.
+hf_cache = modal.Volume.from_name("parley-hf-cache", create_if_missing=True)
+flashinfer_cache = modal.Volume.from_name(
+    "parley-flashinfer-cache", create_if_missing=True
+)
+
+# Secrets created under the tuttinator profile (see header). HF_TOKEN is needed
+# for gated repos (Gemma, Mistral) at both prefetch and serve time; VLLM_API_KEY
+# gates the /v1 endpoint — vLLM reads it from the env (do NOT pass --api-key on
+# the CLI; vLLM echoes argv to the logs).
+_hf_secret = modal.Secret.from_name("huggingface")
+_vllm_secret = modal.Secret.from_name("parley-vllm")
+_secrets = [_hf_secret, _vllm_secret]
+
+# Base image: recent vLLM on a CUDA devel base (mirrors the proven voicescript
+# image) so the 2026 architectures (Qwen3.6 GDN-MoE, Gemma-4, Magistral) load.
+_base_image = (
     modal.Image.from_registry(
         "nvidia/cuda:12.8.1-devel-ubuntu22.04",
         add_python="3.12",
@@ -136,116 +222,108 @@ vllm_image = (
     .env({"HF_HOME": HF_CACHE_DIR, "HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
-app = modal.App("parley-vllm")
 
-# Persistent caches so weights download once and flashinfer JIT modules persist
-# across cold starts (the latter avoids re-running ninja on every boot).
-hf_cache = modal.Volume.from_name("parley-hf-cache", create_if_missing=True)
-vllm_cache = modal.Volume.from_name("parley-vllm-cache", create_if_missing=True)
-flashinfer_cache = modal.Volume.from_name(
-    "parley-flashinfer-cache", create_if_missing=True
-)
+def _prefetch_weights() -> None:
+    """Warm the HF cache for one repo during image build.
 
-# Secrets created under the tuttinator profile (see header). HF_TOKEN is
-# required for gated repos (Gemma); VLLM_API_KEY gates the /v1 endpoint — vLLM
-# reads it from the env (do NOT pass --api-key on the CLI; vLLM echoes argv to
-# the logs).
-_secrets = [
-    modal.Secret.from_name("huggingface"),
-    modal.Secret.from_name("parley-vllm"),
-]
-
-
-def _build_server_class(entry: dict):
-    """Create one Modal class serving ``entry``'s model on a vLLM /v1 endpoint.
-
-    Returns ``(class_name, decorated_class)``; the caller binds it to a module
-    global so ``modal deploy`` discovers it. Each class is given a distinct
-    name so the models don't collide on the shared app.
+    Module-level (Modal requires run_function targets be importable globals).
+    The repo + ignore patterns are passed via image env vars set in
+    ``_image_for``; the HF cache volume is mounted so weights persist and cold
+    starts skip the multi-GB download.
     """
+    import os as _os
+
+    from huggingface_hub import snapshot_download
+
+    repo = _os.environ["PREFETCH_REPO"]
+    ignore = [p for p in _os.environ.get("PREFETCH_IGNORE", "").split(",") if p]
+    snapshot_download(repo_id=repo, ignore_patterns=ignore or None)
+
+
+def _image_for(entry: dict):
+    """Per-model image that prefetches that model's weights into the HF cache."""
+    return _base_image.env(
+        {
+            "PREFETCH_REPO": entry["hf_repo"],
+            "PREFETCH_IGNORE": ",".join(entry.get("ignore_patterns", [])),
+        }
+    ).run_function(
+        _prefetch_weights,
+        volumes={HF_CACHE_DIR: hf_cache},
+        secrets=[_hf_secret],
+        timeout=60 * MINUTES,
+    )
+
+
+def _make_serve(entry: dict):
+    """Build the web-server function that launches vLLM for ``entry``."""
     label = entry["label"]
     hf_repo = entry["hf_repo"]
 
-    class VLLMServer:
-        @modal.enter()
-        def start(self):
-            """Launch the vLLM OpenAI-compatible server as a subprocess."""
-            for key, value in entry.get("env", {}).items():
-                os.environ.setdefault(key, value)
+    def _serve() -> None:
+        for key, value in entry.get("env", {}).items():
+            os.environ.setdefault(key, value)
 
-            if not os.environ.get("VLLM_API_KEY"):
-                raise ValueError(
-                    "VLLM_API_KEY not set — create the 'parley-vllm' secret "
-                    "under the tuttinator profile."
-                )
+        if not os.environ.get("VLLM_API_KEY"):
+            raise ValueError(
+                "VLLM_API_KEY not set — create the 'parley-vllm' secret under "
+                "the tuttinator profile."
+            )
 
-            cmd = [
-                "vllm",
-                "serve",
-                hf_repo,
-                "--served-model-name",
-                label,
-                "--host",
-                "0.0.0.0",
-                "--port",
-                str(VLLM_PORT),
-                "--max-model-len",
-                str(entry["max_model_len"]),
-                "--tensor-parallel-size",
-                str(entry.get("tensor_parallel", 1)),
-            ]
-            if entry.get("reasoning_parser"):
-                cmd += ["--reasoning-parser", entry["reasoning_parser"]]
-            cmd += list(entry.get("extra_args", []))
+        cmd = [
+            "vllm",
+            "serve",
+            hf_repo,
+            "--served-model-name",
+            label,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(VLLM_PORT),
+            "--uvicorn-log-level=info",
+            "--max-model-len",
+            str(entry["max_model_len"]),
+            "--tensor-parallel-size",
+            str(entry.get("tensor_parallel", 1)),
+        ]
+        if entry.get("reasoning_parser"):
+            cmd += ["--reasoning-parser", entry["reasoning_parser"]]
+        cmd += list(entry.get("extra_args", []))
 
-            print("Launching:", " ".join(cmd))
-            self.proc = subprocess.Popen(cmd)
+        print("Launching:", " ".join(cmd))
+        # shell=True + a single string mirrors the reference; vLLM reads
+        # VLLM_API_KEY from the env. Popen returns immediately; Modal then waits
+        # for the port to open (up to startup_timeout) while vLLM loads + builds.
+        subprocess.Popen(" ".join(cmd), shell=True)
 
-        @modal.exit()
-        def stop(self):
-            proc = getattr(self, "proc", None)
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+    # Distinct name per model so each gets its own deployed function + URL.
+    _serve.__name__ = f"serve_{label.replace('-', '_')}"
+    _serve.__qualname__ = _serve.__name__
 
-        @modal.web_server(port=VLLM_PORT, startup_timeout=30 * MINUTES)
-        def serve(self):
-            """Expose vLLM's HTTP server (the @modal.enter subprocess).
-
-            First boot for a model downloads weights into the HF cache volume,
-            which is why the startup timeout is generous; later cold starts read
-            from the volume.
-            """
-            return
-
-    # Each model needs a DISTINCT class identity, otherwise Modal registers
-    # several classes all named "VLLMServer" on the same app and they collide.
-    cls_name = f"VLLM_{label.replace('-', '_')}"
-    VLLMServer.__name__ = cls_name
-    VLLMServer.__qualname__ = cls_name
-    decorated = app.cls(
-        image=vllm_image,
+    decorated = app.function(
+        image=_image_for(entry),
         gpu=entry["gpu"],
         cpu=8,
         memory=131072,
         volumes={
             HF_CACHE_DIR: hf_cache,
-            "/root/.cache/vllm": vllm_cache,
             "/root/.cache/flashinfer": flashinfer_cache,
         },
         secrets=_secrets,
         timeout=60 * MINUTES,
         scaledown_window=entry.get("scaledown_window", 300),
         min_containers=entry.get("min_containers", 0),
-    )(VLLMServer)
-    return cls_name, decorated
+        # _serve is a per-model closure (not a global), so cloudpickle it.
+        serialized=True,
+    )(
+        modal.concurrent(max_inputs=entry.get("max_inputs", 32))(
+            modal.web_server(port=VLLM_PORT, startup_timeout=60 * MINUTES)(_serve)
+        )
+    )
+    return _serve.__name__, decorated
 
 
-# Register one discoverable class per registry entry, binding each to a module
-# global under its distinct name so `modal deploy` discovers it.
+# Register one discoverable web function per registry entry.
 for _entry in MODEL_REGISTRY:
-    _name, _cls = _build_server_class(_entry)
-    globals()[_name] = _cls
+    _name, _fn = _make_serve(_entry)
+    globals()[_name] = _fn

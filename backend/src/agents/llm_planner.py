@@ -53,6 +53,27 @@ ReasoningSink = Callable[
 _BRACKET_THINK_RE = re.compile(r"\[THINK\](.*?)\[/THINK\]", re.DOTALL)
 
 
+def _message_reasoning(message: Any) -> str | None:
+    """Pull the reasoning trace off an OpenAI-style message, field-name agnostic.
+
+    vLLM exposes the separated thinking trace under different keys depending on
+    version/parser: ``reasoning_content`` (OpenAI o1 style) or ``reasoning``
+    (vLLM 0.20.1). The OpenAI SDK also stashes unknown fields in ``model_extra``.
+    Check all of them so we never silently drop a trace the model produced.
+    """
+    if message is None:
+        return None
+    for attr in ("reasoning_content", "reasoning"):
+        value = getattr(message, attr, None)
+        if value:
+            return value
+    extra = getattr(message, "model_extra", None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        if extra.get(key):
+            return extra[key]
+    return None
+
+
 def _split_reasoning(content: str) -> tuple[str, str]:
     """Return ``(clean_content, reasoning)`` for inline-trace models.
 
@@ -72,9 +93,12 @@ def _split_reasoning(content: str) -> tuple[str, str]:
 # The legal action shapes, embedded in the system prompt so the model knows
 # exactly what to emit. Mirrors the play-parley skill's payload contract.
 _ACTION_CONTRACT = """\
-You control one player in a turn-based 4X strategy game. Choose this turn's
-actions and reply with ONLY a JSON array of action objects — no prose, no
-markdown fences. Each object has a "type" and the fields for that type:
+You control one player in a turn-based 4X strategy game. First REASON BRIEFLY
+about your position — your units, cities, resources, visible threats and
+opportunities, and how this turn advances your strategy. Keep your reasoning to
+a few decisive sentences; do NOT deliberate at length. Then give your FINAL
+ANSWER as a JSON array of action objects. Each object has a "type" and the
+fields for that type:
 
 - {"type": "MOVE", "unit_id": <int>, "to": {"x": <int>, "y": <int>}}
 - {"type": "ATTACK", "attacker_id": <int>, "target_id": <int>, "target_type": "unit"}
@@ -85,7 +109,21 @@ markdown fences. Each object has a "type" and the fields for that type:
 
 Rules of thumb: move units one tile at a time toward objectives; you may submit
 several actions (at most one per unit and one per city). If nothing is worth
-doing, reply with []. Reply with the JSON array and nothing else."""
+doing, your final answer is [].
+
+Do your reasoning first, then end your reply with the FINAL ANSWER: the JSON
+array alone, on its own, with no prose or markdown fences after it."""
+
+
+# Appended to the contract only when chat/diplomacy is enabled for the game.
+_CHAT_CONTRACT = """
+
+You may also TALK to other players this turn. To send a private message, add an
+action of this shape to your JSON array (alongside any game actions):
+- {"type": "SEND_MESSAGE", "recipient": "<player_id>", "body": "<your message>"}
+Use messages to negotiate alliances, coordinate, bluff, threaten, or deceive.
+Any messages others sent you appear under "incoming_messages" in the situation
+above — read them and respond as your strategy dictates."""
 
 
 def _coord(entity: dict[str, Any]) -> dict[str, int] | None:
@@ -139,32 +177,40 @@ def _summarise_state(
 
 
 def _extract_action_list(text: str) -> list[dict[str, Any]]:
-    """Pull the first balanced top-level JSON array of objects out of ``text``.
+    """Pull the LAST balanced top-level JSON array of objects out of ``text``.
 
-    Robust to ``<think>`` blocks and stray prose around the array. Returns
-    only dict items that carry a ``type`` key; raises ``ValueError`` when no
-    usable array is found so the caller can fall back.
+    The prompt asks the model to reason first and END with the JSON array as its
+    final answer, so we scan from the last ``]`` backwards and return the last
+    balanced array that parses as a list — robust to reasoning prose (and stray
+    brackets) before the answer, and to ``<think>`` blocks. Returns only dict
+    items carrying a ``type`` key; raises ``ValueError`` when no usable array is
+    found so the caller can fall back.
     """
     cleaned, _thinking = extract_thinking_tokens(text)
-    start = cleaned.find("[")
-    if start == -1:
-        raise ValueError("no JSON array found in model output")
-    depth = 0
-    for i in range(start, len(cleaned)):
-        ch = cleaned[i]
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                candidate = cleaned[start : i + 1]
-                parsed = json.loads(candidate)  # may raise — caller handles
-                if not isinstance(parsed, list):
-                    raise ValueError("parsed JSON is not a list")
+    end = cleaned.rfind("]")
+    while end != -1:
+        depth = 0
+        start = -1
+        for i in range(end, -1, -1):
+            ch = cleaned[i]
+            if ch == "]":
+                depth += 1
+            elif ch == "[":
+                depth -= 1
+                if depth == 0:
+                    start = i
+                    break
+        if start != -1:
+            try:
+                parsed = json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
                 return [
                     item for item in parsed if isinstance(item, dict) and "type" in item
                 ]
-    raise ValueError("unbalanced JSON array in model output")
+        end = cleaned.rfind("]", 0, end)
+    raise ValueError("no JSON array found in model output")
 
 
 def make_llm_planner(
@@ -177,6 +223,7 @@ def make_llm_planner(
     temperature: float = 0.7,
     enable_thinking: bool = True,
     on_reasoning: ReasoningSink | None = None,
+    chat_enabled: bool = False,
 ) -> PlannerFn:
     """Build an async ``PlannerFn`` backed by an OpenAI-compatible endpoint.
 
@@ -208,7 +255,10 @@ def make_llm_planner(
         try:
             summary = _summarise_state(state, player_id, analysis, turn_number)
             system_prompt = (
-                getattr(profile, "system_prompt", "") + "\n\n" + _ACTION_CONTRACT
+                getattr(profile, "system_prompt", "")
+                + "\n\n"
+                + _ACTION_CONTRACT
+                + (_CHAT_CONTRACT if chat_enabled else "")
             ).strip()
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -221,28 +271,35 @@ def make_llm_planner(
                     ),
                 },
             ]
-            resp = await asyncio.wait_for(
+
+            async def _create(extra_body: dict[str, Any] | None):
                 # Plain dicts are valid at runtime; the SDK's overloads are
                 # typed against TypedDict message params, which pyrefly can't
                 # match against a built list of dicts.
-                client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
+                return await client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    # Honoured by templates that gate thinking (e.g. Qwen3.x);
-                    # ignored by others. Every seat reasons.
-                    extra_body={
-                        "chat_template_kwargs": {"enable_thinking": enable_thinking}
-                    },
-                ),
-                timeout=timeout_s,
-            )
+                    extra_body=extra_body,
+                )
+
+            # enable_thinking is honoured by templates that gate thinking (e.g.
+            # Qwen3.x). Mistral-tokenizer models (Magistral) reject ANY
+            # chat_template kwargs with a 400 — they reason by default via their
+            # own template — so retry once without it. Every seat reasons.
+            think_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
+            try:
+                resp = await asyncio.wait_for(_create(think_body), timeout=timeout_s)
+            except Exception as exc:  # noqa: BLE001
+                if "chat_template" not in str(exc).lower():
+                    raise
+                resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
             message = resp.choices[0].message if resp.choices else None
             raw = (getattr(message, "content", None) or "") if message else ""
             # Prefer the server-separated trace (set when vLLM ran with
             # --reasoning-parser); else split it out of the content inline.
-            reasoning = getattr(message, "reasoning_content", None) if message else None
+            reasoning = _message_reasoning(message)
             if reasoning:
                 content = raw
             else:

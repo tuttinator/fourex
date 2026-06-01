@@ -28,10 +28,18 @@ from .match_runner import MatchConfig, ModelEndpoint, run_forever
 
 # Labels mirror MODEL_REGISTRY in agents/deploy/modal_vllm.py (and the
 # --served-model-name each vLLM endpoint serves under).
-_KNOWN_LABELS = ("qwen36-a3b", "gemma4-31b", "magistral-small")
+_KNOWN_LABELS = (
+    "qwen36-a3b",
+    "gemma4-31b",
+    "magistral-small",
+    "deepseek-r1-qwen3-8b",
+    "nemotron-nano-4b",
+)
 
 
-def _endpoints_from_args(specs: list[str]) -> list[ModelEndpoint]:
+def _endpoints_from_args(
+    specs: list[str], *, timeout_s: float, max_tokens: int
+) -> list[ModelEndpoint]:
     eps: list[ModelEndpoint] = []
     for spec in specs:
         label, _, rest = spec.partition("=")
@@ -47,12 +55,14 @@ def _endpoints_from_args(specs: list[str]) -> list[ModelEndpoint]:
                 base_url=base_url,
                 model=model or label,
                 api_key=os.getenv("VLLM_API_KEY", "not-needed"),
+                timeout_s=timeout_s,
+                max_tokens=max_tokens,
             )
         )
     return eps
 
 
-def _endpoints_from_env() -> list[ModelEndpoint]:
+def _endpoints_from_env(*, timeout_s: float, max_tokens: int) -> list[ModelEndpoint]:
     eps: list[ModelEndpoint] = []
     for label in _KNOWN_LABELS:
         env_key = f"PARLEY_VLLM_{label.replace('-', '_').upper()}_URL"
@@ -64,6 +74,8 @@ def _endpoints_from_env() -> list[ModelEndpoint]:
                     base_url=url,
                     model=label,
                     api_key=os.getenv("VLLM_API_KEY", "not-needed"),
+                    timeout_s=timeout_s,
+                    max_tokens=max_tokens,
                 )
             )
     return eps
@@ -84,8 +96,28 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--max-games", type=int, default=10)
     parser.add_argument("--per-game-timeout", type=float, default=1800.0)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=45.0,
+        help="Per-LLM-call timeout (s). Raise above the cold-start time "
+        "(~180-240s for a scale-to-zero vLLM endpoint) so the first turn "
+        "isn't forced into the heuristic fallback.",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Per-call generation cap. Reasoning traces eat into this.",
+    )
     parser.add_argument("--kill-switch", default=None, help="Stop if this file exists.")
     parser.add_argument("--results", default="logs/match_results.jsonl")
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="Enable active in-game chat: agents read inbound messages and may "
+        "SEND_MESSAGE each turn (the chat-on condition for the A/B study).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -93,7 +125,11 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     endpoints = (
-        _endpoints_from_args(args.endpoint) if args.endpoint else _endpoints_from_env()
+        _endpoints_from_args(
+            args.endpoint, timeout_s=args.timeout, max_tokens=args.max_tokens
+        )
+        if args.endpoint
+        else _endpoints_from_env(timeout_s=args.timeout, max_tokens=args.max_tokens)
     )
     if not endpoints:
         raise SystemExit(
@@ -112,6 +148,7 @@ def main(argv: list[str] | None = None) -> None:
         per_game_timeout_s=args.per_game_timeout,
         kill_switch_path=args.kill_switch,
         results_path=args.results,
+        chat_enabled=args.chat,
     )
     outcomes = asyncio.run(run_forever(cfg))
     ended = sum(1 for o in outcomes if o.status == "ended")
