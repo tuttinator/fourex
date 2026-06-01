@@ -102,6 +102,7 @@ class MCPGameOrchestrator:
         *,
         telemetry: dict[str, TelemetryConfig] | None = None,
         planners: dict[str, PlannerFn] | None = None,
+        chat_enabled: bool = False,
     ):
         self._client = client
         self._game = game
@@ -116,6 +117,7 @@ class MCPGameOrchestrator:
                 player_id=player,
                 planner=(planners or {}).get(player),
                 telemetry=(telemetry or {}).get(player),
+                chat_enabled=chat_enabled,
             )
 
     @property

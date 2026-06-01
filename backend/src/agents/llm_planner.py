@@ -115,6 +115,17 @@ Do your reasoning first, then end your reply with the FINAL ANSWER: the JSON
 array alone, on its own, with no prose or markdown fences after it."""
 
 
+# Appended to the contract only when chat/diplomacy is enabled for the game.
+_CHAT_CONTRACT = """
+
+You may also TALK to other players this turn. To send a private message, add an
+action of this shape to your JSON array (alongside any game actions):
+- {"type": "SEND_MESSAGE", "recipient": "<player_id>", "body": "<your message>"}
+Use messages to negotiate alliances, coordinate, bluff, threaten, or deceive.
+Any messages others sent you appear under "incoming_messages" in the situation
+above — read them and respond as your strategy dictates."""
+
+
 def _coord(entity: dict[str, Any]) -> dict[str, int] | None:
     loc = entity.get("loc") or {}
     if "x" in loc and "y" in loc:
@@ -212,6 +223,7 @@ def make_llm_planner(
     temperature: float = 0.7,
     enable_thinking: bool = True,
     on_reasoning: ReasoningSink | None = None,
+    chat_enabled: bool = False,
 ) -> PlannerFn:
     """Build an async ``PlannerFn`` backed by an OpenAI-compatible endpoint.
 
@@ -243,7 +255,10 @@ def make_llm_planner(
         try:
             summary = _summarise_state(state, player_id, analysis, turn_number)
             system_prompt = (
-                getattr(profile, "system_prompt", "") + "\n\n" + _ACTION_CONTRACT
+                getattr(profile, "system_prompt", "")
+                + "\n\n"
+                + _ACTION_CONTRACT
+                + (_CHAT_CONTRACT if chat_enabled else "")
             ).strip()
             messages = [
                 {"role": "system", "content": system_prompt},

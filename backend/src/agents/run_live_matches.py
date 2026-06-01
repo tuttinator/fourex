@@ -112,6 +112,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--kill-switch", default=None, help="Stop if this file exists.")
     parser.add_argument("--results", default="logs/match_results.jsonl")
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="Enable active in-game chat: agents read inbound messages and may "
+        "SEND_MESSAGE each turn (the chat-on condition for the A/B study).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -142,6 +148,7 @@ def main(argv: list[str] | None = None) -> None:
         per_game_timeout_s=args.per_game_timeout,
         kill_switch_path=args.kill_switch,
         results_path=args.results,
+        chat_enabled=args.chat,
     )
     outcomes = asyncio.run(run_forever(cfg))
     ended = sum(1 for o in outcomes if o.status == "ended")

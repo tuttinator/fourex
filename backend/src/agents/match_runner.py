@@ -81,6 +81,9 @@ class MatchConfig:
     # via the API / live site). Best-effort and bounded by turn_notes_timeout_s.
     write_turn_notes: bool = True
     turn_notes_timeout_s: float = 15.0
+    # When True, agents read inbound messages and may SEND_MESSAGE each turn —
+    # the active-chat condition for studying how chat skews behaviour.
+    chat_enabled: bool = False
     schedule_seed: int = 12345
 
 
@@ -189,12 +192,17 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                     timeout_s=ep.timeout_s,
                     enable_thinking=True,
                     on_reasoning=_make_sink(pid, ep.label, game.api_keys[pid]),
+                    chat_enabled=cfg.chat_enabled,
                 )
                 for pid, ep in endpoints.items()
             }
             profiles = {pid: get_profile(name) for pid, name in profile_names.items()}
             orch = MCPGameOrchestrator(
-                client, game, profiles=profiles, planners=planners
+                client,
+                game,
+                profiles=profiles,
+                planners=planners,
+                chat_enabled=cfg.chat_enabled,
             )
             result = await asyncio.wait_for(
                 orch.run(max_turn_cap=cfg.max_turn_cap),
