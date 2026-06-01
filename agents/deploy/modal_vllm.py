@@ -167,25 +167,32 @@ _base_image = (
 )
 
 
-def _make_prefetch(hf_repo: str, ignore_patterns: list[str]):
-    """Build a no-arg prefetch function that warms the HF cache for one repo.
+def _prefetch_weights() -> None:
+    """Warm the HF cache for one repo during image build.
 
-    Run during image build (see below) with the HF cache volume mounted, so the
-    weights land in the volume and cold starts skip the multi-GB download.
+    Module-level (Modal requires run_function targets be importable globals).
+    The repo + ignore patterns are passed via image env vars set in
+    ``_image_for``; the HF cache volume is mounted so weights persist and cold
+    starts skip the multi-GB download.
     """
+    import os as _os
 
-    def _prefetch() -> None:
-        from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download
 
-        snapshot_download(repo_id=hf_repo, ignore_patterns=ignore_patterns)
-
-    return _prefetch
+    repo = _os.environ["PREFETCH_REPO"]
+    ignore = [p for p in _os.environ.get("PREFETCH_IGNORE", "").split(",") if p]
+    snapshot_download(repo_id=repo, ignore_patterns=ignore or None)
 
 
 def _image_for(entry: dict):
     """Per-model image that prefetches that model's weights into the HF cache."""
-    return _base_image.run_function(
-        _make_prefetch(entry["hf_repo"], entry["ignore_patterns"]),
+    return _base_image.env(
+        {
+            "PREFETCH_REPO": entry["hf_repo"],
+            "PREFETCH_IGNORE": ",".join(entry.get("ignore_patterns", [])),
+        }
+    ).run_function(
+        _prefetch_weights,
         volumes={HF_CACHE_DIR: hf_cache},
         secrets=[_hf_secret],
         timeout=60 * MINUTES,
@@ -251,6 +258,8 @@ def _make_serve(entry: dict):
         timeout=60 * MINUTES,
         scaledown_window=entry.get("scaledown_window", 300),
         min_containers=entry.get("min_containers", 0),
+        # _serve is a per-model closure (not a global), so cloudpickle it.
+        serialized=True,
     )(
         modal.concurrent(max_inputs=entry.get("max_inputs", 32))(
             modal.web_server(port=VLLM_PORT, startup_timeout=60 * MINUTES)(_serve)
