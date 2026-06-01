@@ -55,19 +55,28 @@ def test_extract_raises_on_malformed_json():
 
 
 class _FakeMessage:
-    def __init__(self, content):
-        self.message = types.SimpleNamespace(content=content)
+    def __init__(self, content, reasoning_content=None):
+        msg = types.SimpleNamespace(content=content)
+        if reasoning_content is not None:
+            msg.reasoning_content = reasoning_content
+        self.message = msg
 
 
 class _FakeCompletions:
-    def __init__(self, content=None, raises=None):
+    def __init__(self, content=None, raises=None, reasoning_content=None, calls=None):
         self._content = content
         self._raises = raises
+        self._reasoning_content = reasoning_content
+        self._calls = calls
 
     async def create(self, **kwargs):
+        if self._calls is not None:
+            self._calls.append(kwargs)
         if self._raises is not None:
             raise self._raises
-        return types.SimpleNamespace(choices=[_FakeMessage(self._content)])
+        return types.SimpleNamespace(
+            choices=[_FakeMessage(self._content, self._reasoning_content)]
+        )
 
 
 class _FakeAsyncOpenAI:
@@ -75,10 +84,14 @@ class _FakeAsyncOpenAI:
 
     content = None
     raises = None
+    reasoning_content = None
+    calls: list | None = None
 
     def __init__(self, *args, **kwargs):
         self.chat = types.SimpleNamespace(
-            completions=_FakeCompletions(self.content, self.raises)
+            completions=_FakeCompletions(
+                self.content, self.raises, self.reasoning_content, type(self).calls
+            )
         )
 
 
@@ -87,11 +100,16 @@ def fake_openai(monkeypatch):
     """Install a fake ``openai`` module so make_llm_planner imports it."""
     fake_mod = types.ModuleType("openai")
 
-    def _factory(content=None, raises=None):
+    def _factory(content=None, raises=None, reasoning_content=None):
         cls = type(
             "ScriptedAsyncOpenAI",
             (_FakeAsyncOpenAI,),
-            {"content": content, "raises": raises},
+            {
+                "content": content,
+                "raises": raises,
+                "reasoning_content": reasoning_content,
+                "calls": [],
+            },
         )
         fake_mod.AsyncOpenAI = cls
         monkeypatch.setitem(sys.modules, "openai", fake_mod)
@@ -135,3 +153,94 @@ async def test_planner_falls_back_on_unparseable(fake_openai):
     planner = make_llm_planner(base_url="http://x/v1", model="m")
     out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
     assert isinstance(out, list)
+
+
+# --- Reasoning capture / storage -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_field_is_stored(fake_openai):
+    """When the server separates the trace, it is handed to on_reasoning."""
+    fake_openai(
+        content='[{"type":"FOUND_CITY","worker_id":1}]',
+        reasoning_content="Founding here maximises early growth.",
+    )
+    captured = []
+    planner = make_llm_planner(
+        base_url="http://x/v1",
+        model="m",
+        on_reasoning=lambda pid, turn, reasoning, raw, actions: captured.append(
+            (pid, turn, reasoning, actions)
+        ),
+    )
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 7)
+    assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
+    assert len(captured) == 1
+    pid, turn, reasoning, actions = captured[0]
+    assert pid == "p1"
+    assert turn == 7
+    assert reasoning == "Founding here maximises early growth."
+    assert actions == [{"type": "FOUND_CITY", "worker_id": 1}]
+
+
+@pytest.mark.asyncio
+async def test_inline_bracket_think_is_extracted(fake_openai):
+    """Mistral-style [THINK]...[/THINK] is split out of the content."""
+    fake_openai(
+        content='[THINK]Scout first.[/THINK][{"type":"MOVE","unit_id":1,"to":{"x":2,"y":1}}]'
+    )
+    captured = []
+    planner = make_llm_planner(
+        base_url="http://x/v1",
+        model="m",
+        on_reasoning=lambda *a: captured.append(a),
+    )
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert out == [{"type": "MOVE", "unit_id": 1, "to": {"x": 2, "y": 1}}]
+    assert "Scout first." in captured[0][2]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_kept_even_when_unparseable(fake_openai):
+    """A parse failure still stores the trace before falling back."""
+    fake_openai(content="<think>I'm overthinking this.</think> no array at all")
+    captured = []
+    planner = make_llm_planner(
+        base_url="http://x/v1",
+        model="m",
+        on_reasoning=lambda *a: captured.append(a),
+    )
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert isinstance(out, list)  # heuristic fallback
+    assert len(captured) == 1
+    assert "overthinking" in captured[0][2]  # reasoning
+    assert captured[0][4] == []  # no actions parsed
+
+
+@pytest.mark.asyncio
+async def test_async_reasoning_sink_is_awaited(fake_openai):
+    """An async on_reasoning sink (e.g. an MCP write) is awaited, not dropped."""
+    fake_openai(
+        content='[{"type":"FOUND_CITY","worker_id":1}]',
+        reasoning_content="Settle now.",
+    )
+    captured = []
+
+    async def _sink(pid, turn, reasoning, raw, actions):
+        captured.append(reasoning)
+
+    planner = make_llm_planner(base_url="http://x/v1", model="m", on_reasoning=_sink)
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
+    assert captured == ["Settle now."]
+
+
+@pytest.mark.asyncio
+async def test_enable_thinking_passed_to_template(fake_openai):
+    """enable_thinking is forwarded via chat_template_kwargs."""
+    cls = fake_openai(content="[]")
+    planner = make_llm_planner(base_url="http://x/v1", model="m", enable_thinking=True)
+    await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert cls.calls, "create() was not called"
+    extra_body = cls.calls[-1].get("extra_body", {})
+    assert extra_body.get("chat_template_kwargs") == {"enable_thinking": True}

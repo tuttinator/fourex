@@ -25,8 +25,11 @@ planner does not need to produce perfectly legal actions — only well-formed
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from agents.src.llm_providers import extract_thinking_tokens
@@ -35,6 +38,36 @@ from .agent_runtime import PlannerFn
 from .planner import plan_actions
 
 logger = logging.getLogger(__name__)
+
+# A sink the planner hands each turn's reasoning to. May be sync or async — an
+# async sink is awaited (e.g. to persist the trace via an MCP tool). A
+# slow/failing store never breaks the turn loop (errors are swallowed by the
+# caller). Signature: (player_id, turn_number, reasoning, raw_completion,
+# actions) -> None | Awaitable[None].
+ReasoningSink = Callable[
+    [str, int, str, str, list[dict[str, Any]]], None | Awaitable[None]
+]
+
+# Mistral reasoning models wrap their trace in [THINK]...[/THINK] rather than
+# the <think>...</think> that extract_thinking_tokens handles.
+_BRACKET_THINK_RE = re.compile(r"\[THINK\](.*?)\[/THINK\]", re.DOTALL)
+
+
+def _split_reasoning(content: str) -> tuple[str, str]:
+    """Return ``(clean_content, reasoning)`` for inline-trace models.
+
+    Handles both ``<think>...</think>`` (Qwen/Gemma-style) and
+    ``[THINK]...[/THINK]`` (Mistral/Magistral-style). Used only when the server
+    did not already separate the trace into ``reasoning_content``.
+    """
+    cleaned, thinking = extract_thinking_tokens(content)
+    thinking = thinking or ""
+    bracket = _BRACKET_THINK_RE.findall(cleaned)
+    if bracket:
+        thinking = (thinking + "\n" + "\n".join(bracket)).strip()
+        cleaned = _BRACKET_THINK_RE.sub("", cleaned).strip()
+    return cleaned, thinking.strip()
+
 
 # The legal action shapes, embedded in the system prompt so the model knows
 # exactly what to emit. Mirrors the play-parley skill's payload contract.
@@ -142,11 +175,21 @@ def make_llm_planner(
     timeout_s: float = 45.0,
     max_tokens: int = 1024,
     temperature: float = 0.7,
+    enable_thinking: bool = True,
+    on_reasoning: ReasoningSink | None = None,
 ) -> PlannerFn:
     """Build an async ``PlannerFn`` backed by an OpenAI-compatible endpoint.
 
     ``base_url`` should point at a vLLM ``/v1`` URL; ``model`` is the served
     model id. The returned coroutine planner is awaited by ``MCPAgent``.
+
+    Every seat reasons: ``enable_thinking`` is passed to the chat template (for
+    models that honour it, e.g. Qwen) and defaults on. The reasoning trace is
+    captured and handed to ``on_reasoning`` so callers can persist it — we keep
+    the thinking, we don't discard it. The trace comes from the server's
+    ``reasoning_content`` field when the model was launched with a
+    ``--reasoning-parser``; otherwise it is extracted inline, and as a last
+    resort the raw completion itself is stored so nothing is ever lost.
     """
     from openai import AsyncOpenAI
 
@@ -187,11 +230,51 @@ def make_llm_planner(
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    # Honoured by templates that gate thinking (e.g. Qwen3.x);
+                    # ignored by others. Every seat reasons.
+                    extra_body={
+                        "chat_template_kwargs": {"enable_thinking": enable_thinking}
+                    },
                 ),
                 timeout=timeout_s,
             )
-            content = (resp.choices[0].message.content or "") if resp.choices else ""
-            actions = _extract_action_list(content)
+            message = resp.choices[0].message if resp.choices else None
+            raw = (getattr(message, "content", None) or "") if message else ""
+            # Prefer the server-separated trace (set when vLLM ran with
+            # --reasoning-parser); else split it out of the content inline.
+            reasoning = getattr(message, "reasoning_content", None) if message else None
+            if reasoning:
+                content = raw
+            else:
+                content, reasoning = _split_reasoning(raw)
+
+            # Parse, but keep the reasoning no matter what — a parse failure
+            # still falls back to the heuristic below, and we must not lose the
+            # thinking in that case.
+            parsed: list[dict[str, Any]] = []
+            parse_error: Exception | None = None
+            try:
+                parsed = _extract_action_list(content)
+            except Exception as parse_exc:  # noqa: BLE001 — store, then fall back
+                parse_error = parse_exc
+
+            if on_reasoning is not None:
+                # Never lose the thinking: fall back to the raw completion when
+                # no discrete trace was isolated. The sink may be async (e.g. it
+                # persists via an MCP tool), so await an awaitable result.
+                try:
+                    maybe = on_reasoning(
+                        player_id, turn_number, reasoning or raw, raw, parsed
+                    )
+                    if inspect.isawaitable(maybe):
+                        await maybe
+                except Exception:  # noqa: BLE001 — persistence must not break play
+                    logger.warning("on_reasoning sink failed", exc_info=True)
+
+            if parse_error is not None:
+                raise parse_error  # -> heuristic fallback in the outer except
+
+            actions = parsed
             if not actions:
                 # Empty plan is valid (a deliberate pass), but if the heuristic
                 # would have done something useful, prefer it on turn-0-ish

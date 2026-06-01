@@ -5,8 +5,10 @@ Examples
 Play 5 games (2 players each) against the live server, two models defined
 inline via env-provided vLLM endpoints::
 
-    PARLEY_VLLM_QWEN_URL=https://...modal.run/v1 \\
-    PARLEY_VLLM_GEMMA_URL=https://...modal.run/v1 \\
+    VLLM_API_KEY=... \\
+    PARLEY_VLLM_QWEN36_A3B_URL=https://...modal.run/v1 \\
+    PARLEY_VLLM_GEMMA4_31B_URL=https://...modal.run/v1 \\
+    PARLEY_VLLM_MAGISTRAL_SMALL_URL=https://...modal.run/v1 \\
     uv run python -m backend.src.agents.run_live_matches --max-games 5
 
 Endpoints are read from ``--endpoint label=base_url[:model]`` flags (repeatable)
@@ -24,8 +26,9 @@ import os
 
 from .match_runner import MatchConfig, ModelEndpoint, run_forever
 
-# Labels mirror MODEL_REGISTRY in agents/deploy/modal_vllm.py.
-_KNOWN_LABELS = ("qwen", "gemma", "glm-flash", "deepseek-flash")
+# Labels mirror MODEL_REGISTRY in agents/deploy/modal_vllm.py (and the
+# --served-model-name each vLLM endpoint serves under).
+_KNOWN_LABELS = ("qwen36-a3b", "gemma4-31b", "magistral-small")
 
 
 def _endpoints_from_args(specs: list[str]) -> list[ModelEndpoint]:
