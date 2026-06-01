@@ -72,6 +72,17 @@ MODEL_REGISTRY: list[dict] = [
             "--gdn-prefill-backend",
             "triton",
             "--trust-remote-code",
+            # THE fix: force the Triton fused-MoE kernel. Left on 'auto', vLLM
+            # picks FlashInfer CUTLASS, whose ninja JIT build (run_ninja →
+            # subprocess) hangs/dies during EngineCore warmup on H200. Triton
+            # needs no build. (KernelConfig.moe_backend exists in 0.20.1.)
+            # NB: we do NOT use --enforce-eager — it disables CUDA graphs and
+            # tanks throughput to ~16 tok/s, far too slow for thinking-mode
+            # traces. With Triton MoE (no ninja build) and no vllm-cache volume
+            # (no 9P AOT-reload hang), a fresh in-container torch.compile is
+            # safe and gives ~10x the throughput.
+            "--moe-backend",
+            "triton",
         ],
         # vLLM 0.20.1 ignores VLLM_FUSED_MOE_BACKEND (logs "unknown env var"),
         # so we can't force the Triton MoE kernel; the engine auto-selects the
@@ -80,8 +91,10 @@ MODEL_REGISTRY: list[dict] = [
         # timeout let the remaining build complete once and persist.
         "env": {"FLASHINFER_AUTOTUNER_DISABLE": "1"},
         "ignore_patterns": ["*.gguf", "*.pth", "consolidated*", "original/*"],
+        # Scale to zero when idle. Flip to 1 to keep a container warm during an
+        # active match run (cold starts are ~2.5 min and 303 at Modal's edge).
         "min_containers": 0,
-        "scaledown_window": 300,
+        "scaledown_window": 600,
         "max_inputs": 32,
     },
     {
@@ -123,7 +136,7 @@ MODEL_REGISTRY: list[dict] = [
         "env": {},
         "ignore_patterns": ["*.gguf"],
         "min_containers": 0,
-        "scaledown_window": 300,
+        "scaledown_window": 600,
         "max_inputs": 32,
     },
 ]
@@ -137,8 +150,10 @@ app = modal.App("parley-vllm")
 
 # Persistent caches: weights download once; flashinfer JIT modules persist
 # across cold starts (so ninja doesn't re-build trtllm/cutlass every boot).
+# NOTE: we deliberately do NOT persist vLLM's torch.compile cache — loading the
+# cached AOT artifact back off a Modal (9P) volume hangs the engine after
+# compile. With --enforce-eager we don't compile at all, so it's moot anyway.
 hf_cache = modal.Volume.from_name("parley-hf-cache", create_if_missing=True)
-vllm_cache = modal.Volume.from_name("parley-vllm-cache", create_if_missing=True)
 flashinfer_cache = modal.Volume.from_name(
     "parley-flashinfer-cache", create_if_missing=True
 )
@@ -251,7 +266,6 @@ def _make_serve(entry: dict):
         memory=131072,
         volumes={
             HF_CACHE_DIR: hf_cache,
-            "/root/.cache/vllm": vllm_cache,
             "/root/.cache/flashinfer": flashinfer_cache,
         },
         secrets=_secrets,
