@@ -1138,11 +1138,16 @@ async def get_city_buildable_buildings(
 async def submit_prompt_log(
     prompt_log: PromptLog,
     game_id: str = "default",
+    turn_number: int | None = None,
+    llm_model: str | None = None,
     current_player: PlayerId = Depends(get_current_player),
     session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, str]:
-    """
-    Submit LLM prompt and response log for research purposes.
+    """Submit an LLM prompt/response log for research and replay.
+
+    ``turn_number`` (and ``llm_model``) route to the enhanced logger so the
+    entry is stamped with its turn — required for the replay "Prompts" tab,
+    which fetches prompts per turn.
     """
     try:
         # Validate that the player matches the log
@@ -1153,7 +1158,20 @@ async def submit_prompt_log(
             )
 
         controller = get_persistent_game_controller(session)
-        await controller.log_prompt(game_id, prompt_log)
+        if turn_number is not None or llm_model is not None:
+            await controller.log_enhanced_prompt(
+                game_id,
+                prompt_log.player,
+                prompt_log.prompt,
+                prompt_log.response,
+                prompt_log.tokens_in,
+                prompt_log.tokens_out,
+                prompt_log.latency_ms,
+                turn_number=turn_number,
+                llm_model=llm_model,
+            )
+        else:
+            await controller.log_prompt(game_id, prompt_log)
         return {"status": "prompt_logged"}
     except HTTPException:
         raise

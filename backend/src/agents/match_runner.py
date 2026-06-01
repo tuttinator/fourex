@@ -39,9 +39,12 @@ from .profiles import get_profile
 logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_URL = os.getenv("PARLEY_MCP_URL", "https://mcp.parley.quest/")
+DEFAULT_API_URL = os.getenv("PARLEY_API_URL", "https://api.parley.quest/api/v1")
 _PROFILE_POOL = ("aggressive", "economic", "explorer", "balanced")
 # write_turn_notes caps notes at 4,000 chars (SCRATCHPAD_MAX_CHARS); stay under.
 _TURN_NOTE_MAX_CHARS = 4000
+# Cap the reasoning we mirror into prompt_logs (research log; column is text).
+_PROMPT_LOG_MAX_CHARS = 20000
 
 
 def _default_map_templates() -> list[str | None]:
@@ -84,6 +87,10 @@ class MatchConfig:
     # When True, agents read inbound messages and may SEND_MESSAGE each turn —
     # the active-chat condition for studying how chat skews behaviour.
     chat_enabled: bool = False
+    # Mirror each turn's reasoning into the prompt_logs table (REST POST
+    # /prompts) so it shows in the replay/observe "Prompts" tab in the UI.
+    log_prompts: bool = True
+    api_url: str = DEFAULT_API_URL
     schedule_seed: int = 12345
 
 
@@ -159,27 +166,52 @@ async def run_one_game(cfg: MatchConfig, rng_seed: int, index: int) -> GameOutco
                             "actions": actions,
                         },
                     )
-                    # Also surface it in-product as this seat's turn notes, so
-                    # the reasoning shows up on the live game. Best-effort and
-                    # bounded — never let it stall or break the turn loop.
-                    if not (cfg.write_turn_notes and reasoning):
+                    # Nothing else to persist if the model produced no trace.
+                    if not reasoning:
                         return
-                    note = f"[{model_label}] {reasoning}"[:_TURN_NOTE_MAX_CHARS]
-                    try:
-                        await asyncio.wait_for(
-                            client.call_tool(
-                                "write_turn_notes",
-                                {"api_key": seat_key, "notes": note},
-                            ),
-                            timeout=cfg.turn_notes_timeout_s,
+                    # Surface in-product as this seat's turn notes. Best-effort
+                    # and bounded — never let it stall or break the turn loop.
+                    if cfg.write_turn_notes:
+                        note = f"[{model_label}] {reasoning}"[:_TURN_NOTE_MAX_CHARS]
+                        try:
+                            await asyncio.wait_for(
+                                client.call_tool(
+                                    "write_turn_notes",
+                                    {"api_key": seat_key, "notes": note},
+                                ),
+                                timeout=cfg.turn_notes_timeout_s,
+                            )
+                        except Exception:  # noqa: BLE001 — best-effort
+                            logger.warning(
+                                "write_turn_notes failed for %s turn %s",
+                                pid,
+                                turn_number,
+                                exc_info=True,
+                            )
+                    # Mirror into prompt_logs so it shows in the replay UI.
+                    if cfg.log_prompts:
+                        chosen = (
+                            ", ".join(a.get("type", "?") for a in actions) or "pass"
                         )
-                    except Exception:  # noqa: BLE001 — best-effort persistence
-                        logger.warning(
-                            "write_turn_notes failed for %s turn %s",
-                            pid,
-                            turn_number,
-                            exc_info=True,
-                        )
+                        try:
+                            await _post_prompt_log(
+                                cfg,
+                                api_key=seat_key,
+                                game_id=game.game_id,
+                                player=pid,
+                                turn_number=turn_number,
+                                model=model_label,
+                                prompt=f"turn {turn_number} — chose: {chosen}",
+                                response=reasoning,
+                                tokens_out=len(reasoning) // 4,
+                            )
+                        except Exception:  # noqa: BLE001 — best-effort
+                            logger.warning(
+                                "prompt-log POST failed for %s turn %s",
+                                pid,
+                                turn_number,
+                                exc_info=True,
+                            )
 
                 return _sink
 
@@ -260,6 +292,45 @@ def _record_reasoning(cfg: MatchConfig, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
+
+
+async def _post_prompt_log(
+    cfg: MatchConfig,
+    *,
+    api_key: str,
+    game_id: str,
+    player: str,
+    turn_number: int,
+    model: str,
+    prompt: str,
+    response: str,
+    tokens_out: int,
+) -> None:
+    """Write one turn's reasoning to prompt_logs via the REST API.
+
+    Authenticated with the seat's per-game API key (the same key works for REST
+    Bearer auth); ``game_id`` must match the key. ``turn_number`` stamps the
+    entry so it shows under the right turn in the replay/observe "Prompts" tab.
+    Best-effort — caller swallows errors.
+    """
+    import httpx
+
+    body = {
+        "player": player,
+        "prompt": prompt[:4000],
+        "response": response[:_PROMPT_LOG_MAX_CHARS],
+        "tokens_in": 0,
+        "tokens_out": tokens_out,
+        "latency_ms": 0,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as http:
+        resp = await http.post(
+            f"{cfg.api_url}/prompts",
+            params={"game_id": game_id, "turn_number": turn_number, "llm_model": model},
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=body,
+        )
+        resp.raise_for_status()
 
 
 def _kill_switch_tripped(cfg: MatchConfig) -> bool:
