@@ -93,9 +93,10 @@ def _split_reasoning(content: str) -> tuple[str, str]:
 # The legal action shapes, embedded in the system prompt so the model knows
 # exactly what to emit. Mirrors the play-parley skill's payload contract.
 _ACTION_CONTRACT = """\
-You control one player in a turn-based 4X strategy game. Choose this turn's
-actions and reply with ONLY a JSON array of action objects — no prose, no
-markdown fences. Each object has a "type" and the fields for that type:
+You control one player in a turn-based 4X strategy game. First REASON about your
+position — your units, cities, resources, visible threats and opportunities, and
+how this turn advances your strategy. Then give your FINAL ANSWER as a JSON array
+of action objects. Each object has a "type" and the fields for that type:
 
 - {"type": "MOVE", "unit_id": <int>, "to": {"x": <int>, "y": <int>}}
 - {"type": "ATTACK", "attacker_id": <int>, "target_id": <int>, "target_type": "unit"}
@@ -106,7 +107,10 @@ markdown fences. Each object has a "type" and the fields for that type:
 
 Rules of thumb: move units one tile at a time toward objectives; you may submit
 several actions (at most one per unit and one per city). If nothing is worth
-doing, reply with []. Reply with the JSON array and nothing else."""
+doing, your final answer is [].
+
+Do your reasoning first, then end your reply with the FINAL ANSWER: the JSON
+array alone, on its own, with no prose or markdown fences after it."""
 
 
 def _coord(entity: dict[str, Any]) -> dict[str, int] | None:
@@ -160,32 +164,40 @@ def _summarise_state(
 
 
 def _extract_action_list(text: str) -> list[dict[str, Any]]:
-    """Pull the first balanced top-level JSON array of objects out of ``text``.
+    """Pull the LAST balanced top-level JSON array of objects out of ``text``.
 
-    Robust to ``<think>`` blocks and stray prose around the array. Returns
-    only dict items that carry a ``type`` key; raises ``ValueError`` when no
-    usable array is found so the caller can fall back.
+    The prompt asks the model to reason first and END with the JSON array as its
+    final answer, so we scan from the last ``]`` backwards and return the last
+    balanced array that parses as a list — robust to reasoning prose (and stray
+    brackets) before the answer, and to ``<think>`` blocks. Returns only dict
+    items carrying a ``type`` key; raises ``ValueError`` when no usable array is
+    found so the caller can fall back.
     """
     cleaned, _thinking = extract_thinking_tokens(text)
-    start = cleaned.find("[")
-    if start == -1:
-        raise ValueError("no JSON array found in model output")
-    depth = 0
-    for i in range(start, len(cleaned)):
-        ch = cleaned[i]
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                candidate = cleaned[start : i + 1]
-                parsed = json.loads(candidate)  # may raise — caller handles
-                if not isinstance(parsed, list):
-                    raise ValueError("parsed JSON is not a list")
+    end = cleaned.rfind("]")
+    while end != -1:
+        depth = 0
+        start = -1
+        for i in range(end, -1, -1):
+            ch = cleaned[i]
+            if ch == "]":
+                depth += 1
+            elif ch == "[":
+                depth -= 1
+                if depth == 0:
+                    start = i
+                    break
+        if start != -1:
+            try:
+                parsed = json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
                 return [
                     item for item in parsed if isinstance(item, dict) and "type" in item
                 ]
-    raise ValueError("unbalanced JSON array in model output")
+        end = cleaned.rfind("]", 0, end)
+    raise ValueError("no JSON array found in model output")
 
 
 def make_llm_planner(

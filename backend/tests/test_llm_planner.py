@@ -51,6 +51,15 @@ def test_extract_strips_think_and_prose():
     ]
 
 
+def test_extract_last_array_after_reasoning_prose():
+    # Reasoning prose (with a stray bracket pair) precedes the final answer.
+    text = (
+        "I should secure the tile at [5,3] first, then settle my capital.\n"
+        '[{"type":"FOUND_CITY","worker_id":1}]'
+    )
+    assert _extract_action_list(text) == [{"type": "FOUND_CITY", "worker_id": 1}]
+
+
 def test_extract_drops_items_without_type():
     out = _extract_action_list('[{"type":"MOVE","unit_id":1},{"nope":2}]')
     assert out == [{"type": "MOVE", "unit_id": 1}]
