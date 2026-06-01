@@ -11,8 +11,27 @@ import types
 
 import pytest
 
-from backend.src.agents.llm_planner import _extract_action_list, make_llm_planner
+from backend.src.agents.llm_planner import (
+    _extract_action_list,
+    _message_reasoning,
+    make_llm_planner,
+)
 from backend.src.agents.profiles import BALANCED
+
+
+def test_message_reasoning_field_names():
+    # vLLM 0.20.1 uses `reasoning`; OpenAI o1 style uses `reasoning_content`.
+    assert _message_reasoning(types.SimpleNamespace(reasoning="trace A")) == "trace A"
+    assert (
+        _message_reasoning(types.SimpleNamespace(reasoning_content="trace B"))
+        == "trace B"
+    )
+    # model_extra fallback (SDK stashes unknown fields there).
+    msg = types.SimpleNamespace(model_extra={"reasoning": "trace C"})
+    assert _message_reasoning(msg) == "trace C"
+    # Nothing present -> None.
+    assert _message_reasoning(types.SimpleNamespace(content="[]")) is None
+    assert _message_reasoning(None) is None
 
 
 def test_extract_plain_array():

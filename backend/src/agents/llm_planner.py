@@ -53,6 +53,27 @@ ReasoningSink = Callable[
 _BRACKET_THINK_RE = re.compile(r"\[THINK\](.*?)\[/THINK\]", re.DOTALL)
 
 
+def _message_reasoning(message: Any) -> str | None:
+    """Pull the reasoning trace off an OpenAI-style message, field-name agnostic.
+
+    vLLM exposes the separated thinking trace under different keys depending on
+    version/parser: ``reasoning_content`` (OpenAI o1 style) or ``reasoning``
+    (vLLM 0.20.1). The OpenAI SDK also stashes unknown fields in ``model_extra``.
+    Check all of them so we never silently drop a trace the model produced.
+    """
+    if message is None:
+        return None
+    for attr in ("reasoning_content", "reasoning"):
+        value = getattr(message, attr, None)
+        if value:
+            return value
+    extra = getattr(message, "model_extra", None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        if extra.get(key):
+            return extra[key]
+    return None
+
+
 def _split_reasoning(content: str) -> tuple[str, str]:
     """Return ``(clean_content, reasoning)`` for inline-trace models.
 
@@ -242,7 +263,7 @@ def make_llm_planner(
             raw = (getattr(message, "content", None) or "") if message else ""
             # Prefer the server-separated trace (set when vLLM ran with
             # --reasoning-parser); else split it out of the content inline.
-            reasoning = getattr(message, "reasoning_content", None) if message else None
+            reasoning = _message_reasoning(message)
             if reasoning:
                 content = raw
             else:
