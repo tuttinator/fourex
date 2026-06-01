@@ -82,15 +82,30 @@ class _FakeMessage:
 
 
 class _FakeCompletions:
-    def __init__(self, content=None, raises=None, reasoning_content=None, calls=None):
+    def __init__(
+        self,
+        content=None,
+        raises=None,
+        reasoning_content=None,
+        calls=None,
+        template_400=False,
+    ):
         self._content = content
         self._raises = raises
         self._reasoning_content = reasoning_content
         self._calls = calls
+        self._template_400 = template_400
 
     async def create(self, **kwargs):
         if self._calls is not None:
             self._calls.append(kwargs)
+        # Simulate a Mistral-tokenizer server: reject any chat_template kwargs.
+        if self._template_400 and (kwargs.get("extra_body") or {}).get(
+            "chat_template_kwargs"
+        ):
+            raise RuntimeError(
+                "Error code: 400 - chat_template is not supported for Mistral tokenizers."
+            )
         if self._raises is not None:
             raise self._raises
         return types.SimpleNamespace(
@@ -105,11 +120,16 @@ class _FakeAsyncOpenAI:
     raises = None
     reasoning_content = None
     calls: list | None = None
+    template_400 = False
 
     def __init__(self, *args, **kwargs):
         self.chat = types.SimpleNamespace(
             completions=_FakeCompletions(
-                self.content, self.raises, self.reasoning_content, type(self).calls
+                self.content,
+                self.raises,
+                self.reasoning_content,
+                type(self).calls,
+                type(self).template_400,
             )
         )
 
@@ -119,7 +139,7 @@ def fake_openai(monkeypatch):
     """Install a fake ``openai`` module so make_llm_planner imports it."""
     fake_mod = types.ModuleType("openai")
 
-    def _factory(content=None, raises=None, reasoning_content=None):
+    def _factory(content=None, raises=None, reasoning_content=None, template_400=False):
         cls = type(
             "ScriptedAsyncOpenAI",
             (_FakeAsyncOpenAI,),
@@ -128,6 +148,7 @@ def fake_openai(monkeypatch):
                 "raises": raises,
                 "reasoning_content": reasoning_content,
                 "calls": [],
+                "template_400": template_400,
             },
         )
         fake_mod.AsyncOpenAI = cls
@@ -234,6 +255,22 @@ async def test_reasoning_kept_even_when_unparseable(fake_openai):
     assert len(captured) == 1
     assert "overthinking" in captured[0][2]  # reasoning
     assert captured[0][4] == []  # no actions parsed
+
+
+@pytest.mark.asyncio
+async def test_mistral_template_400_retries_without_kwargs(fake_openai):
+    """A Mistral-tokenizer 400 on chat_template kwargs retries without them."""
+    cls = fake_openai(
+        content='[{"type":"FOUND_CITY","worker_id":1}]', template_400=True
+    )
+    planner = make_llm_planner(base_url="http://x/v1", model="m")
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    # Did NOT fall back to the heuristic — the retry succeeded.
+    assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
+    # Two create() calls: one with chat_template kwargs (rejected), one without.
+    assert len(cls.calls) == 2
+    assert (cls.calls[0].get("extra_body") or {}).get("chat_template_kwargs")
+    assert not (cls.calls[1].get("extra_body") or {})
 
 
 @pytest.mark.asyncio

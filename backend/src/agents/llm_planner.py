@@ -242,23 +242,30 @@ def make_llm_planner(
                     ),
                 },
             ]
-            resp = await asyncio.wait_for(
+
+            async def _create(extra_body: dict[str, Any] | None):
                 # Plain dicts are valid at runtime; the SDK's overloads are
                 # typed against TypedDict message params, which pyrefly can't
                 # match against a built list of dicts.
-                client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
+                return await client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    # Honoured by templates that gate thinking (e.g. Qwen3.x);
-                    # ignored by others. Every seat reasons.
-                    extra_body={
-                        "chat_template_kwargs": {"enable_thinking": enable_thinking}
-                    },
-                ),
-                timeout=timeout_s,
-            )
+                    extra_body=extra_body,
+                )
+
+            # enable_thinking is honoured by templates that gate thinking (e.g.
+            # Qwen3.x). Mistral-tokenizer models (Magistral) reject ANY
+            # chat_template kwargs with a 400 — they reason by default via their
+            # own template — so retry once without it. Every seat reasons.
+            think_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
+            try:
+                resp = await asyncio.wait_for(_create(think_body), timeout=timeout_s)
+            except Exception as exc:  # noqa: BLE001
+                if "chat_template" not in str(exc).lower():
+                    raise
+                resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
             message = resp.choices[0].message if resp.choices else None
             raw = (getattr(message, "content", None) or "") if message else ""
             # Prefer the server-separated trace (set when vLLM ran with
