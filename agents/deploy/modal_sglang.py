@@ -21,8 +21,13 @@
 # runner expects — point `PARLEY_VLLM_QWEN36_A3B_URL` at this endpoint's /v1 and
 # the runner uses it with no code change (it only needs an OpenAI base_url + key).
 #
-# IMPORTANT: deploy under the `tuttinator` Modal profile:
-#   MODAL_PROFILE=tuttinator uv run modal deploy agents/deploy/modal_sglang.py
+# IMPORTANT: deploy under the `tuttinator` Modal profile, AND with image builder
+# 2025.06+ — the LEGACY builder force-installs its own fastapi 0.88 + pydantic v1
+# `modal_requirements.txt`, which downgrades this image's pydantic 2.x and breaks
+# SGLang at import (`cannot import name 'field_validator' from pydantic`). 2025.06
+# doesn't inject those, so SGLang's own pydantic v2 / fastapi survive:
+#   MODAL_PROFILE=tuttinator MODAL_IMAGE_BUILDER_VERSION=2025.06 \
+#     uv run modal deploy agents/deploy/modal_sglang.py
 #
 # One-time secrets (also under the tuttinator profile):
 #   MODAL_PROFILE=tuttinator uv run modal secret create huggingface HF_TOKEN=hf_xxx
@@ -116,11 +121,15 @@ def _compile_deep_gemm() -> None:
 
 
 # Image: SGLang runtime matching Modal's own example for this exact model.
+# Use the image's OWN huggingface_hub (1.9.2) + hf-xet — do NOT pip-install an
+# older pinned hf_hub: downgrading to 0.34 breaks transformers 5.3.0 (needs
+# >=1.3.0) AND fails the full xet-backed safetensors download (it can fetch a
+# small config.json but chokes on the large xet blobs). hf-xet already gives the
+# fast download path, so HF_HUB_ENABLE_HF_TRANSFER / hf_transfer aren't needed.
 sglang_image = (
     modal.Image.from_registry("lmsysorg/sglang:v0.5.10.post1-cu130-runtime")
     .entrypoint([])
-    .pip_install("huggingface_hub[hf_transfer]==0.34")
-    .env({"HF_HOME": HF_CACHE_DIR, "HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .env({"HF_HOME": HF_CACHE_DIR})
     # Prefetch on CPU (cheap), then compile DeepGEMM on a GPU (needs the device
     # to emit FP8 kernels for the target arch). Both mount the HF cache.
     .run_function(
