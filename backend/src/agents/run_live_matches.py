@@ -26,8 +26,10 @@ import os
 
 from .match_runner import MatchConfig, ModelEndpoint, run_forever
 
-# Labels mirror MODEL_REGISTRY in agents/deploy/modal_vllm.py (and the
-# --served-model-name each vLLM endpoint serves under).
+# Labels mirror the --served-model-name each endpoint serves under: qwen36-a3b
+# is the SGLang FP8 deployment (agents/deploy/modal_sglang.py); the rest are the
+# vLLM MODEL_REGISTRY (agents/deploy/modal_vllm.py). The runner is framework-
+# agnostic — it only needs each label's OpenAI base_url + key.
 _KNOWN_LABELS = (
     "qwen36-a3b",
     "gemma4-31b",

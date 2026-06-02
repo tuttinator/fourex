@@ -52,51 +52,17 @@ import modal
 #                     format the launch flags load: HF safetensors vs mistral)
 #   max_inputs        @modal.concurrent batch cap per container
 #
-# All three are single-GPU, vLLM-native reasoning models across three lineages
-# (Qwen MoE / Google dense / Mistral dense). Giant MoEs (Kimi-K2 1T, GLM-5.x
-# 754B, GLM-4.7 358B) are excluded: multi-GPU even quantized, no gameplay gain.
+# These are single-GPU, vLLM-native dense reasoning models (Google + Mistral +
+# small distills). The Qwen3.6 MoE anchor now lives in modal_sglang.py (SGLang
+# FP8). Giant MoEs (Kimi-K2 1T, GLM-5.x 754B, GLM-4.7 358B) are excluded:
+# multi-GPU even quantized, no gameplay gain.
 MODEL_REGISTRY: list[dict] = [
-    {
-        # Anchor: MoE 35B total / 3B active. Single-H200 BF16, proven in
-        # voicescript qwen36_inference.py.
-        "label": "qwen36-a3b",
-        "hf_repo": "Qwen/Qwen3.6-35B-A3B",
-        "gpu": "H200",
-        "tensor_parallel": 1,
-        "max_model_len": 32768,
-        "reasoning_parser": "qwen3",
-        # Gated DeltaNet / MoE flags; --language-model-only skips the vision
-        # tower (we only feed text). See voicescript qwen36_inference.py.
-        "extra_args": [
-            "--language-model-only",
-            "--gdn-prefill-backend",
-            "triton",
-            "--trust-remote-code",
-            # THE fix: force the Triton fused-MoE kernel. Left on 'auto', vLLM
-            # picks FlashInfer CUTLASS, whose ninja JIT build (run_ninja →
-            # subprocess) hangs/dies during EngineCore warmup on H200. Triton
-            # needs no build. (KernelConfig.moe_backend exists in 0.20.1.)
-            # NB: we do NOT use --enforce-eager — it disables CUDA graphs and
-            # tanks throughput to ~16 tok/s, far too slow for thinking-mode
-            # traces. With Triton MoE (no ninja build) and no vllm-cache volume
-            # (no 9P AOT-reload hang), a fresh in-container torch.compile is
-            # safe and gives ~10x the throughput.
-            "--moe-backend",
-            "triton",
-        ],
-        # vLLM 0.20.1 ignores VLLM_FUSED_MOE_BACKEND (logs "unknown env var"),
-        # so we can't force the Triton MoE kernel; the engine auto-selects the
-        # FlashInfer CUTLASS unquantized MoE backend. This disables the
-        # autotuner's JIT build; the flashinfer-cache volume + 60-min startup
-        # timeout let the remaining build complete once and persist.
-        "env": {"FLASHINFER_AUTOTUNER_DISABLE": "1"},
-        "ignore_patterns": ["*.gguf", "*.pth", "consolidated*", "original/*"],
-        # Scale to zero when idle. Flip to 1 to keep a container warm during an
-        # active match run (cold starts are ~2.5 min and 303 at Modal's edge).
-        "min_containers": 0,
-        "scaledown_window": 600,
-        "max_inputs": 32,
-    },
+    # NOTE: the Qwen3.6-35B-A3B anchor moved to SGLang + FP8 — see
+    # agents/deploy/modal_sglang.py. The old vLLM BF16 entry here forced the slow
+    # Triton fused-MoE backend (to dodge a startup JIT timeout) and crawled at
+    # ~16 tok/s; the SGLang FP8 deployment pre-compiles DeepGEMM at build and is
+    # several times faster. It still serves under `--served-model-name qwen36-a3b`,
+    # so the runner is unchanged — just point PARLEY_VLLM_QWEN36_A3B_URL at it.
     {
         # Dense 31B, different lineage. Gated — needs HF_TOKEN + license
         # acceptance on the HF page with the token's account.
@@ -291,10 +257,12 @@ def _make_serve(entry: dict):
         cmd += list(entry.get("extra_args", []))
 
         print("Launching:", " ".join(cmd))
-        # shell=True + a single string mirrors the reference; vLLM reads
-        # VLLM_API_KEY from the env. Popen returns immediately; Modal then waits
-        # for the port to open (up to startup_timeout) while vLLM loads + builds.
-        subprocess.Popen(" ".join(cmd), shell=True)
+        # Launch with an argv LIST, never a shell string: a shell mangles any arg
+        # containing spaces/quotes/JSON (e.g. --speculative-config) — lessons
+        # sharp-edge #2. vLLM reads VLLM_API_KEY from the env (we never pass it on
+        # the CLI). Popen returns immediately; Modal then waits for the port to
+        # open (up to startup_timeout) while vLLM loads + builds.
+        subprocess.Popen(cmd)
 
     # Distinct name per model so each gets its own deployed function + URL.
     _serve.__name__ = f"serve_{label.replace('-', '_')}"
