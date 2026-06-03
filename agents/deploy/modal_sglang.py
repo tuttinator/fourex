@@ -163,7 +163,12 @@ sglang_image = (
     scaledown_window=600,
 )
 @modal.concurrent(max_inputs=32)
-@modal.web_server(port=PORT, startup_timeout=60 * MINUTES)
+# 15-min startup cap (NOT 60): cold start is weight load (~35 GB from the volume)
+# + DeepGEMM cache read + CUDA-graph capture + warmup, which all completed inside
+# a couple of minutes during the build. A long timeout is a footgun — if the
+# launch dies (e.g. a bad arg), Popen still returns 0 and Modal would otherwise
+# hold an H100 for the full timeout waiting for a port that never opens.
+@modal.web_server(port=PORT, startup_timeout=15 * MINUTES)
 def serve() -> None:
     api_key = os.environ.get("VLLM_API_KEY")
     if not api_key:
@@ -207,12 +212,20 @@ def serve() -> None:
         # SGLang reads them here instead of building on the hot path.
         "--mamba-scheduler-strategy",
         "extra_buffer",
-        # EAGLE speculative decoding (uses the model's built-in MTP head) — the
-        # config Modal documents for this exact model and that won the benchmark.
+        # MTP speculative decoding via the model's built-in NEXTN head — the
+        # HF model card's exact SGLang recipe. ALL THREE params must be set
+        # together: if you set --speculative-num-steps but omit topk/draft-tokens,
+        # SGLang skips auto-filling them (they stay None) and then crashes on
+        # `speculative_eagle_topk > 1` (None > 1). With SPEC_V2 + EAGLE/NEXTN,
+        # topk MUST be 1; draft-tokens = num_steps + 1.
         "--speculative-algo",
-        "EAGLE",
+        "NEXTN",
         "--speculative-num-steps",
         "3",
+        "--speculative-eagle-topk",
+        "1",
+        "--speculative-num-draft-tokens",
+        "4",
         # API key last so we can redact just this pair from the printed command.
         "--api-key",
         api_key,
