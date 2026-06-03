@@ -235,4 +235,20 @@ def serve() -> None:
     # arg containing spaces/JSON (lessons sharp-edge #2). Redact the key in logs.
     redacted = [("***" if a == api_key else a) for a in cmd]
     print("Launching:", " ".join(redacted))
-    subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd)
+
+    # Fail-fast guard: a bad arg / import error makes launch_server exit in a
+    # few seconds, but Popen still returns 0 — so without this, Modal would hold
+    # the GPU for the full startup_timeout waiting for a port that never opens
+    # (this is exactly how a crash-loop ran up a large bill). Raising here tears
+    # the container down in ~8 s instead. The real server takes minutes to bind
+    # the port, so an early exit unambiguously means failure.
+    import time
+
+    time.sleep(8)
+    rc = proc.poll()
+    if rc is not None:
+        raise RuntimeError(
+            f"sglang.launch_server exited immediately (rc={rc}) — see the "
+            "traceback above; the GPU container is being torn down."
+        )
