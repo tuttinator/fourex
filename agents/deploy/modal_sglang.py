@@ -21,8 +21,13 @@
 # runner expects — point `PARLEY_VLLM_QWEN36_A3B_URL` at this endpoint's /v1 and
 # the runner uses it with no code change (it only needs an OpenAI base_url + key).
 #
-# IMPORTANT: deploy under the `tuttinator` Modal profile:
-#   MODAL_PROFILE=tuttinator uv run modal deploy agents/deploy/modal_sglang.py
+# IMPORTANT: deploy under the `tuttinator` Modal profile, AND with image builder
+# 2025.06+ — the LEGACY builder force-installs its own fastapi 0.88 + pydantic v1
+# `modal_requirements.txt`, which downgrades this image's pydantic 2.x and breaks
+# SGLang at import (`cannot import name 'field_validator' from pydantic`). 2025.06
+# doesn't inject those, so SGLang's own pydantic v2 / fastapi survive:
+#   MODAL_PROFILE=tuttinator MODAL_IMAGE_BUILDER_VERSION=2025.06 \
+#     uv run modal deploy agents/deploy/modal_sglang.py
 #
 # One-time secrets (also under the tuttinator profile):
 #   MODAL_PROFILE=tuttinator uv run modal secret create huggingface HF_TOKEN=hf_xxx
@@ -116,11 +121,15 @@ def _compile_deep_gemm() -> None:
 
 
 # Image: SGLang runtime matching Modal's own example for this exact model.
+# Use the image's OWN huggingface_hub (1.9.2) + hf-xet — do NOT pip-install an
+# older pinned hf_hub: downgrading to 0.34 breaks transformers 5.3.0 (needs
+# >=1.3.0) AND fails the full xet-backed safetensors download (it can fetch a
+# small config.json but chokes on the large xet blobs). hf-xet already gives the
+# fast download path, so HF_HUB_ENABLE_HF_TRANSFER / hf_transfer aren't needed.
 sglang_image = (
     modal.Image.from_registry("lmsysorg/sglang:v0.5.10.post1-cu130-runtime")
     .entrypoint([])
-    .pip_install("huggingface_hub[hf_transfer]==0.34")
-    .env({"HF_HOME": HF_CACHE_DIR, "HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .env({"HF_HOME": HF_CACHE_DIR})
     # Prefetch on CPU (cheap), then compile DeepGEMM on a GPU (needs the device
     # to emit FP8 kernels for the target arch). Both mount the HF cache.
     .run_function(
@@ -154,7 +163,12 @@ sglang_image = (
     scaledown_window=600,
 )
 @modal.concurrent(max_inputs=32)
-@modal.web_server(port=PORT, startup_timeout=60 * MINUTES)
+# 15-min startup cap (NOT 60): cold start is weight load (~35 GB from the volume)
+# + DeepGEMM cache read + CUDA-graph capture + warmup, which all completed inside
+# a couple of minutes during the build. A long timeout is a footgun — if the
+# launch dies (e.g. a bad arg), Popen still returns 0 and Modal would otherwise
+# hold an H100 for the full timeout waiting for a port that never opens.
+@modal.web_server(port=PORT, startup_timeout=15 * MINUTES)
 def serve() -> None:
     api_key = os.environ.get("VLLM_API_KEY")
     if not api_key:
@@ -198,12 +212,20 @@ def serve() -> None:
         # SGLang reads them here instead of building on the hot path.
         "--mamba-scheduler-strategy",
         "extra_buffer",
-        # EAGLE speculative decoding (uses the model's built-in MTP head) — the
-        # config Modal documents for this exact model and that won the benchmark.
+        # MTP speculative decoding via the model's built-in NEXTN head — the
+        # HF model card's exact SGLang recipe. ALL THREE params must be set
+        # together: if you set --speculative-num-steps but omit topk/draft-tokens,
+        # SGLang skips auto-filling them (they stay None) and then crashes on
+        # `speculative_eagle_topk > 1` (None > 1). With SPEC_V2 + EAGLE/NEXTN,
+        # topk MUST be 1; draft-tokens = num_steps + 1.
         "--speculative-algo",
-        "EAGLE",
+        "NEXTN",
         "--speculative-num-steps",
         "3",
+        "--speculative-eagle-topk",
+        "1",
+        "--speculative-num-draft-tokens",
+        "4",
         # API key last so we can redact just this pair from the printed command.
         "--api-key",
         api_key,
@@ -213,4 +235,20 @@ def serve() -> None:
     # arg containing spaces/JSON (lessons sharp-edge #2). Redact the key in logs.
     redacted = [("***" if a == api_key else a) for a in cmd]
     print("Launching:", " ".join(redacted))
-    subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd)
+
+    # Fail-fast guard: a bad arg / import error makes launch_server exit in a
+    # few seconds, but Popen still returns 0 — so without this, Modal would hold
+    # the GPU for the full startup_timeout waiting for a port that never opens
+    # (this is exactly how a crash-loop ran up a large bill). Raising here tears
+    # the container down in ~8 s instead. The real server takes minutes to bind
+    # the port, so an early exit unambiguously means failure.
+    import time
+
+    time.sleep(8)
+    rc = proc.poll()
+    if rc is not None:
+        raise RuntimeError(
+            f"sglang.launch_server exited immediately (rc={rc}) — see the "
+            "traceback above; the GPU container is being torn down."
+        )
