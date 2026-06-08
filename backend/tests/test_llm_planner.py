@@ -98,12 +98,19 @@ class _FakeCompletions:
         reasoning_content=None,
         calls=None,
         template_400=False,
+        responses=None,
     ):
         self._content = content
         self._raises = raises
         self._reasoning_content = reasoning_content
         self._calls = calls
         self._template_400 = template_400
+        # Optional per-call script: a list of {content, reasoning_content} dicts
+        # consumed in order (the last entry repeats). Lets a test drive the
+        # forced-answer continuation (call 1 reasons with no array, call 2 emits
+        # the action). Takes precedence over the single `content`.
+        self._responses = responses
+        self._call_index = 0
 
     async def create(self, **kwargs):
         if self._calls is not None:
@@ -117,6 +124,13 @@ class _FakeCompletions:
             )
         if self._raises is not None:
             raise self._raises
+        if self._responses is not None:
+            idx = min(self._call_index, len(self._responses) - 1)
+            self._call_index += 1
+            r = self._responses[idx]
+            return types.SimpleNamespace(
+                choices=[_FakeMessage(r.get("content"), r.get("reasoning_content"))]
+            )
         return types.SimpleNamespace(
             choices=[_FakeMessage(self._content, self._reasoning_content)]
         )
@@ -130,6 +144,7 @@ class _FakeAsyncOpenAI:
     reasoning_content = None
     calls: list | None = None
     template_400 = False
+    responses: list | None = None
 
     def __init__(self, *args, **kwargs):
         self.chat = types.SimpleNamespace(
@@ -139,6 +154,7 @@ class _FakeAsyncOpenAI:
                 self.reasoning_content,
                 type(self).calls,
                 type(self).template_400,
+                type(self).responses,
             )
         )
 
@@ -148,7 +164,13 @@ def fake_openai(monkeypatch):
     """Install a fake ``openai`` module so make_llm_planner imports it."""
     fake_mod = types.ModuleType("openai")
 
-    def _factory(content=None, raises=None, reasoning_content=None, template_400=False):
+    def _factory(
+        content=None,
+        raises=None,
+        reasoning_content=None,
+        template_400=False,
+        responses=None,
+    ):
         cls = type(
             "ScriptedAsyncOpenAI",
             (_FakeAsyncOpenAI,),
@@ -158,6 +180,7 @@ def fake_openai(monkeypatch):
                 "reasoning_content": reasoning_content,
                 "calls": [],
                 "template_400": template_400,
+                "responses": responses,
             },
         )
         fake_mod.AsyncOpenAI = cls
@@ -298,6 +321,58 @@ async def test_async_reasoning_sink_is_awaited(fake_openai):
     out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
     assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
     assert captured == ["Settle now."]
+
+
+@pytest.mark.asyncio
+async def test_continuation_recovers_actions_when_overreasoning(fake_openai):
+    """Model burns the budget reasoning (no array); the forced-answer follow-up
+    call recovers the action, and the ORIGINAL reasoning is what gets stored."""
+    cls = fake_openai(
+        responses=[
+            # Call 1: verbose reasoning, never emits the JSON array.
+            {
+                "content": "Let me think hard about this. " * 20,
+                "reasoning_content": "Founding the capital maximises early growth.",
+            },
+            # Call 2 (forced-answer continuation): only the array.
+            {"content": '[{"type":"FOUND_CITY","worker_id":1}]'},
+        ]
+    )
+    captured = []
+    planner = make_llm_planner(
+        base_url="http://x/v1",
+        model="m",
+        on_reasoning=lambda pid, turn, reasoning, raw, actions: captured.append(
+            (reasoning, actions)
+        ),
+    )
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 3)
+    # Recovered the action rather than falling back to the heuristic.
+    assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
+    # Two calls: the reasoning pass, then the forced-answer continuation.
+    assert len(cls.calls) == 2
+    # Continuation turned thinking OFF.
+    assert cls.calls[1]["extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
+    # The stored reasoning is the verbose first-call trace, with final actions.
+    assert captured[0][0] == "Founding the capital maximises early growth."
+    assert captured[0][1] == [{"type": "FOUND_CITY", "worker_id": 1}]
+
+
+@pytest.mark.asyncio
+async def test_continuation_failure_falls_back_to_heuristic(fake_openai):
+    """If the continuation also yields no array, we still fall back cleanly."""
+    cls = fake_openai(
+        responses=[
+            {"content": "thinking with no array", "reasoning_content": "hmm"},
+            {"content": "still no array, sorry"},
+        ]
+    )
+    planner = make_llm_planner(base_url="http://x/v1", model="m")
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert isinstance(out, list)  # heuristic fallback, no raise
+    assert len(cls.calls) == 2  # tried the continuation before giving up
 
 
 @pytest.mark.asyncio

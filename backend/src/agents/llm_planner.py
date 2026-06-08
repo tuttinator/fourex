@@ -115,6 +115,18 @@ Do your reasoning first, then end your reply with the FINAL ANSWER: the JSON
 array alone, on its own, with no prose or markdown fences after it."""
 
 
+# Sent as a follow-up turn when the model reasoned but never emitted a parseable
+# action array (verbose thinking-mode models — notably Qwen3.x — sometimes spend
+# the whole token budget reasoning). We keep the original reasoning trace and ask
+# only for the action, with thinking turned OFF so it answers immediately.
+_FORCE_ANSWER_PROMPT = (
+    "You reasoned but did not finish with a JSON array. Output ONLY your final "
+    "JSON array of actions for this turn now — no reasoning, no prose, no "
+    "markdown fences. Just the array, e.g. "
+    '[{"type":"MOVE","unit_id":1,"to":{"x":2,"y":3}}] or [] to pass.'
+)
+
+
 # Appended to the contract only when chat/diplomacy is enabled for the game.
 _CHAT_CONTRACT = """
 
@@ -275,14 +287,18 @@ def make_llm_planner(
                 },
             ]
 
-            async def _create(extra_body: dict[str, Any] | None):
+            async def _create(
+                msgs: list[dict[str, Any]],
+                extra_body: dict[str, Any] | None,
+                tokens: int,
+            ):
                 # Plain dicts are valid at runtime; the SDK's overloads are
                 # typed against TypedDict message params, which pyrefly can't
                 # match against a built list of dicts.
                 return await client.chat.completions.create(  # pyrefly: ignore[no-matching-overload]
                     model=model,
-                    messages=messages,
-                    max_tokens=max_tokens,
+                    messages=msgs,
+                    max_tokens=tokens,
                     temperature=temperature,
                     extra_body=extra_body,
                 )
@@ -294,17 +310,21 @@ def make_llm_planner(
             # then skip them for the rest of the game. Every seat reasons.
             think_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
             if not template_ok[0]:
-                resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
+                resp = await asyncio.wait_for(
+                    _create(messages, None, max_tokens), timeout=timeout_s
+                )
             else:
                 try:
                     resp = await asyncio.wait_for(
-                        _create(think_body), timeout=timeout_s
+                        _create(messages, think_body, max_tokens), timeout=timeout_s
                     )
                 except Exception as exc:  # noqa: BLE001
                     if "chat_template" not in str(exc).lower():
                         raise
                     template_ok[0] = False
-                    resp = await asyncio.wait_for(_create(None), timeout=timeout_s)
+                    resp = await asyncio.wait_for(
+                        _create(messages, None, max_tokens), timeout=timeout_s
+                    )
             message = resp.choices[0].message if resp.choices else None
             raw = (getattr(message, "content", None) or "") if message else ""
             # Prefer the server-separated trace (set when vLLM ran with
@@ -324,6 +344,49 @@ def make_llm_planner(
                 parsed = _extract_action_list(content)
             except Exception as parse_exc:  # noqa: BLE001 — store, then fall back
                 parse_error = parse_exc
+
+            # Forced-answer continuation: the model reasoned but never produced a
+            # parseable array (it burned the budget thinking, or refused JSON).
+            # Rather than drop straight to the heuristic, ask once more for ONLY
+            # the action array, thinking OFF, feeding the reasoning back so the
+            # action reflects it. The verbose trace from the first call is what we
+            # store; this just recovers the decision. Best-effort: any failure
+            # here leaves parse_error set and we fall back below.
+            if parse_error is not None:
+                try:
+                    followup = messages + [
+                        {"role": "assistant", "content": (reasoning or raw)[:6000]},
+                        {"role": "user", "content": _FORCE_ANSWER_PROMPT},
+                    ]
+                    no_think = (
+                        {"chat_template_kwargs": {"enable_thinking": False}}
+                        if template_ok[0]
+                        else None
+                    )
+                    cont = await asyncio.wait_for(
+                        _create(followup, no_think, min(max_tokens, 512)),
+                        timeout=timeout_s,
+                    )
+                    cmsg = cont.choices[0].message if cont.choices else None
+                    ctext = (getattr(cmsg, "content", None) or "") if cmsg else ""
+                    # The continuation has thinking off, but split defensively in
+                    # case the template still emitted a trace.
+                    cclean, _ = _split_reasoning(ctext)
+                    parsed = _extract_action_list(cclean)
+                    parse_error = None
+                    logger.info(
+                        "llm_planner: recovered actions via continuation for %s "
+                        "turn %s",
+                        player_id,
+                        turn_number,
+                    )
+                except Exception:  # noqa: BLE001 — keep parse_error; heuristic below
+                    logger.info(
+                        "llm_planner: continuation did not yield actions for %s "
+                        "turn %s",
+                        player_id,
+                        turn_number,
+                    )
 
             if on_reasoning is not None:
                 # Never lose the thinking: fall back to the raw completion when

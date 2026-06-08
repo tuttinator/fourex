@@ -48,8 +48,17 @@ _PROMPT_LOG_MAX_CHARS = 20000
 
 
 def _default_map_templates() -> list[str | None]:
-    """Default map-template pool — ``None`` means the server's default map."""
-    return [None]
+    """Default map-template pool.
+
+    Structured, balanced templates rather than the legacy fully-randomised noise
+    map (``random`` / ``None``), which produces unstructured, poorly-balanced
+    starts. These three keep all players on a shared landmass (good for a
+    territorial 4X) while varying the terrain: a solid continent, a continent
+    with inland lakes, and a continent split by a river. The naval-heavy
+    ``islands`` / ``archipelago`` templates are left out — agents handle land
+    expansion far better than water crossings.
+    """
+    return ["continent", "lakes", "river"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,11 @@ class MatchConfig:
     # When True, agents read inbound messages and may SEND_MESSAGE each turn —
     # the active-chat condition for studying how chat skews behaviour.
     chat_enabled: bool = False
+    # When True, each seat in a game gets a DISTINCT model (sampled without
+    # replacement) where the endpoint pool is large enough — so a 2-player game
+    # with a Qwen + a Magistral endpoint is guaranteed to be Qwen-vs-Magistral
+    # rather than a random pairing that's sometimes mirror-matched.
+    distinct_models: bool = False
     # Mirror each turn's reasoning into the prompt_logs table (REST POST
     # /prompts) so it shows in the replay/observe "Prompts" tab in the UI.
     log_prompts: bool = True
@@ -115,7 +129,11 @@ def _seat_assignment(
     Player ids are unique within the game and encode the seat + model so the
     results log (and the live UI) make the matchup legible.
     """
-    chosen = [rng.choice(cfg.endpoints) for _ in range(cfg.players_per_game)]
+    if cfg.distinct_models and len(cfg.endpoints) >= cfg.players_per_game:
+        # One distinct model per seat (e.g. guarantee Qwen-vs-Magistral).
+        chosen = rng.sample(cfg.endpoints, cfg.players_per_game)
+    else:
+        chosen = [rng.choice(cfg.endpoints) for _ in range(cfg.players_per_game)]
     players: list[str] = []
     endpoints: dict[str, ModelEndpoint] = {}
     profiles: dict[str, str] = {}

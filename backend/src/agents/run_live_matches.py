@@ -109,8 +109,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=1024,
-        help="Per-call generation cap. Reasoning traces eat into this.",
+        default=2048,
+        help="Per-call generation cap. Reasoning traces eat into this; thinking "
+        "models (Qwen3.x) need headroom. If the model still overruns, the "
+        "planner issues a no-think forced-answer follow-up to recover the action.",
     )
     parser.add_argument("--kill-switch", default=None, help="Stop if this file exists.")
     parser.add_argument("--results", default="logs/match_results.jsonl")
@@ -119,6 +121,21 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Enable active in-game chat: agents read inbound messages and may "
         "SEND_MESSAGE each turn (the chat-on condition for the A/B study).",
+    )
+    parser.add_argument(
+        "--map",
+        action="append",
+        default=[],
+        dest="maps",
+        help="Map template to use (repeatable): continent|lakes|river|islands|"
+        "archipelago|random. Defaults to the balanced continent/lakes/river "
+        "pool. Pass 'random' for the legacy noise map.",
+    )
+    parser.add_argument(
+        "--distinct-models",
+        action="store_true",
+        help="Give each seat a distinct model where the endpoint pool allows "
+        "(e.g. guarantee Qwen-vs-Magistral instead of a random pairing).",
     )
     args = parser.parse_args(argv)
 
@@ -151,6 +168,9 @@ def main(argv: list[str] | None = None) -> None:
         kill_switch_path=args.kill_switch,
         results_path=args.results,
         chat_enabled=args.chat,
+        distinct_models=args.distinct_models,
+        # Only override the default balanced pool when --map was given.
+        **({"map_templates": args.maps} if args.maps else {}),
     )
     outcomes = asyncio.run(run_forever(cfg))
     ended = sum(1 for o in outcomes if o.status == "ended")
