@@ -122,7 +122,7 @@ array alone, on its own, with no prose or markdown fences after it."""
 _FORCE_ANSWER_PROMPT = (
     "You reasoned but did not finish with a JSON array. Output ONLY your final "
     "JSON array of actions for this turn now — no reasoning, no prose, no "
-    'markdown fences. Just the array, e.g. '
+    "markdown fences. Just the array, e.g. "
     '[{"type":"MOVE","unit_id":1,"to":{"x":2,"y":3}}] or [] to pass.'
 )
 

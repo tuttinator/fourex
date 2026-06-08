@@ -129,9 +129,7 @@ class _FakeCompletions:
             self._call_index += 1
             r = self._responses[idx]
             return types.SimpleNamespace(
-                choices=[
-                    _FakeMessage(r.get("content"), r.get("reasoning_content"))
-                ]
+                choices=[_FakeMessage(r.get("content"), r.get("reasoning_content"))]
             )
         return types.SimpleNamespace(
             choices=[_FakeMessage(self._content, self._reasoning_content)]
