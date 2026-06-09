@@ -126,16 +126,35 @@ _FORCE_ANSWER_PROMPT = (
     '[{"type":"MOVE","unit_id":1,"to":{"x":2,"y":3}}] or [] to pass.'
 )
 
+# Appended to the forced-answer prompt when chat is enabled, so a model that
+# decided to talk during its reasoning doesn't lose that intent on the recovery
+# call (the plain prompt only shows game actions).
+_FORCE_ANSWER_CHAT_SUFFIX = (
+    " The array MAY also include diplomacy, e.g. "
+    '{"type":"SEND_MESSAGE","recipient":"<player_id>","body":"<short message>"}; '
+    "include a message if you intended to talk this turn or owe a reply."
+)
+
 
 # Appended to the contract only when chat/diplomacy is enabled for the game.
+# Deliberately directive: in the baseline (chat off) runs agents simply ignored
+# the soft "you may talk" invitation, so here diplomacy is framed as an active,
+# expected part of play to actually surface chat behaviour worth studying.
 _CHAT_CONTRACT = """
 
-You may also TALK to other players this turn. To send a private message, add an
-action of this shape to your JSON array (alongside any game actions):
+DIPLOMACY IS ACTIVE this game — what you say shapes the outcome as much as how
+you move. To message another player, add this action to your JSON array
+(alongside any game actions):
 - {"type": "SEND_MESSAGE", "recipient": "<player_id>", "body": "<your message>"}
-Use messages to negotiate alliances, coordinate, bluff, threaten, or deceive.
-Any messages others sent you appear under "incoming_messages" in the situation
-above — read them and respond as your strategy dictates."""
+How to play the table:
+- On your FIRST turn, open with a short message to each other player — greet
+  them, propose a pact, or stake a claim.
+- Most turns, send at least one message when it could help: propose or honour
+  alliances, coordinate or trade, bluff, threaten, or deceive.
+- ALWAYS reply when someone has messaged you — their messages appear under
+  "incoming_messages" in the situation above.
+- Keep each message to one or two sentences. Valid recipients are listed under
+  "other_players"."""
 
 
 def _coord(entity: dict[str, Any]) -> dict[str, int] | None:
@@ -180,10 +199,21 @@ def _summarise_state(
         "visible_enemy_units": enemies,
         "stockpile": stockpile,
     }
+    # Valid message recipients (so the model addresses SEND_MESSAGE correctly).
+    others = [p for p in (state.get("players") or []) if p != player_id]
+    if others:
+        summary["other_players"] = others
     # Fold in any analysis tool output the agent already gathered (kept small).
     if analysis:
+        # Lift inbound chat OUT of the analysis blob to a top-level field so the
+        # model plainly sees what it must react to (it was previously buried).
+        incoming = analysis.get("incoming_messages")
+        if incoming:
+            summary["incoming_messages"] = incoming
         summary["analysis"] = {
-            tool: out for tool, out in analysis.items() if isinstance(out, dict)
+            tool: out
+            for tool, out in analysis.items()
+            if isinstance(out, dict) and tool != "incoming_messages"
         }
     return summary
 
@@ -354,9 +384,12 @@ def make_llm_planner(
             # here leaves parse_error set and we fall back below.
             if parse_error is not None:
                 try:
+                    force_prompt = _FORCE_ANSWER_PROMPT + (
+                        _FORCE_ANSWER_CHAT_SUFFIX if chat_enabled else ""
+                    )
                     followup = messages + [
                         {"role": "assistant", "content": (reasoning or raw)[:6000]},
-                        {"role": "user", "content": _FORCE_ANSWER_PROMPT},
+                        {"role": "user", "content": force_prompt},
                     ]
                     no_think = (
                         {"chat_template_kwargs": {"enable_thinking": False}}

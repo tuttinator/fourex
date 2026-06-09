@@ -14,6 +14,7 @@ import pytest
 from backend.src.agents.llm_planner import (
     _extract_action_list,
     _message_reasoning,
+    _summarise_state,
     make_llm_planner,
 )
 from backend.src.agents.profiles import BALANCED
@@ -373,6 +374,68 @@ async def test_continuation_failure_falls_back_to_heuristic(fake_openai):
     out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
     assert isinstance(out, list)  # heuristic fallback, no raise
     assert len(cls.calls) == 2  # tried the continuation before giving up
+
+
+def test_summarise_lifts_incoming_messages_and_recipients():
+    """Inbound chat is surfaced top-level (not buried in analysis) and the valid
+    recipients are listed, so the model can address SEND_MESSAGE correctly."""
+    state = {
+        "players": ["p1", "p2", "p3"],
+        "units": {},
+        "cities": {},
+        "stockpiles": {},
+        "map_width": 20,
+        "map_height": 20,
+        "max_turns": 50,
+    }
+    analysis = {
+        "incoming_messages": {"messages": [{"from": "p2", "body": "hello"}]},
+        "analyze_territory": {"score": 3},
+    }
+    s = _summarise_state(state, "p1", analysis, 1)
+    assert s["other_players"] == ["p2", "p3"]
+    assert s["incoming_messages"] == {"messages": [{"from": "p2", "body": "hello"}]}
+    # Lifted out — not duplicated inside the analysis blob.
+    assert "incoming_messages" not in s["analysis"]
+    assert s["analysis"]["analyze_territory"] == {"score": 3}
+
+
+@pytest.mark.asyncio
+async def test_chat_continuation_recovers_send_message(fake_openai):
+    """With chat on, an over-reasoning model that intended to talk recovers the
+    SEND_MESSAGE via the continuation (whose prompt re-offers diplomacy)."""
+    cls = fake_openai(
+        responses=[
+            # Call 1: reasons about diplomacy, emits no array.
+            {
+                "content": "weighing the table " * 20,
+                "reasoning_content": "I'll propose a truce to p2 to buy time.",
+            },
+            # Call 2 (chat-aware continuation): a SEND_MESSAGE action.
+            {"content": '[{"type":"SEND_MESSAGE","recipient":"p2","body":"Truce?"}]'},
+        ]
+    )
+    planner = make_llm_planner(base_url="http://x/v1", model="m", chat_enabled=True)
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert out == [{"type": "SEND_MESSAGE", "recipient": "p2", "body": "Truce?"}]
+    # The continuation prompt re-offered diplomacy.
+    cont_prompt = cls.calls[1]["messages"][-1]["content"]
+    assert "SEND_MESSAGE" in cont_prompt
+
+
+@pytest.mark.asyncio
+async def test_chat_suffix_absent_when_chat_disabled(fake_openai):
+    """The continuation prompt does NOT mention diplomacy when chat is off."""
+    cls = fake_openai(
+        responses=[
+            {"content": "reasoning, no array"},
+            {"content": '[{"type":"FOUND_CITY","worker_id":1}]'},
+        ]
+    )
+    planner = make_llm_planner(base_url="http://x/v1", model="m", chat_enabled=False)
+    out = await planner(BALANCED, _MIN_STATE, "p1", None, 1)
+    assert out == [{"type": "FOUND_CITY", "worker_id": 1}]
+    assert "SEND_MESSAGE" not in cls.calls[1]["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
