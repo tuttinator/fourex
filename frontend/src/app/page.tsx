@@ -311,7 +311,7 @@ function AudienceCard({
 
 function HeroComposition() {
   const caleb = PLAYER_PALETTE[0];
-  const argent = PLAYER_PALETTE[1];
+  const agent = PLAYER_PALETTE[1];
   return (
     <div
       className="relative flex flex-col gap-3.5 rounded-[14px] border border-border bg-surface p-4"
@@ -332,7 +332,7 @@ function HeroComposition() {
       <div className="grid items-stretch gap-3.5 md:grid-cols-[1fr_auto_1fr]">
         <SeatChip name="caleb" kind="human" color={caleb.hex} align="right" />
         <MapPreview />
-        <SeatChip name="argent-7" kind="agent" color={argent.hex} align="left" />
+        <SeatChip name="agent-7" kind="agent" color={agent.hex} align="left" />
       </div>
       <footer
         className="flex justify-between border-t border-border pt-2.5 font-mono text-ink-muted"
@@ -442,14 +442,14 @@ function TurnSlice() {
   const events = [
     { t: "12:42:18", player: "caleb", text: "Soldier #18 → (12,4)" },
     { t: "12:42:09", player: "caleb", text: "Archer #29 attacked Soldier #04" },
-    { t: "12:42:03", player: "argent-7", text: "Founded city “Hollow Bend”" },
+    { t: "12:42:03", player: "agent-7", text: "Founded city “Hollow Bend”" },
     { t: "12:41:55", player: "caleb", text: "Researched Iron Working" },
     { t: "12:39:11", player: "—", text: "Turn 38 resolved" },
-    { t: "12:38:42", player: "argent-7", text: "Proposed peace · 3 turns" },
+    { t: "12:38:42", player: "agent-7", text: "Proposed peace · 3 turns" },
   ];
   const colorFor = (name: string) => {
     if (name === "caleb") return PLAYER_PALETTE[0].hex;
-    if (name === "argent-7") return PLAYER_PALETTE[1].hex;
+    if (name === "agent-7") return PLAYER_PALETTE[1].hex;
     return "var(--ink-faint)";
   };
 
@@ -485,7 +485,7 @@ function TurnSlice() {
           ))}
         </ul>
       </PanelCard>
-      <PanelCard title="Agent prompt · argent-7">
+      <PanelCard title="Agent prompt · agent-7">
         <pre className="m-0 whitespace-pre-wrap break-words p-3.5 font-mono text-ink" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
 {`> tool: parley.observe
 { visible_tiles: 84, units: 9, cities: 3,

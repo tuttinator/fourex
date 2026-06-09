@@ -428,6 +428,47 @@ def test_summarise_surfaces_recent_turns_and_memory():
     assert s["analysis"]["analyze_territory"] == {"score": 2}
 
 
+def test_summarise_ownership_and_force_balance():
+    """Ownership is explicit (your_* vs visible_enemy_units), a pre-counted
+    force_balance is provided, and the confusable military strength_comparison
+    is stripped from the analysis blob."""
+    state = {
+        "players": ["p1", "p2"],
+        "units": {
+            "1": {"id": 1, "owner": "p1", "type": "soldier", "loc": {"x": 1, "y": 1}},
+            "2": {"id": 2, "owner": "p1", "type": "worker", "loc": {"x": 2, "y": 1}},
+            "3": {"id": 3, "owner": "p2", "type": "soldier", "loc": {"x": 8, "y": 8}},
+        },
+        "cities": {"c1": {"id": "c1", "owner": "p1", "loc": {"x": 1, "y": 2}}},
+        "stockpiles": {"p1": {"food": 5}},
+        "map_width": 20,
+        "map_height": 20,
+        "max_turns": 50,
+    }
+    analysis = {
+        "evaluate_military_position": {
+            "assessment": "dominant",
+            "strength_comparison": {
+                "my_military_units": 1,
+                "visible_enemy_military": 1,
+            },
+            "threats": [],
+        },
+    }
+    s = _summarise_state(state, "p1", analysis, 3)
+    assert {u["id"] for u in s["your_units"]} == {1, 2}
+    assert [c["id"] for c in s["your_cities"]] == ["c1"]
+    assert s["visible_enemy_units"][0]["owner"] == "p2"
+    assert s["you_are"] == "p1"
+    fb = s["force_balance"]
+    assert fb["your_units_total"] == 2 and fb["your_military"] == 1
+    assert fb["visible_enemy_units_total"] == 1 and fb["visible_enemy_military"] == 1
+    # The transposition-prone block is gone; the useful assessment remains.
+    mil = s["analysis"]["evaluate_military_position"]
+    assert "strength_comparison" not in mil
+    assert mil["assessment"] == "dominant"
+
+
 @pytest.mark.asyncio
 async def test_chat_continuation_recovers_send_message(fake_openai):
     """With chat on, an over-reasoning model that intended to talk recovers the

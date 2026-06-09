@@ -111,6 +111,11 @@ Rules of thumb: move units one tile at a time toward objectives; you may submit
 several actions (at most one per unit and one per city). If nothing is worth
 doing, your final answer is [].
 
+OWNERSHIP: "your_units" and "your_cities" are YOURS; everything under
+"visible_enemy_units" belongs to opponents. "force_balance" is the authoritative
+count of your vs enemy forces — trust it rather than counting the lists. Never
+attack your own units or treat them as a threat.
+
 CONTINUITY: the situation includes "your_recent_turns" (what you actually did
 the last few turns) and "memory" (your standing goals and notes on opponents).
 Play a consistent, evolving strategy — build on your prior moves and follow
@@ -175,21 +180,30 @@ def _summarise_state(
     analysis: dict[str, dict[str, Any]] | None,
     turn_number: int,
 ) -> dict[str, Any]:
-    """Build a compact, token-light snapshot for the prompt."""
+    """Build a compact snapshot for the prompt.
+
+    Ownership is made explicit and unambiguous: your own units/cities use
+    ``your_*`` keys, opponents live under ``visible_enemy_units``, and a
+    pre-counted ``force_balance`` is the single source of truth for "who has how
+    many" — so the model never has to count, or read the confusable
+    ``my_military_units`` / ``visible_enemy_military`` analysis fields it was
+    observed to transpose (reasoning about its own army as the enemy's).
+    """
     # Owner-filter inline — mirrors plan_actions in planner.py (no shared helper).
     units = (state.get("units") or {}).values()
     cities = (state.get("cities") or {}).values()
-    my_units = [
+    military_types = {"soldier", "archer"}
+    your_units = [
         {"id": u.get("id"), "type": u.get("type"), "loc": _coord(u)}
         for u in units
         if u.get("owner") == player_id
     ]
-    my_cities = [
+    your_cities = [
         {"id": c.get("id"), "loc": _coord(c)}
         for c in cities
         if c.get("owner") == player_id
     ]
-    enemies = [
+    enemy_units = [
         {"type": u.get("type"), "owner": u.get("owner"), "loc": _coord(u)}
         for u in units
         if u.get("owner") != player_id
@@ -198,10 +212,22 @@ def _summarise_state(
     summary: dict[str, Any] = {
         "turn": turn_number,
         "max_turns": state.get("max_turns"),
+        "you_are": player_id,
         "map": {"w": state.get("map_width"), "h": state.get("map_height")},
-        "my_units": my_units,
-        "my_cities": my_cities,
-        "visible_enemy_units": enemies,
+        "your_units": your_units,
+        "your_cities": your_cities,
+        "visible_enemy_units": enemy_units,
+        # Authoritative, pre-counted balance — trust this over counting the lists.
+        "force_balance": {
+            "your_units_total": len(your_units),
+            "your_military": sum(
+                1 for u in your_units if u.get("type") in military_types
+            ),
+            "visible_enemy_units_total": len(enemy_units),
+            "visible_enemy_military": sum(
+                1 for u in enemy_units if u.get("type") in military_types
+            ),
+        },
         "stockpile": stockpile,
     }
     # Valid message recipients (so the model addresses SEND_MESSAGE correctly).
@@ -225,11 +251,17 @@ def _summarise_state(
         if incoming:
             summary["incoming_messages"] = incoming
         _reserved = {"incoming_messages", "_memory", "_recent_turns"}
-        summary["analysis"] = {
-            tool: out
-            for tool, out in analysis.items()
-            if isinstance(out, dict) and tool not in _reserved
-        }
+        analysis_blob: dict[str, Any] = {}
+        for tool, out in analysis.items():
+            if not isinstance(out, dict) or tool in _reserved:
+                continue
+            # Drop the military tool's own count block — force_balance is the
+            # single source of truth, and its `my_military_units` /
+            # `visible_enemy_military` keys are exactly what the model transposed.
+            if tool == "evaluate_military_position":
+                out = {k: v for k, v in out.items() if k != "strength_comparison"}
+            analysis_blob[tool] = out
+        summary["analysis"] = analysis_blob
     return summary
 
 
@@ -326,7 +358,10 @@ def make_llm_planner(
                     "role": "user",
                     "content": (
                         f"You are player '{player_id}'. Current situation:\n"
-                        + json.dumps(summary, separators=(",", ":"))
+                        # Pretty-printed (not minified): newlines + indentation
+                        # cut the own-vs-enemy transposition errors a dense blob
+                        # invited. The state is small, so the token cost is minor.
+                        + json.dumps(summary, indent=2)
                         + "\n\nReturn the JSON array of actions for this turn."
                     ),
                 },
