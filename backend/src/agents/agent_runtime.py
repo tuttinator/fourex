@@ -241,6 +241,11 @@ class MCPAgent:
         # each ``play_turn``.
         self._scratchpad_reads = 0
         self._scratchpad_writes = 0
+        # Rolling in-agent history of this agent's own recent turns (the agent
+        # instance persists across turns within a game). Fed to the planner so
+        # the model has genuine cross-turn continuity — what it has been doing —
+        # instead of re-deriving everything from the current board each turn.
+        self._recent_turns: list[dict[str, Any]] = []
 
     @property
     def profile(self) -> AgentProfile:
@@ -329,12 +334,20 @@ class MCPAgent:
             )
             trace.analysis_results["incoming_messages"] = messages
 
-        # 4. Plan
+        # 4. Plan — give the planner the analysis output PLUS the memory it just
+        # read (strategic goals, opponent models, prior turn notes) and this
+        # agent's own recent-move history, under reserved keys. A copy so the
+        # later memorise/telemetry steps still see the unpolluted analysis dict.
+        planner_context: dict[str, Any] = dict(trace.analysis_results)
+        if trace.memory_reads:
+            planner_context["_memory"] = trace.memory_reads
+        if self._recent_turns:
+            planner_context["_recent_turns"] = list(self._recent_turns)
         proposed = self._planner(
             self._profile,
             state,
             player_id,
-            trace.analysis_results,
+            planner_context,
             turn_number,
         )
         # The heuristic planner returns a plain list; an LLM planner may be
@@ -385,6 +398,17 @@ class MCPAgent:
             {"api_key": self._api_key, "actions": validated},
         )
         trace.submit_result = submit_resp
+
+        # Record this turn into the rolling history fed to next turn's planner.
+        record: dict[str, Any] = {
+            "turn": turn_number,
+            "actions": [a.get("type") for a in validated],
+        }
+        if trace.chat_actions:
+            record["sent_messages"] = len(trace.chat_actions)
+        self._recent_turns.append(record)
+        # Keep the last few turns only — enough for continuity, small in tokens.
+        self._recent_turns = self._recent_turns[-6:]
 
         # 7. Memorise — in priority order.
         await self._memorise(trace, state, player_id, validated)
