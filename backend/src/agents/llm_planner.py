@@ -111,6 +111,11 @@ Rules of thumb: move units one tile at a time toward objectives; you may submit
 several actions (at most one per unit and one per city). If nothing is worth
 doing, your final answer is [].
 
+CONTINUITY: the situation includes "your_recent_turns" (what you actually did
+the last few turns) and "memory" (your standing goals and notes on opponents).
+Play a consistent, evolving strategy — build on your prior moves and follow
+through on plans rather than re-deciding from scratch or repeating yourself.
+
 Do your reasoning first, then end your reply with the FINAL ANSWER: the JSON
 array alone, on its own, with no prose or markdown fences after it."""
 
@@ -205,15 +210,25 @@ def _summarise_state(
         summary["other_players"] = others
     # Fold in any analysis tool output the agent already gathered (kept small).
     if analysis:
+        # Cross-turn continuity: this agent's own recent moves and the memory it
+        # read (strategic goals, opponent models, prior turn notes). Surfaced
+        # top-level — the runtime injects these under reserved keys.
+        recent = analysis.get("_recent_turns")
+        if recent:
+            summary["your_recent_turns"] = recent
+        memory = analysis.get("_memory")
+        if memory:
+            summary["memory"] = memory
         # Lift inbound chat OUT of the analysis blob to a top-level field so the
         # model plainly sees what it must react to (it was previously buried).
         incoming = analysis.get("incoming_messages")
         if incoming:
             summary["incoming_messages"] = incoming
+        _reserved = {"incoming_messages", "_memory", "_recent_turns"}
         summary["analysis"] = {
             tool: out
             for tool, out in analysis.items()
-            if isinstance(out, dict) and tool != "incoming_messages"
+            if isinstance(out, dict) and tool not in _reserved
         }
     return summary
 

@@ -79,6 +79,40 @@ async def test_chat_enabled_dispatches_message_and_splits_actions():
     ]
 
 
+def _make_recording_planner(captured: list[dict[str, Any]]):
+    """A planner that records the analysis/context dict it is handed each turn."""
+
+    def _p(profile, state, player_id, analysis, turn_number):
+        captured.append(analysis)
+        return [{"type": "FOUND_CITY", "worker_id": 1}]
+
+    return _p
+
+
+@pytest.mark.asyncio
+async def test_recent_turns_and_memory_fed_to_planner():
+    """The planner receives the agent's own recent-move history (accumulated
+    across turns) and the memory it read — the cross-turn continuity fix."""
+    client = _FakeClient()
+    captured: list[dict[str, Any]] = []
+    agent = MCPAgent(
+        client,
+        api_key="k",
+        profile=BALANCED,
+        player_id="p1",
+        planner=_make_recording_planner(captured),
+        chat_enabled=False,
+    )
+    await agent.play_turn()
+    await agent.play_turn()
+
+    # First turn: no prior history yet.
+    assert "_recent_turns" not in captured[0]
+    # Second turn: the planner sees turn 1's actions and the memory read.
+    assert captured[1]["_recent_turns"][-1]["actions"] == ["FOUND_CITY"]
+    assert "_memory" in captured[1]
+
+
 @pytest.mark.asyncio
 async def test_chat_disabled_does_not_send_or_read_messages():
     client = _FakeClient()

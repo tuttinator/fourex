@@ -400,6 +400,34 @@ def test_summarise_lifts_incoming_messages_and_recipients():
     assert s["analysis"]["analyze_territory"] == {"score": 3}
 
 
+def test_summarise_surfaces_recent_turns_and_memory():
+    """The agent's own recent moves and the memory it read are surfaced
+    top-level for cross-turn continuity, and kept out of the analysis blob."""
+    state = {
+        "players": ["p1", "p2"],
+        "units": {},
+        "cities": {},
+        "stockpiles": {},
+        "map_width": 20,
+        "map_height": 20,
+        "max_turns": 50,
+    }
+    analysis = {
+        "_recent_turns": [
+            {"turn": 4, "actions": ["FOUND_CITY"]},
+            {"turn": 5, "actions": ["MOVE"]},
+        ],
+        "_memory": {"strategic_goals": {"goals": [{"goal": "expand east"}]}},
+        "analyze_territory": {"score": 2},
+    }
+    s = _summarise_state(state, "p1", analysis, 6)
+    assert s["your_recent_turns"][-1]["actions"] == ["MOVE"]
+    assert s["memory"] == {"strategic_goals": {"goals": [{"goal": "expand east"}]}}
+    assert "_recent_turns" not in s["analysis"]
+    assert "_memory" not in s["analysis"]
+    assert s["analysis"]["analyze_territory"] == {"score": 2}
+
+
 @pytest.mark.asyncio
 async def test_chat_continuation_recovers_send_message(fake_openai):
     """With chat on, an over-reasoning model that intended to talk recovers the
