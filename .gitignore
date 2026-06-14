@@ -68,3 +68,5 @@ yarn-error.log*
 ralph/
 frontend/tsconfig.tsbuildinfo
 .coverage
+# roborev snapshots
+/.roborev/

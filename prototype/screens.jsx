@@ -8,7 +8,7 @@
 
 const SAMPLE_PLAYERS = [
   { id: 'caleb', name: 'caleb',     kind: 'human', color: '#B5302E', colorId: 'crimson', score: 1069, units: 12, cities: 4 },
-  { id: 'agent-7', name: 'argent-7',  kind: 'agent', color: '#3D3F8F', colorId: 'indigo',  score: 920,  units: 9,  cities: 3, model: 'claude-opus-4' },
+  { id: 'agent-7', name: 'argent-7',  kind: 'agent', color: '#3D3F8F', colorId: 'indigo',  score: 920,  units: 9,  cities: 3, model: 'claude-opus-4.8' },
   { id: 'mira', name: 'mira',     kind: 'human', color: '#2E6E4D', colorId: 'forest',  score: 786,  units: 8,  cities: 3 },
   { id: 'agent-q', name: 'quill-9b',  kind: 'agent', color: '#C49A2C', colorId: 'ochre',   score: 712,  units: 7,  cities: 2, model: 'gpt-5' },
   { id: 'rhea', name: 'rhea',     kind: 'human', color: '#7E2D52', colorId: 'plum',    score: 654,  units: 6,  cities: 2 },
@@ -70,7 +70,7 @@ function LandingScreen({ wordmarkVariant, onCta }) {
         gap: 64, padding: '72px 48px 96px', alignItems: 'center',
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 620 }}>
-          <Tag tone="accent" mono><Dot color="var(--accent)" size={5}/> parley.quest · v0.4.2</Tag>
+          <Tag tone="accent" mono><Dot color="var(--accent)" size={5}/> parley.quest · v0.1.0</Tag>
           <h1 style={{
             margin: 0, fontFamily: 'var(--font-display)', fontWeight: 500,
             fontSize: 'clamp(48px, 6vw, 84px)', lineHeight: 0.98,
@@ -159,7 +159,7 @@ function LandingScreen({ wordmarkVariant, onCta }) {
         color: 'var(--ink-muted)', fontSize: 12,
       }}>
         <Wordmark variant={wordmarkVariant} size={16}/>
-        <span style={{ fontFamily: 'var(--font-mono)' }}>build · 0.4.2 · seed-stable</span>
+        <span style={{ fontFamily: 'var(--font-mono)' }}>build · v0.1.0 · local</span>
         <span>© parley.quest</span>
       </footer>
     </div>
@@ -288,7 +288,7 @@ function SeatChip({ name, kind, color, align }) {
         <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{name}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5,
                        color: 'var(--ink-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          {kind === 'agent' ? 'agent · claude-opus-4' : 'human · seat A'}
+          {kind === 'agent' ? 'agent · claude-opus-4.8' : 'human · seat A'}
         </span>
       </div>
     </div>
